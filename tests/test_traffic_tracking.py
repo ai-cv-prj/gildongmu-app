@@ -94,13 +94,20 @@ class TrackingTests(unittest.TestCase):
                 self.assertEqual(result['association']['tracking']['reason'], 'discontinuous_frames')
                 self.assertIsNone(result['selected_detection_index'])
 
-    def test_missing_target_is_not_restored_and_reset_clears_state(self):
+    def test_missing_target_keeps_id_without_historical_box_or_color(self):
         pipe = fake_pipeline([(NEAR, .8, 0)])
-        pipe.predict(FRAME)
+        first = pipe.predict(FRAME)
+        old_id = first['detections'][0]['track_id']
         pipe.detector = fake_pipeline([]).detector
         result = pipe.predict(FRAME)
         self.assertEqual(result['detections'], [])
-        self.assertIsNone(pipe.selector.target_id)
+        self.assertEqual(result['signal_state'], 'unknown')
+        self.assertIsNone(result['selected_detection_index'])
+        self.assertEqual(pipe.selector.target_id, old_id)
+        pipe.detector = fake_pipeline([(NEAR, .8, 0)]).detector
+        returned = pipe.predict(FRAME)
+        self.assertEqual(returned['selected_detection_index'], 0)
+        self.assertEqual(returned['detections'][0]['track_id'], old_id)
         pipe.reset()
         self.assertEqual(pipe.frame_id, 0)
         self.assertIsNone(pipe.selector.previous_gray)
@@ -215,16 +222,21 @@ class TrackingTests(unittest.TestCase):
                 self.assertIsNone(pipe.predict(FRAME)['selected_detection_index'])
             self.assertEqual(pipe.predict(FRAME)['selected_detection_index'], 1)
 
-    def test_lost_target_immediately_reselects_single_signal_with_new_id(self):
+    def test_lost_target_waits_three_seconds_before_reselecting_single_signal(self):
         pipe = fake_pipeline([(NEAR, .8, 0)])
         first = pipe.predict(FRAME)
         pipe.detector = fake_pipeline([(FAR, .9, 0)]).detector
-        result = pipe.predict(FRAME)
+        for fid in range(2, 17):
+            result = pipe.predict(FRAME, frame_id=fid, captured_at_ms=(fid - 1) * 200)
+            self.assertIsNone(result['selected_detection_index'])
+            self.assertEqual(result['signal_state'], 'unknown')
+            self.assertEqual(result['association']['reason'], 'waiting_for_target_reacquisition')
+        result = pipe.predict(FRAME, frame_id=17, captured_at_ms=3200)
         self.assertEqual(result['selected_detection_index'], 0)
         self.assertNotEqual(result['detections'][0]['track_id'], first['detections'][0]['track_id'])
         self.assertEqual(result['association']['tracking']['reason'], 'target_missing')
 
-    def test_loss_clears_provisional_confirmation_without_retention(self):
+    def test_provisional_confirmation_is_not_bypassed_by_short_occlusion(self):
         pipe = self.start_challenge()
         with patch('src.traffic_association.estimate_vanishing_point', return_value=[1020, 280]):
             before = pipe.predict(FRAME)
@@ -232,13 +244,47 @@ class TrackingTests(unittest.TestCase):
         missing = pipe.predict(FRAME)
         self.assertEqual(missing['signal_state'], 'unknown')
         self.assertEqual(missing['detections'], [])
-        self.assertIsNone(pipe.selector.target_id)
+        self.assertEqual(pipe.selector.target_id, before['detections'][0]['track_id'])
         pipe.detector = fake_pipeline([(NEAR, .8, 0)]).detector
         result = pipe.predict(FRAME)
-        self.assertEqual(result['selected_detection_index'], 0)
-        self.assertEqual(result['association']['selection_origin'], 'single_signal')
-        self.assertNotIn(result['detections'][0]['track_id'],
-                         [item['track_id'] for item in before['detections']])
+        self.assertIsNone(result['selected_detection_index'])
+        self.assertEqual(result['signal_state'], 'unknown')
+        self.assertEqual(result['detections'][0]['track_id'], before['detections'][0]['track_id'])
+        self.assertTrue(pipe.selector.target_requires_crosswalk)
+
+    def test_selected_id_restoration_obeys_three_second_boundary(self):
+        for return_at, restored in [(3000, True), (3001, False)]:
+            with self.subTest(return_at=return_at):
+                pipe = fake_pipeline([(NEAR, .8, 0)])
+                first = pipe.predict(FRAME, frame_id=1, captured_at_ms=0)
+                old_id = first['detections'][0]['track_id']
+                pipe.detector = fake_pipeline([]).detector
+                for fid, timestamp in enumerate((900, 1700, 2500), 2):
+                    missing = pipe.predict(FRAME, frame_id=fid, captured_at_ms=timestamp)
+                    self.assertEqual(missing['detections'], [])
+                    self.assertEqual(missing['signal_state'], 'unknown')
+                    self.assertEqual(pipe.selector.target_id, old_id)
+                pipe.detector = fake_pipeline([(NEAR, .8, 0)]).detector
+                returned = pipe.predict(FRAME, frame_id=5, captured_at_ms=return_at)
+                self.assertEqual(returned['detections'][0]['track_id'] == old_id, restored)
+                self.assertEqual(returned['selected_detection_index'], 0)
+
+    def test_selected_id_returns_while_other_signal_remains_visible(self):
+        pipe = self.start_challenge()
+        with patch('src.traffic_association.estimate_vanishing_point', return_value=[620, 280]):
+            for fid in (2, 3, 4):
+                first = pipe.predict(FRAME, frame_id=fid, captured_at_ms=fid * 200)
+        old_id = first['detections'][0]['track_id']
+        self.assertEqual(first['association']['selection_origin'], 'crosswalk_matched')
+        pipe.detector = fake_pipeline([(FAR, .9, 0)]).detector
+        for fid in range(5, 19):
+            waiting = pipe.predict(FRAME, frame_id=fid, captured_at_ms=fid * 200)
+            self.assertIsNone(waiting['selected_detection_index'])
+            self.assertEqual(waiting['signal_state'], 'unknown')
+        pipe.detector = fake_pipeline([(FAR, .9, 0), (NEAR, .8, 0)]).detector
+        returned = pipe.predict(FRAME, frame_id=19, captured_at_ms=3800)
+        self.assertEqual(returned['selected_detection_index'], 1)
+        self.assertEqual(returned['detections'][1]['track_id'], old_id)
 
     def test_provisional_confirmation_respects_configured_frame_count(self):
         pipe = fake_pipeline([(NEAR, .8, 0)], stable=2)

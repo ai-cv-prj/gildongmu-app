@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 from src.traffic_geometry import estimate_stripe_direction
 from src.traffic_motion import estimate_camera_motion, motion_gray, transform_box
+from src.traffic_tracker import LOST_MAX_AGE_MS
 
 
 @dataclass(frozen=True)
@@ -189,6 +190,7 @@ class TemporalSelector:
         self.required_frames = required_frames
         self.target_origin = None
         self.target_id = None
+        self.target_last_seen = None
         self.target_requires_crosswalk = False
         self.previous_context = None
         self.previous_shape = None
@@ -203,11 +205,13 @@ class TemporalSelector:
     def _clear_target(self):
         self.target_origin = None
         self.target_id = None
+        self.target_last_seen = None
         self.target_requires_crosswalk = False
 
     def _acquire_target(self, decision, signals, origin):
         self.target_origin = origin
         self.target_id = signals[decision["signal_index"]]["track_id"]
+        self.target_last_seen = self.previous_context.captured_at_ms
         self.target_requires_crosswalk = False
         decision.update(selection_origin=self.target_origin, track_id=self.target_id)
 
@@ -223,7 +227,7 @@ class TemporalSelector:
         """횡단보도로 확정한 대상은 유지하고, 임시 대상은 복수 검출 때 연결을 확인한다.
 
         신호등 하나는 바로 선택하고, 여러 개는 횡단보도 연결을 연속 확인한다.
-        미검출 대상을 시간 기준으로 보관하거나 과거 박스·색상을 출력하지 않는다.
+        짧은 가림 동안 대상 ID만 보관하며 과거 박스·색상을 출력하지 않는다.
         """
         previous = self.previous_context
         continuous = previous is None or (
@@ -253,6 +257,7 @@ class TemporalSelector:
             tracking.update(previous_frame_id=previous.frame_id, previous_track_id=self.target_id)
             tracking["camera_motion"] = motion_diagnostic
             if index is not None:
+                self.target_last_seen = context.captured_at_ms
                 if self.target_origin == "single_signal":
                     self.target_requires_crosswalk |= len(signals) > 1
                     if self.target_requires_crosswalk:
@@ -280,6 +285,12 @@ class TemporalSelector:
                         "selection_origin": self.target_origin, "track_id": self.target_id,
                         "tracking": tracking}
             self._clear_pending()
+            missing_ms = context.captured_at_ms - self.target_last_seen
+            if tracking["reason"] == "target_missing" and missing_ms <= LOST_MAX_AGE_MS:
+                tracking["missing_ms"] = missing_ms
+                return {"status": "unknown", "reason": "waiting_for_target_reacquisition",
+                        "signal_index": None, "crosswalk_index": None,
+                        "selection_origin": self.target_origin, "tracking": tracking}
             self._clear_target()
 
         decision = associate(frame, signals, crosswalks, cv2)

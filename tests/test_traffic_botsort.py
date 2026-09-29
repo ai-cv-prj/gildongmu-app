@@ -42,20 +42,69 @@ class BOTSORTTests(unittest.TestCase):
                     tracker.update(FRAME, current, FrameContext(fid, (fid-1)*200, threshold))
                     self.assertEqual([s['track_id'] for s in current], [first[0]['track_id'], None])
 
-    def test_blank_frame_discards_id_and_weak_detection_cannot_restore_it(self):
+    def test_blank_frame_hides_prediction_and_restores_strong_detection(self):
         tracker = SignalTracker()
         first = detections((100,))
         tracker.update(FRAME, first, FrameContext(1, 0))
         empty = []
         tracker.update(FRAME, empty, FrameContext(2, 200))
         self.assertEqual(empty, [])
-        self.assertEqual(tracker.tracker.lost_stracks, [])
+        self.assertEqual(len(tracker.tracker.lost_stracks), 1)
+        returned = detections((100,))
+        tracker.update(FRAME, returned, FrameContext(3, 400))
+        self.assertEqual(returned[0]['track_id'], first[0]['track_id'])
+
+    def test_weak_detection_cannot_restore_id_after_blank_frame(self):
+        tracker = SignalTracker()
+        tracker.update(FRAME, detections((100,)), FrameContext(1, 0))
+        tracker.update(FRAME, [], FrameContext(2, 200))
         weak = detections((100,), .15)
         tracker.update(FRAME, weak, FrameContext(3, 400))
         self.assertIsNone(weak[0]['track_id'])
-        strong = detections((100,))
-        tracker.update(FRAME, strong, FrameContext(4, 600))
-        self.assertNotEqual(strong[0]['track_id'], first[0]['track_id'])
+
+    def test_lost_id_expires_by_capture_time_before_matching(self):
+        for return_at, restored in [(3000, True), (3001, False)]:
+            with self.subTest(return_at=return_at):
+                tracker = SignalTracker()
+                first = detections((100,))
+                tracker.update(FRAME, first, FrameContext(1, 0))
+                tracker.update(FRAME, [], FrameContext(2, 900))
+                tracker.update(FRAME, [], FrameContext(3, 1700))
+                tracker.update(FRAME, [], FrameContext(4, 2500))
+                returned = detections((100,))
+                tracker.update(FRAME, returned, FrameContext(5, return_at))
+                self.assertEqual(returned[0]['track_id'] == first[0]['track_id'], restored)
+
+    def test_ambiguous_or_weak_lost_match_gets_new_id(self):
+        for initial, returned in [((100,), (94, 106)), ((94, 106), (100,)), ((100,), (110,))]:
+            with self.subTest(initial=initial, returned=returned):
+                tracker = SignalTracker()
+                original = detections(initial)
+                tracker.update(FRAME, original, FrameContext(1, 0))
+                old_ids = {item['track_id'] for item in original}
+                tracker.update(FRAME, [], FrameContext(2, 200))
+                current = detections(returned)
+                tracker.update(FRAME, current, FrameContext(3, 400))
+                self.assertTrue(all(item['track_id'] not in old_ids for item in current))
+
+    def test_short_occlusion_restores_ids_after_camera_motion_and_order_change(self):
+        tracker = SignalTracker()
+        image = scene()
+        first = detections()
+        tracker.update(image, first, FrameContext(1, 0))
+        tracker.update(shifted(image, 40), [], FrameContext(2, 200))
+        returned = detections((380, 180))
+        tracker.update(shifted(image, 80), returned, FrameContext(3, 400))
+        self.assertEqual([item['track_id'] for item in returned], [2, 1])
+
+    def test_live_track_wins_over_ambiguous_lost_track(self):
+        tracker = SignalTracker()
+        first = detections((94, 106))
+        tracker.update(FRAME, first, FrameContext(1, 0))
+        tracker.update(FRAME, detections((106,)), FrameContext(2, 200))
+        returned = detections((100,))
+        tracker.update(FRAME, returned, FrameContext(3, 400))
+        self.assertEqual(returned[0]['track_id'], first[1]['track_id'])
 
     def test_instances_do_not_reset_each_others_ids(self):
         first, second = SignalTracker(), SignalTracker()
