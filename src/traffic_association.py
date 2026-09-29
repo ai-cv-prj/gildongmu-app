@@ -286,7 +286,18 @@ class TemporalSelector:
                         "tracking": tracking}
             self._clear_pending()
             missing_ms = context.captured_at_ms - self.target_last_seen
-            if tracking["reason"] == "target_missing" and missing_ms <= LOST_MAX_AGE_MS:
+            # 횡단보도 연결 없이 신호등 하나만 보고 임시 선택한 대상은 ID 자체가
+            # 선택 근거가 아니다. 현재도 추적 가능한 신호가 정확히 하나라면 끊긴
+            # ID를 3초 기다리지 않고 그 신호를 새 임시 대상으로 선택한다.
+            reselect_single = (
+                tracking["reason"] == "target_missing"
+                and self.target_origin == "single_signal"
+                and not self.target_requires_crosswalk
+                and len(signals) == 1
+                and signals[0].get("track_id") is not None
+            )
+            if (tracking["reason"] == "target_missing"
+                    and missing_ms <= LOST_MAX_AGE_MS and not reselect_single):
                 tracking["missing_ms"] = missing_ms
                 return {"status": "unknown", "reason": "waiting_for_target_reacquisition",
                         "signal_index": None, "crosswalk_index": None,
