@@ -70,7 +70,7 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(resolve_path(config["output_dir"]), PROJECT_DIR / "outputs/runs/manual")
         self.assertEqual(resolve_path("/tmp/example.mp4"), Path("/tmp/example.mp4"))
         self.assertEqual(config["overlay_alpha"], 0.55)
-        self.assertEqual(config["mode"], "both")
+        self.assertEqual(config["mode"], "all")
         self.assertEqual(config["yolo"]["conf"], 0.25)
         self.assertEqual(config["yolo"]["imgsz"], 640)
         self.assertEqual(config["yolo"]["head"], "nms")
@@ -468,6 +468,7 @@ class IntegrationTests(unittest.TestCase):
         frame = np.full((60, 100, 3), [10, 20, 30], dtype=np.uint8)
         detector = ObstacleDetector.__new__(ObstacleDetector)
         detector.device, detector.conf, detector.imgsz = "cpu", 0.25, 640
+        detector.iou, detector.max_det, detector.rect = 0.7, 300, True
         detector.class_names = dict(enumerate(EXPECTED_CLASS_NAMES))
         boxes = MagicMock()
         boxes.__len__.return_value = 1
@@ -486,6 +487,9 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(options["imgsz"], 640)
         self.assertEqual(options["conf"], 0.25)
         self.assertIsNone(options["nms"])
+        self.assertEqual(options["iou"], 0.7)
+        self.assertEqual(options["max_det"], 300)
+        self.assertIs(options["rect"], True)
         self.assertFalse(options["save"])
         np.testing.assert_array_equal(frame[0, 0], [10, 20, 30])
 
@@ -494,6 +498,7 @@ class IntegrationTests(unittest.TestCase):
         """미탐지는 빈 목록으로 처리하고 다른 해상도의 결과는 거부한다."""
         detector = ObstacleDetector.__new__(ObstacleDetector)
         detector.device, detector.conf, detector.imgsz = "cpu", 0.25, 640
+        detector.iou, detector.max_det, detector.rect = 0.7, 300, True
         detector.model = Mock()
         frame = np.zeros((24, 32, 3), dtype=np.uint8)
         for boxes in (None, []):
@@ -580,7 +585,8 @@ class IntegrationTests(unittest.TestCase):
                     mode=mode, device="cpu", mask2former_weights="/tmp/custom-mask2former",
                     yolo_weights="/tmp/custom.pt", conf=0.4, imgsz=320,
                 )
-                det.assert_called_once_with(Path("/tmp/custom.pt"), device="cpu", conf=0.4, imgsz=320, head="nms")
+                det.assert_called_once_with(Path("/tmp/custom.pt"), device="cpu", conf=0.4,
+                    imgsz=320, head="nms", iou=0.7, max_det=300, rect=True)
                 self.assertEqual(seg.call_count, int(mode == "both"))
                 if mode == "both":
                     seg.assert_called_once_with(Path("/tmp/custom-mask2former"), device="cpu")

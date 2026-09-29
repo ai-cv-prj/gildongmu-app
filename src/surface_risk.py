@@ -1,4 +1,7 @@
-"""Warnings for observed non-walkable path regions, independent of YOLO boxes.
+"""
+file_path: src/surface_risk.py
+
+Warnings for observed non-walkable path regions, independent of YOLO boxes.
 
 Semantic labels alone indicate a path check, never metric distance or confirmed
 collision. Missing/unstable evidence is not a reason to declare the scene safe.
@@ -8,11 +11,15 @@ import numpy as np
 
 
 class SurfaceRisk:
+    # 보행불가 영역 판정기 초기화
     def __init__(self, cfg):
+        """보행불가 영역의 확인 시간과 중복 판정 기준을 저장한다."""
         self.cfg = cfg
         self.reset()
 
+    # 이전 영역 판정 초기화
     def reset(self):
+        """이전 영상의 보행불가 영역 상태를 지운다."""
         self.pending_since = None
         self.clear_since = None
         self.active = False
@@ -21,15 +28,18 @@ class SurfaceRisk:
         self.last_time = None
         self.last_observed = None
 
+    # 보행불가 영역 위험 갱신
     def update(self, class_map, label_ids, shape, roi, timestamp, valid, camera_stable, detections):
+        """ROI 안의 보행불가 영역을 평가하고 안정적인 객체 경고와 중복을 확인한다."""
         result = {"enabled":self.cfg["surface_risk_enabled"], "status":"unavailable",
                   "alert_level":None, "regions":[], "reasons":[],
                   "path_nonwalkable_fraction":None, "near_nonwalkable_fraction":None,
-                  "suppressed_duplicate":False}
+                  "suppressed_duplicate":False, "matched_region_count":0,
+                  "unmatched_region_count":0}
         if not result["enabled"]:
             result["status"] = "disabled"
             return result, []
-        if self.last_time is not None and (timestamp<=self.last_time or timestamp-self.last_time>self.cfg["reset_gap_s"]):
+        if self.last_time is not None and (timestamp<=self.last_time or timestamp-self.last_time>self.cfg["hard_reset_gap_s"]):
             self.reset()
         self.last_time = timestamp
         if class_map is None or not label_ids or class_map.shape != tuple(shape[:2]):
@@ -81,9 +91,27 @@ class SurfaceRisk:
             poly = cv2.approxPolyDP(contour,2,True).reshape(-1,2)/[sw-1,sh-1]
             if len(poly)<3:
                 continue
+            # Match this connected blocked region to a stable, warned detector box.
+            # A detection elsewhere must not hide this independent path hazard.
+            matches = []
+            for index, item in enumerate(detections):
+                if (item.get("label_status") != "reliable" or
+                        item.get("alert_level", item.get("risk_level")) not in ("caution", "danger")):
+                    continue
+                box = (item.get("geometry") or {}).get("box_norm")
+                if box is None:
+                    continue
+                bx1 = max(0, min(sw, int(box[0] * sw)))
+                by1 = max(0, min(sh, int(box[1] * sh)))
+                bx2 = max(0, min(sw, int(np.ceil(box[2] * sw))))
+                by2 = max(0, min(sh, int(np.ceil(box[3] * sh))))
+                covered = int(cmask[by1:by2, bx1:bx2].sum()) / max(1, area)
+                if covered >= .70:
+                    matches.append(item.get("detection_index", index))
             candidates.append({"polygon":poly.tolist(),
                 "box_norm":[x/sw,y/sh,(x+bw)/sw,(y+bh)/sh],
-                "area_fraction":float(area/path_area), "band_fraction":band_fraction})
+                "area_fraction":float(area/path_area), "band_fraction":band_fraction,
+                "matched_detection_indices":matches})
         candidates.sort(key=lambda x:x["area_fraction"],reverse=True)
         result.update(path_nonwalkable_fraction=fraction,near_nonwalkable_fraction=near_fraction,
                       label_change_fraction=change,regions=candidates[:3],status="clear")
@@ -95,6 +123,9 @@ class SurfaceRisk:
         if not valid:
             self.pending_since = None
             result["status"] = "uncertain"
+            if self.active and self.last_observed is not None and timestamp-self.last_observed<=self.cfg["uncertainty_hold_s"]:
+                result["alert_level"] = "caution"
+                result["reasons"] = ["path_observation_uncertain"]
             return result, []
         events = []
         if observed:
@@ -125,20 +156,11 @@ class SurfaceRisk:
             result["alert_level"] = "caution"
             if not result["reasons"]:
                 result["reasons"] = ["confirming_path_visibility"]
-            # Keep semantic observations in the log/overlay but avoid a duplicate event.
-            duplicate = False
-            for region in candidates:
-                x1,y1,x2,y2 = region["box_norm"]
-                for item in detections:
-                    if item.get("alert_level",item.get("risk_level")) not in ("caution","danger"):
-                        continue
-                    box = (item.get("geometry") or {}).get("box_norm")
-                    if box is None:
-                        continue
-                    ix=max(0,min(x2,box[2])-max(x1,box[0]))
-                    iy=max(0,min(y2,box[3])-max(y1,box[1]))
-                    if ix*iy/max(1e-9,(x2-x1)*(y2-y1)) >= .5:
-                        duplicate = True
+            # Suppress only when every blocked component has a reliable match.
+            matched = sum(bool(r["matched_detection_indices"]) for r in candidates)
+            result["matched_region_count"] = matched
+            result["unmatched_region_count"] = len(candidates) - matched
+            duplicate = bool(candidates) and matched == len(candidates)
             result["suppressed_duplicate"] = duplicate
             if not duplicate and timestamp-self.last_event>=self.cfg["repeat_cooldown_s"]:
                 events.append({"source":"surface","type":"raised" if self.last_event==-float("inf") else "repeated",

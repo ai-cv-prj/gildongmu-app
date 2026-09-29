@@ -12,5 +12,8 @@ Pillow==12.3.0
 PyYAML==6.0.3
 scipy==1.18.1
 
-# Optional batch review video encoding (CPU FFmpeg binary)
+# 위험 안내 MP3 해독·결과 MP4 오디오 합성에 사용하는 FFmpeg 실행 파일
 imageio-ffmpeg==0.6.0
+
+# 테스트 실행
+pytest==9.1.1

@@ -269,7 +269,7 @@ class RiskPipelineTests(unittest.TestCase):
             traffic.reset.assert_called_once()
             self.assertEqual(traffic.predict.call_count,3)
             self.assertIs(draw_traffic.call_args.args[1],prediction)
-            self.assertEqual(draw_objects.call_args.args[1],[raw[0]])
+            draw_objects.assert_not_called()
             np.testing.assert_array_equal(traffic.predict.call_args.args[0],FRAME)
             rows=[json.loads(x) for x in output.with_suffix(".risk.jsonl").read_text().splitlines()]
             self.assertIsNone(rows[0]["detections"][1]["risk_level"])

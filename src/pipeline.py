@@ -22,6 +22,8 @@ from src.risk import RiskEngine, VideoClock
 from src.risk_config import risk_config as normalize_risk, tracking_config as normalize_tracking
 from src.risk_visualization import draw_risk
 from src.risk_log import RiskLog
+from src.walking_voice import WalkingVoice
+from src.video_audio import render_voice_track, mux_voice
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -98,6 +100,9 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
     temporary_path = None
     processed_frames = 0
     risk_log = None
+    voice = None
+    temporary_wav = None
+    temporary_mux = None
     committed = False
     engine = None
     try:
@@ -140,6 +145,7 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
         if risk_enabled:
             engine = RiskEngine(risk_settings, tracking_config)
             clock = VideoClock(fps)
+            voice = WalkingVoice()
             if risk_settings["log_jsonl"]:
                 risk_log = RiskLog(output_path)
 
@@ -163,6 +169,7 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
             if risk_result is not None:
                 engine.add_sidewalk_context(risk_result, class_map,
                     segmenter.label_ids if segmenter is not None else None, frame.shape)
+                voice.observe(risk_result, width, processed_frames / fps)
             traffic_result = traffic.predict(
                 frame, frame_id=processed_frames + 1,
                 captured_at_ms=processed_frames * 1000 / fps,
@@ -174,7 +181,7 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
                 overlay_segmentation(frame, class_map, segmenter.label_ids, alpha)
                 if segmenter is not None else frame
             )
-            if detector is not None:
+            if detector is not None and not risk_enabled:
                 result = draw_detections(result, detections)
             if risk_result is not None:
                 result = draw_risk(result, risk_result, risk_settings)
@@ -200,9 +207,26 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
         # 인코딩 종료 후 최종 이름 등록, 기존 파일 덮어쓰기 금지
         writer.release()
         writer = None
+
+        video_to_publish = temporary_path
+        if voice is not None and voice.events:
+            with tempfile.NamedTemporaryFile(
+                dir=output_path.parent, prefix=f".{output_path.stem}.",
+                suffix=".partial.wav", delete=False,
+            ) as temporary_file:
+                temporary_wav = Path(temporary_file.name)
+            render_voice_track(voice.events, processed_frames / fps, temporary_wav)
+            with tempfile.NamedTemporaryFile(
+                dir=output_path.parent, prefix=f".{output_path.stem}.",
+                suffix=".voice.partial.mp4", delete=False,
+            ) as temporary_file:
+                temporary_mux = Path(temporary_file.name)
+            mux_voice(temporary_path, temporary_wav, temporary_mux)
+            video_to_publish = temporary_mux
+
         if risk_log is not None:
             risk_log.publish()
-        os.link(temporary_path, output_path)
+        os.link(video_to_publish, output_path)
         committed = True
     finally:
         try:
@@ -213,6 +237,10 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
             # 성공·오류·Ctrl+C 모두 이번 작업의 임시 파일만 정리
             if temporary_path is not None:
                 temporary_path.unlink(missing_ok=True)
+            if temporary_wav is not None:
+                temporary_wav.unlink(missing_ok=True)
+            if temporary_mux is not None:
+                temporary_mux.unlink(missing_ok=True)
             if risk_log is not None:
                 risk_log.finish(committed)
     print(f"\n결과 영상 저장: {output_path}")
@@ -243,7 +271,7 @@ def run_video_inference(
     if output_path is not None and output_dir is not None:
         raise ValueError("--output-path와 --output-dir은 동시에 지정할 수 없습니다.")
     config = load_config(config_path)
-    mode = mode if mode is not None else config.get("mode", "both")
+    mode = mode if mode is not None else config.get("mode", "all")
     if mode not in ("both", "sidewalk", "obstacle", "traffic", "all"):
         raise ValueError("mode는 both, sidewalk, obstacle, traffic, all 중 하나여야 합니다.")
     device = device if device is not None else config["device"]
@@ -312,6 +340,8 @@ def run_video_inference(
         detector = ObstacleDetector(
             yolo_weights, device=device,
             conf=yolo_config["conf"], imgsz=yolo_config["imgsz"], head=yolo_config["head"],
+            iou=yolo_config.get("iou", 0.7), max_det=yolo_config.get("max_det", 300),
+            rect=yolo_config.get("rect", True),
         )
         device = detector.device
         print(

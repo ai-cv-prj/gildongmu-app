@@ -1,12 +1,12 @@
 # file_path: configs/inference.yaml
-# 도보·장애물 통합 추론 설정. 명령어 옵션이 이 설정보다 우선한다.
+# 보도·장애물·신호등 통합 추론 설정. 명령어 옵션이 이 설정보다 우선한다.
 # 모든 상대 경로는 통합 레포 루트 기준. 폴더는 자동 생성하지 않는다.
 
 sample_dir: data/samples   # 입력 영상
 output_dir: outputs/runs/manual # 결과 영상
 device: auto
 overlay_alpha: 0.55 # 오버레이 투명도 
-mode: both # both: 도보+장애물, all: 전체, sidewalk/obstacle/traffic: 단독
+mode: all # all: 도보+장애물+신호등, both: 도보+장애물, 나머지: 단독
 
 mask2former:
   weights: weights/mask2former # 가중치·모델·전처리 설정 폴더
@@ -16,6 +16,9 @@ yolo:
   conf: 0.25
   imgsz: 640
   head: nms # Ultralytics nms=None, NMS 후처리 사용
+  iou: 0.7
+  max_det: 300
+  rect: true
 
 traffic:
   weights: weights/traffic/best_YOLO.pt
@@ -31,19 +34,23 @@ traffic:
 risk:
   enabled: true
   corridor_polygon:
-  - - 0.40
+  - - 0.38
     - 0.30
-  - - 0.60
+  - - 0.62
     - 0.30
+  - - 0.98
+    - 0.70
   - - 0.98
     - 1.0
   - - 0.02
     - 1.0
+  - - 0.02
+    - 0.70
   immediate_polygon:
-  - - 0.205
-    - 0.75
-  - - 0.795
-    - 0.75
+  - - 0.02
+    - 0.70
+  - - 0.98
+    - 0.70
   - - 0.98
     - 1.0
   - - 0.02
@@ -52,8 +59,8 @@ risk:
   footprint_max_height: 0.02
   exit_overlap_threshold: 0.1
   exit_margin: 0.02
-  static_caution_y: 0.65
-  static_danger_y: 0.88
+  static_caution_y: 0.55
+  static_danger_y: 0.78
   static_ground_classes:
   - pole
   - bollard
@@ -86,6 +93,7 @@ risk:
   min_lateral_speed: 0.05
   lateral_near_y: 0.42
   reset_gap_s: 0.5
+  hard_reset_gap_s: 2.0
   ttc_alerts: true
   ttc_danger_s: 1.5
   ttc_caution_s: 3.0
@@ -110,6 +118,18 @@ risk:
   relative_entry_enabled: true
   roi_recalibration_enabled: true
   roi_ground_adapt_enabled: true
+  roi_top_max_y: 0.60
+  roi_extent_smooth_s: 0.35
+  roi_extent_hold_s: 0.50
+  roi_extent_deadband: 0.015
+  roi_extent_max_shift_per_s: 0.40
+  label_confirm_frames: 3
+  label_confidence: 0.60
+  label_conflict_hold_s: 0.80
+  wide_roi_priority_enabled: true
+  central_danger_left: 0.20
+  central_danger_right: 0.80
+  side_danger_y: 0.90
   roi_jitter_shift: 0.03
   roi_large_shift: 0.08
   roi_change_confirm_s: 0.30
@@ -123,6 +143,7 @@ risk:
   surface_unstable_change: 0.18
   class_bridge_enabled: true
   visibility_advisory_s: 1.0
+  camera_view_guard_enabled: true
   # Keep all detections; combine only strongly overlapping warning labels/counts.
   warning_grouping_enabled: true
   warning_group_iou: 0.65

@@ -1,11 +1,17 @@
-"""Time-based direction confirmation for a shared image-space camera profile."""
+"""
+file_path: src/roi_recalibration.py
+
+Time-based direction confirmation for a shared image-space camera profile.
+"""
 from collections import deque
 from copy import deepcopy
 import numpy as np
 
 
 class DirectionCalibration:
+    # ROI 방향 보정기 초기화
     def __init__(self, cfg):
+        """기본 ROI와 중심선 후보 기록을 준비한다."""
         self.cfg = cfg
         self.base = np.asarray(cfg["corridor_polygon"], float)
         self.top = np.flatnonzero(self.base[:, 1] == self.base[:, 1].min())
@@ -17,17 +23,21 @@ class DirectionCalibration:
         self.last_valid = None
         self.confidence = 0.0
 
+    # 중심이 이동한 ROI 생성
     def polygon(self, center):
+        """중심 이동량을 화면 범위 안으로 제한한 ROI를 만든다."""
         points = self.base.copy()
         shift = np.clip(center - self.base_center,
                         -self.base[self.top, 0].min(), 1-self.base[self.top, 0].max())
         points[self.top, 0] += shift
         return points.tolist()
 
+    # 시간에 따른 ROI 방향 보정
     def update(self, target, info, timestamp, timestamp_valid):
+        """확인된 중심선만 반영하고 큰 시간 공백에서 보정을 초기화한다."""
         if (not timestamp_valid or self.previous_time is not None and
                 (timestamp <= self.previous_time or
-                 timestamp-self.previous_time > self.cfg["reset_gap_s"])):
+                 timestamp-self.previous_time > self.cfg["hard_reset_gap_s"])):
             self.__init__(self.cfg)
         self.previous_time = timestamp
         before = self.center

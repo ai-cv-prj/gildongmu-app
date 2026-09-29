@@ -19,7 +19,7 @@ Mask2Former·YOLO 통합 추론의 준비, 실행 및 검증 방법 안내.
 | 신호등 YOLO의 횡단보도 | 보라 박스 + 신뢰도·탈락 사유, 연결 판단에 사용한 박스는 청록색 |
 
 현재는 **저장된 영상 파일을 분석하는 기능**입니다. 파인튜닝, 실시간 카메라 입력, BEV,
-거리 추정, 음성·진동 알림은 포함하지 않습니다.
+거리 추정과 진동 알림은 포함하지 않습니다. 보행 장애물 위험 음성은 결과 MP4에 저장합니다.
 2026-09-21부터 실험용 장애물 위험 판단(ROI·추적·측방 진입)과 JSONL 기록을 지원합니다.
 초기값과 수식, 실행 방법은 [위험 판단 MVP](docs/risk_mvp.md)를 참고하세요.
 현재 설정에서 활성화되어 있으며 `--no-risk`로 기존 탐지 표시만 사용할 수 있습니다.
@@ -108,7 +108,7 @@ gildongmu-integration/
 python -m scripts.run_video_inference --sample-dir data/samples/sample1
 ```
 
-현재 설정은 `mode: both`이므로 두 모델을 모두 사용합니다.
+현재 기본 설정은 `mode: all`이므로 보도·장애물·신호등을 함께 추론합니다.
 지정 폴더 바로 아래의 MP4를 파일명 순서대로 처리합니다.
 `sample2`를 쓰려면 `--sample-dir data/samples/sample2`로 바꾸면 됩니다.
 
@@ -162,7 +162,7 @@ python -m scripts.run_video_inference --mode all \
 
 신호등 가중치를 다른 곳에 두었다면 `--traffic-weights /경로/YOLO.pt`와
 `--traffic-classifier-weights /경로/MobileNet.pt`로 지정합니다.
-기존 `both`는 도보+장애물만 실행하고, 신호등까지 사용하려면 `all`을 선택합니다.
+`all`이 기본 모드입니다. `both`를 지정하면 도보+장애물만 실행합니다.
 `traffic` 모드에는 도보·장애물 가중치가 필요하지 않습니다.
 
 신호등은 `gildongmu-test-app` SESAC-78(`b3e4707`)과 SESAC-94(`a31ed6f`)의
@@ -177,7 +177,7 @@ BoT-SORT 추적·대상 선택·가림 복원 정책을 반영했습니다.
 
 `requirements.txt`에 추가된 객체 매칭 의존성 `lap==0.5.13`을 설치해야 합니다.
 기존 모델 환경에서는 `python -m pip install lap==0.5.13`로 추가할 수 있습니다.
-음성 안내는 실시간 입력 전환 때 추가할 예정이며 현재 결과 영상은 음성을 합성하지 않습니다.
+신호등 음성 안내는 현재 결과 영상에 포함하지 않습니다.
 판단 기준·반환 필드·FPS 차이·검증 결과는 [신호등 이식 문서](docs/traffic-signal-port.md)에 정리했습니다.
 
 횡단보도 선택은 **신호등 전용 YOLO의 crosswalk 박스**를 사용합니다.
@@ -202,9 +202,11 @@ Mask2Former의 핑크 마스크는 화면에 함께 표시하지만 현재 신�
 `--output-path`를 지정하면 지정한 이름을 그대로 사용합니다.
 
 - 원본 영상 크기와 저장 FPS를 유지하며 MP4로 다시 인코딩합니다. 원본 오디오는 포함하지 않습니다.
+- 위험 판정이 켜져 있고 보행 장애물이 `danger`이면 결과 MP4에 한국어 안내 음성이 들어갑니다. 왼쪽·가운데·오른쪽과 한 개·여러 개를 구분하며, 같은 위험을 매 프레임 반복하지 않습니다.
+- 같은 방향에 여러 위험 장애물이 있으면 “왼쪽에 여러 장애물.”처럼, 여러 방향에 있으면 “여러 방향에 장애물.”이라고 안내합니다. 위험이 없으면 음성 트랙을 만들지 않습니다.
 - 진행 중에는 콘솔에 `영상 처리: 처리한 프레임 수/전체 프레임 수`가 표시됩니다.
 - 완료되면 `결과 영상 저장: ...` 메시지가 나옵니다.
-- 위험 기능을 켜면 MP4와 같은 이름의 `.risk.jsonl`에 객체 좌표·선택적 ID·위험 등급·판단 사유·이벤트를 저장합니다.
+- 위험 기능을 켜면 MP4와 같은 이름의 `.risk.jsonl`에 객체 좌표·선택적 ID·위험 등급·판단 사유·이벤트를 저장합니다. 안내가 시작된 프레임에는 `voice_text`와 `voice_clip`도 기록합니다.
 - `--no-risk`에서는 영상만 저장합니다. 성능 평가표나 새 모델 가중치는 생성하지 않습니다.
 - 저장 FPS를 유지한다는 뜻이지, 그 속도로 실시간 추론한다는 뜻은 아닙니다. 별도 속도 측정이 필요합니다.
 
@@ -217,7 +219,7 @@ sample_dir: data/samples
 output_dir: outputs/runs/manual
 device: auto
 overlay_alpha: 0.55
-mode: both
+mode: all
 
 mask2former:
   weights: weights/mask2former
@@ -227,6 +229,9 @@ yolo:
   conf: 0.25
   imgsz: 640
   head: nms
+  iou: 0.7
+  max_det: 300
+  rect: true
 
 traffic:
   weights: weights/traffic/best_YOLO.pt
@@ -250,6 +255,7 @@ traffic:
 | `yolo.conf` | 객체 신뢰도 기준. 높이면 더 엄격하게 걸러지지만 놓치는 객체가 늘 수 있음 |
 | `yolo.imgsz` | YOLO 내부 전처리 크기 기준. 결과 영상의 크기를 바꾸는 값은 아님 |
 | `yolo.head` | 현재는 `nms`만 지원. 겹치는 탐지 박스를 정리하는 후처리 사용 |
+| `yolo.iou` / `yolo.max_det` / `yolo.rect` | 장애물 YOLO의 중복 판정 기준 / 최대 검출 수 / 입력 크기 정렬 여부 |
 | `traffic.weights` / `traffic.classifier_weights` | 신호등 YOLO / MobileNet 가중치 파일 |
 | `traffic.conf` / `traffic.imgsz` | 신호등 검출 기준 / YOLO 입력 크기 |
 | `traffic.crosswalk_min_confidence` | 연결에 사용할 횡단보도 검출 기준 |
@@ -321,6 +327,12 @@ python -m scripts.run_video_inference \
 | [src/pipeline.py](src/pipeline.py) | 영상 읽기 → 모드별 모델 추론 → 결과 합성 → MP4 저장 |
 | [src/sidewalk.py](src/sidewalk.py) | Mask2Former 로딩과 보행 영역 추론 |
 | [src/obstacle.py](src/obstacle.py) | YOLO 로딩과 장애물 추론 |
+| [src/risk.py](src/risk.py) | 예상보행경로(ROI)와 장애물 위험 등급·대표 경고 판정 |
+| [src/walking_voice.py](src/walking_voice.py) | 위험 장애물의 방향·종류·개수에 따른 음성 선택과 반복 억제 |
+| [src/video_audio.py](src/video_audio.py) | 위험 음원을 영상 시점에 배치하고 결과 MP4에 합성 |
+| [src/ground_extent.py](src/ground_extent.py) | 보행가능영역에 따른 ROI 상단 보정과 가림 시 경계 유지 |
+| [src/camera_view.py](src/camera_view.py) | 촬영 상태가 불확실할 때 위험 판정 표시 제한 |
+| [src/hazard_labels.py](src/hazard_labels.py), [src/warning_summary.py](src/warning_summary.py) | 객체 이름 안정화와 대표 경고 선택 |
 | [src/traffic.py](src/traffic.py) | 신호등 YOLO, MobileNet 로딩·선택 대상 색상 분류 |
 | [src/traffic_association.py](src/traffic_association.py) | 중복 제거·횡단보도 연결·임시 대상 재확인·확정 대상 유지 |
 | [src/traffic_tracker.py](src/traffic_tracker.py) | 영상별 BoT-SORT ID·낮은 신뢰도 연결·3초 가림 복원 |
@@ -328,6 +340,8 @@ python -m scripts.run_video_inference \
 | [src/traffic_motion.py](src/traffic_motion.py) | 카메라 이동 검증과 이전 박스 좌표 보정 |
 | [src/visualization.py](src/visualization.py) | 반투명 마스크와 클래스별 색상의 객체 박스·글자 표시 |
 | [tests/test_integration.py](tests/test_integration.py) | 설정·옵션·좌표·클래스별 색상·영상 저장 동작 검증. 일반 추론 실행에는 사용하지 않음 |
+| [tests/test_walking_risk_sync.py](tests/test_walking_risk_sync.py) | 넓은 ROI, 측면 위험, 촬영 상태와 보행불가 영역 경고 검증 |
+| [tests/test_walking_voice.py](tests/test_walking_voice.py) | 방향·다중 위험 안내와 MP4 오디오 저장 검증 |
 | [tests/test_traffic.py](tests/test_traffic.py) | 단일·복수 신호등 선택, 색상 전처리, unknown, 모드 호환성 검증 |
 | [tests/test_traffic_tracking.py](tests/test_traffic_tracking.py) | 대상 전환·재확인·색상 보류·흔들림·방향·표시 검증 |
 | [tests/test_traffic_botsort.py](tests/test_traffic_botsort.py) | 실제 BoT-SORT ID·낮은 신뢰도 연결·중복 제거·영상별 초기화 검증 |
@@ -444,7 +458,7 @@ Transformers 5.17.0으로 CPU 검증했습니다. 위 Python 3.12 기준 고정 
 
 5. 실시간 전환 시 연속 프레임 수와 최소 확인 시간을 함께 적용할지 검토합니다.
    기존 테스트 앱은 초당 최대 5회로 첫 확인부터 세 번째 확인까지 정상 주기에서 약 0.4초입니다.
-6. 음성은 실시간 전환 때 추가합니다. 테스트 앱의 3프레임·400ms 확인, 2초 소실 안내,
+6. 신호등 음성은 실시간 전환 때 추가합니다. 테스트 앱의 3프레임·400ms 확인, 2초 소실 안내,
    같은 색 반복 억제·복구 후 재안내와 순차 재생 정책을 적용할 예정입니다.
 
 요약: 가상환경 활성화 → 가중치·영상 준비 → 샘플 폴더 선택 → 실행 → outputs/runs/manual 결과 확인.
