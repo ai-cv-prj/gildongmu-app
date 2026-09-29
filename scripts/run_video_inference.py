@@ -8,7 +8,7 @@ file_path: scripts/run_video_inference.py
 python -m scripts.run_video_inference --sample-dir data/samples/sample1
 
 [결과물]
-outputs/videos/result_*.mp4로 저장됨
+outputs/runs/manual/result_*.mp4로 저장됨
 """
 
 import argparse
@@ -32,7 +32,7 @@ def main():
     outputs.add_argument("--output-dir", type=Path, help="결과를 저장할 기존 폴더")
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"))
     parser.add_argument("--mode", choices=("both", "sidewalk", "obstacle", "traffic", "all"),
-                        help="both: 도보+장애물, all: 도보+장애물+신호등, 나머지: 단독 추론")
+                        help="기본값 all: 도보+장애물+신호등, both: 도보+장애물, 나머지: 단독 추론")
     parser.add_argument("--traffic-weights", type=Path, help="2클래스 신호등+횡단보도 YOLO 가중치")
     parser.add_argument("--traffic-classifier-weights", type=Path, help="MobileNetV3-Small 색상 분류 가중치")
     parser.add_argument("--yolo-weights", type=Path, help="YOLO .pt 가중치 경로")

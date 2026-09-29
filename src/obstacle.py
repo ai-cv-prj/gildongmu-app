@@ -23,7 +23,7 @@ EXPECTED_CLASS_NAMES = (
 
 # YOLO 설정 검증
 def validate_yolo_config(config):
-    """가중치 경로와 신뢰도·입력 크기·추론 헤드 설정을 확인한다."""
+    """가중치 경로와 test-app의 YOLO 추론 옵션을 확인한다."""
     required = {"weights", "conf", "imgsz", "head"}
     if not isinstance(config, dict) or not required.issubset(config):
         raise ValueError("yolo 설정에는 weights, conf, imgsz, head가 필요합니다.")
@@ -37,15 +37,25 @@ def validate_yolo_config(config):
         raise ValueError("yolo.imgsz는 양의 정수여야 합니다.")
     if config["head"] != "nms":
         raise ValueError("현재 통합에서는 yolo.head: nms만 지원합니다.")
+    iou = config.get("iou", 0.7)
+    if isinstance(iou, bool) or not isinstance(iou, (int, float)) or not 0 <= iou <= 1:
+        raise ValueError("yolo.iou는 0부터 1 사이의 숫자여야 합니다.")
+    max_det = config.get("max_det", 300)
+    if isinstance(max_det, bool) or not isinstance(max_det, int) or max_det < 1:
+        raise ValueError("yolo.max_det는 양의 정수여야 합니다.")
+    if not isinstance(config.get("rect", True), bool):
+        raise ValueError("yolo.rect는 불리언이어야 합니다.")
 
 
 class ObstacleDetector:
     """한 번 로딩한 YOLO로 여러 프레임의 장애물을 탐지한다."""
 
     # 로컬 가중치 및 클래스 확인
-    def __init__(self, weights, device="auto", conf=0.25, imgsz=640, head="nms"):
+    def __init__(self, weights, device="auto", conf=0.25, imgsz=640, head="nms",
+                 iou=0.7, max_det=300, rect=True):
         """32클래스 장애물 가중치를 불러오고 추론 옵션을 저장한다."""
-        validate_yolo_config({"weights": str(weights), "conf": conf, "imgsz": imgsz, "head": head})
+        validate_yolo_config({"weights": str(weights), "conf": conf, "imgsz": imgsz,
+                              "head": head, "iou": iou, "max_det": max_det, "rect": rect})
         weights = Path(weights).expanduser().resolve()
         if weights.suffix.lower() != ".pt" or not weights.is_file():
             raise FileNotFoundError(f"로컬 YOLO .pt 가중치가 없습니다: {weights}")
@@ -62,6 +72,9 @@ class ObstacleDetector:
         self.device = device
         self.conf = conf
         self.imgsz = imgsz
+        self.iou = iou
+        self.max_det = max_det
+        self.rect = rect
         self.model = YOLO(str(weights))
         if self.model.task != "detect":
             raise ValueError("객체 탐지용 YOLO 가중치가 필요합니다.")
@@ -74,7 +87,8 @@ class ObstacleDetector:
         """BGR 프레임에서 박스 좌표·클래스·신뢰도 목록을 반환한다."""
         result = self.model.predict(
             source=frame, conf=self.conf, imgsz=self.imgsz, device=self.device,
-            nms=None, verbose=False, save=False, save_txt=False, save_crop=False,
+            nms=None, iou=self.iou, max_det=self.max_det, rect=self.rect,
+            verbose=False, save=False, save_txt=False, save_crop=False,
         )[0]
         if tuple(result.orig_shape) != frame.shape[:2]:
             raise ValueError("YOLO 결과와 원본 프레임의 높이·너비가 다릅니다.")

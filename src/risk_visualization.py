@@ -1,10 +1,16 @@
-"""Additional risk overlay; existing class colors and traffic drawing are untouched."""
+"""
+file_path: src/risk_visualization.py
+
+Additional risk overlay; existing class colors and traffic drawing are untouched.
+"""
 import cv2
 import numpy as np
 
 COLORS = {"monitor": (180,180,180), "caution": (0,200,255), "danger": (0,0,255)}
 
+# 영상에 위험 판정 표시
 def draw_risk(frame, prediction, config):
+    """현재 ROI와 장애물 위험도를 영상 프레임에 표시한다."""
     config = dict(config)
     for key in ("corridor_polygon", "immediate_polygon"):
         if prediction.get("roi"):
@@ -13,7 +19,7 @@ def draw_risk(frame, prediction, config):
         return draw_review(frame, prediction, config)
     result = draw_scene_regions(frame, prediction)
     h, w = frame.shape[:2]
-    if config["draw_roi"]:
+    if config["draw_roi"] and (prediction.get("camera_view") or {}).get("status") != "unavailable":
         for key, color in (("corridor_polygon",(255,190,0)), ("immediate_polygon",(0,120,255))):
             points = np.rint(np.asarray(config[key])*[w-1,h-1]).astype(np.int32)
             cv2.polylines(result, [points], True, color, 2, cv2.LINE_AA)
@@ -44,18 +50,22 @@ def draw_risk(frame, prediction, config):
     return result
 
 
+# 검토용 위험 화면 생성
 def draw_review(frame, prediction, config):
+    """검토용 ROI와 위험 카드 및 상태 요약을 그린다."""
     """Large, temporary inspection overlay. Red/amber outlines encode risk, not class."""
     result = draw_scene_regions(frame, prediction)
     h, w = frame.shape[:2]
     scale = max(.45, w/1080)
     thick = max(3, round(7*scale))
     font = cv2.FONT_HERSHEY_SIMPLEX
+    # 검토용 글자 표시
     def text(message, position, size, color, weight=2):
+        """검은 외곽선을 포함한 문구를 프레임에 그린다."""
         cv2.putText(result, message, position, font, size, (0,0,0), weight+3, cv2.LINE_AA)
         cv2.putText(result, message, position, font, size, color, weight, cv2.LINE_AA)
 
-    if config["draw_roi"]:
+    if config["draw_roi"] and (prediction.get("camera_view") or {}).get("status") != "unavailable":
         for key, color, alpha, label in (
             ("corridor_polygon",(255,220,20),.09,"PATH ROI"),
             ("immediate_polygon",(220,40,250),.14,"NEAR ROI")):
@@ -96,7 +106,7 @@ def draw_review(frame, prediction, config):
         identity = f'#{item["track_id"]}' if item["track_id"] is not None else "NEW"
         display_level = "UNKNOWN" if item.get("alert_status") == "uncertain" and level == "monitor" else level.upper()
         grouped = f' x{item.get("warning_group_size",1)}' if item.get("warning_group_size",1)>1 else ""
-        first = f'{display_level} | {item["class_name"]} {identity}{grouped}'
+        first = f'{display_level} | {item.get("display_label", "obstacle")} {identity}{grouped}'
         motion = item.get("motion") or {}
         detail = ""
         if level != "monitor":
@@ -143,7 +153,9 @@ def draw_review(frame, prediction, config):
             cv2.putText(result,line,(left+7,top+(i+1)*line_height),font,size,color,weight,cv2.LINE_AA)
     panel_height=max(110,round(202*scale))
     cv2.rectangle(result,(0,h-panel_height),(w-1,h-1),(16,16,16),-1)
-    scene_warnings=int(bool((prediction.get("surface") or {}).get("alert_level"))) + int(bool(prediction.get("advisories")))
+    scene_warnings=(int(bool((prediction.get("surface") or {}).get("alert_level")))
+                    + int(bool(prediction.get("advisories")))
+                    + int((prediction.get("camera_view") or {}).get("status") in ("uncertain", "unavailable")))
     title=f'DANGER {counts["danger"]}   CAUTION {counts["caution"]+scene_warnings}   MONITOR/UNK {counts["monitor"]}'
     text(title,(16,h-panel_height+round(34*scale)),.95*scale,(255,255,255),max(1,round(2*scale)))
     mode="ON (experimental)" if config["ttc_alerts"] else "LOG ONLY"
@@ -165,7 +177,9 @@ def draw_review(frame, prediction, config):
     return result
 
 
+# 표면 위험 영역 표시
 def draw_scene_regions(frame, prediction):
+    """보행불가 영역 위험 다각형을 영상에 표시한다."""
     """Draw observed semantic regions; never invent a detection box for lost tracks."""
     result=frame.copy()
     h,w=result.shape[:2]
@@ -180,8 +194,15 @@ def draw_scene_regions(frame, prediction):
     return result
 
 
+# 장면 전체 경고 표시
 def draw_scene_status(result, prediction, position, scale):
+    """촬영 상태와 보행 영역 경고를 영상에 표시한다."""
     messages=[]
+    camera_view=prediction.get("camera_view") or {}
+    if camera_view.get("status") == "unavailable":
+        messages.append("CAMERA: point forward")
+    elif camera_view.get("status") == "uncertain":
+        messages.append("CAMERA: steady view")
     surface=prediction.get("surface") or {}
     if surface.get("alert_level"):
         messages.append("PATH: check surroundings" if surface.get("status")=="uncertain" else "PATH: non-walkable area")
