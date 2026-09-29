@@ -222,18 +222,15 @@ class TrackingTests(unittest.TestCase):
                 self.assertIsNone(pipe.predict(FRAME)['selected_detection_index'])
             self.assertEqual(pipe.predict(FRAME)['selected_detection_index'], 1)
 
-    def test_lost_target_waits_three_seconds_before_reselecting_single_signal(self):
+    def test_lost_provisional_target_reselects_only_visible_signal_immediately(self):
         pipe = fake_pipeline([(NEAR, .8, 0)])
         first = pipe.predict(FRAME)
         pipe.detector = fake_pipeline([(FAR, .9, 0)]).detector
-        for fid in range(2, 17):
-            result = pipe.predict(FRAME, frame_id=fid, captured_at_ms=(fid - 1) * 200)
-            self.assertIsNone(result['selected_detection_index'])
-            self.assertEqual(result['signal_state'], 'unknown')
-            self.assertEqual(result['association']['reason'], 'waiting_for_target_reacquisition')
-        result = pipe.predict(FRAME, frame_id=17, captured_at_ms=3200)
+        result = pipe.predict(FRAME, frame_id=2, captured_at_ms=200)
         self.assertEqual(result['selected_detection_index'], 0)
         self.assertNotEqual(result['detections'][0]['track_id'], first['detections'][0]['track_id'])
+        self.assertEqual(result['association']['selection_origin'], 'single_signal')
+        self.assertEqual(result['association']['reason'], 'crosswalk_relation_unverified')
         self.assertEqual(result['association']['tracking']['reason'], 'target_missing')
 
     def test_provisional_confirmation_is_not_bypassed_by_short_occlusion(self):
