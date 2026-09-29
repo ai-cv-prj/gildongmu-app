@@ -1,7 +1,7 @@
 """
 file_path: src/video_audio.py
 
-보행 위험 MP3를 영상 시간에 맞춰 음성 트랙으로 만들고 결과 MP4에 합친다.
+보행 위험·신호 안내 MP3를 영상 시간에 맞춰 음성 트랙으로 만들고 결과 MP4에 합친다.
 새 위험 안내가 시작되면 이전 안내를 중단한다.
 """
 
@@ -70,11 +70,16 @@ def render_voice_track(events, duration_s, wav_path):
 
 
 # 영상과 음성 결합
-def mux_voice(video_path, wav_path, output_path):
-    """영상 프레임을 복사하고 안내 음성을 AAC로 인코딩해 MP4에 저장한다."""
-    subprocess.run(
-        [ffmpeg_executable(), "-nostdin", "-y", "-v", "error", "-i", str(video_path),
-         "-i", str(wav_path), "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy",
-         "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", str(output_path)],
-        check=True, capture_output=True,
-    )
+def mux_voice(video_path, wav_path, output_path, other_wav_path=None):
+    """한두 음성 트랙을 AAC로 인코딩해 영상에 저장한다."""
+    command = [ffmpeg_executable(), "-nostdin", "-y", "-v", "error", "-i", str(video_path),
+               "-i", str(wav_path)]
+    if other_wav_path is not None:
+        command += ["-i", str(other_wav_path), "-filter_complex",
+                    "[1:a][2:a]amix=inputs=2:duration=longest:normalize=0[a]",
+                    "-map", "0:v:0", "-map", "[a]"]
+    else:
+        command += ["-map", "0:v:0", "-map", "1:a:0"]
+    command += ["-c:v", "copy", "-c:a", "aac", "-b:a", "96k",
+                "-movflags", "+faststart", str(output_path)]
+    subprocess.run(command, check=True, capture_output=True)

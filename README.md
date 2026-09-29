@@ -19,7 +19,7 @@ Mask2Former·YOLO 통합 추론의 준비, 실행 및 검증 방법 안내.
 | 신호등 YOLO의 횡단보도 | 보라 박스 + 신뢰도·탈락 사유, 연결 판단에 사용한 박스는 청록색 |
 
 현재는 **저장된 영상 파일을 분석하는 기능**입니다. 파인튜닝, 실시간 카메라 입력, BEV,
-거리 추정과 진동 알림은 포함하지 않습니다. 보행 장애물 위험 음성은 결과 MP4에 저장합니다.
+거리 추정과 진동 알림은 포함하지 않습니다. 보행 장애물 위험과 신호등 안내 음성을 결과 MP4에 저장합니다.
 2026-09-21부터 실험용 장애물 위험 판단(ROI·추적·측방 진입)과 JSONL 기록을 지원합니다.
 초기값과 수식, 실행 방법은 [위험 판단 MVP](docs/risk_mvp.md)를 참고하세요.
 현재 설정에서 활성화되어 있으며 `--no-risk`로 기존 탐지 표시만 사용할 수 있습니다.
@@ -176,7 +176,9 @@ BoT-SORT 추적·대상 선택·가림 복원 정책을 반영했습니다.
 
 `requirements.txt`에 추가된 객체 매칭 의존성 `lap==0.5.13`을 설치해야 합니다.
 기존 모델 환경에서는 `python -m pip install lap==0.5.13`로 추가할 수 있습니다.
-신호등 음성 안내는 현재 결과 영상에 포함하지 않습니다.
+신호등 안내는 테스트 앱과 같은 MP3 음원·문구를 사용합니다. 선택된 대상의 색을 3프레임·400ms
+확인한 뒤 안내하며, 색상 전환·2초간 신호 미확인·복구 후 재안내·같은 색 반복 억제를 적용합니다.
+영상 시작 안내가 끝난 시점부터 신호를 확인합니다. 장애물 음성과 겹치는 구간은 그대로 합성합니다.
 판단 기준·반환 필드·FPS 차이·검증 결과는 [신호등 이식 문서](docs/traffic-signal-port.md)에 정리했습니다.
 
 횡단보도 선택은 **신호등 전용 YOLO의 crosswalk 박스**를 사용합니다.
@@ -331,7 +333,8 @@ python -m scripts.run_video_inference \
 | [src/obstacle.py](src/obstacle.py) | YOLO 로딩과 장애물 추론 |
 | [src/risk.py](src/risk.py) | 예상보행경로(ROI)와 장애물 위험 등급·대표 경고 판정 |
 | [src/walking_voice.py](src/walking_voice.py) | 위험 장애물의 방향·종류·개수에 따른 음성 선택과 반복 억제 |
-| [src/video_audio.py](src/video_audio.py) | 위험 음원을 영상 시점에 배치하고 결과 MP4에 합성 |
+| [src/traffic_voice.py](src/traffic_voice.py) | 테스트 앱의 신호등 음성 안정화·전환·소실 안내 |
+| [src/video_audio.py](src/video_audio.py) | 안내 음원을 영상 시점에 배치하고 결과 MP4에 합성 |
 | [src/ground_extent.py](src/ground_extent.py) | 보행가능영역에 따른 ROI 상단 보정과 가림 시 경계 유지 |
 | [src/camera_view.py](src/camera_view.py) | 촬영 상태가 불확실할 때 위험 판정 표시 제한 |
 | [src/hazard_labels.py](src/hazard_labels.py), [src/warning_summary.py](src/warning_summary.py) | 객체 이름 안정화와 대표 경고 선택 |
@@ -344,6 +347,7 @@ python -m scripts.run_video_inference \
 | [tests/test_integration.py](tests/test_integration.py) | 설정·옵션·좌표·클래스별 색상·영상 저장 동작 검증. 일반 추론 실행에는 사용하지 않음 |
 | [tests/test_walking_risk_sync.py](tests/test_walking_risk_sync.py) | 넓은 ROI, 측면 위험, 촬영 상태와 보행불가 영역 경고 검증 |
 | [tests/test_walking_voice.py](tests/test_walking_voice.py) | 방향·다중 위험 안내와 MP4 오디오 저장 검증 |
+| [tests/test_traffic_voice.py](tests/test_traffic_voice.py) | 신호등 안내 규칙과 MP4 오디오 저장 검증 |
 | [tests/test_traffic.py](tests/test_traffic.py) | 단일·복수 신호등 선택, 색상 전처리, unknown, 모드 호환성 검증 |
 | [tests/test_traffic_tracking.py](tests/test_traffic_tracking.py) | 대상 전환·재확인·색상 보류·흔들림·방향·표시 검증 |
 | [tests/test_traffic_botsort.py](tests/test_traffic_botsort.py) | 실제 BoT-SORT ID·낮은 신뢰도 연결·중복 제거·영상별 초기화 검증 |
@@ -460,8 +464,8 @@ Transformers 5.17.0으로 CPU 검증했습니다. 위 Python 3.12 기준 고정 
 
 5. 실시간 전환 시 연속 프레임 수와 최소 확인 시간을 함께 적용할지 검토합니다.
    기존 테스트 앱은 초당 최대 5회로 첫 확인부터 세 번째 확인까지 정상 주기에서 약 0.4초입니다.
-6. 신호등 음성은 실시간 전환 때 추가합니다. 테스트 앱의 3프레임·400ms 확인, 2초 소실 안내,
-   같은 색 반복 억제·복구 후 재안내와 순차 재생 정책을 적용할 예정입니다.
+6. 영상 신호등 음성은 테스트 앱의 3프레임·400ms 확인, 2초 소실 안내,
+   같은 색 반복 억제·복구 후 재안내와 순차 재생 정책을 적용합니다.
 
 요약: 가상환경 활성화 → 가중치·영상 준비 → 샘플 폴더 선택 → 실행 → outputs/result_samples/샘플폴더명 결과 확인.
 

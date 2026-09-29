@@ -23,6 +23,7 @@ from src.risk_config import risk_config as normalize_risk, tracking_config as no
 from src.risk_visualization import draw_risk
 from src.risk_log import RiskLog
 from src.walking_voice import WalkingVoice
+from src.traffic_voice import TrafficVoice
 from src.video_audio import render_voice_track, mux_voice
 
 
@@ -131,7 +132,9 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
     processed_frames = 0
     risk_log = None
     voice = None
+    signal_voice = None
     temporary_wav = None
+    temporary_signal_wav = None
     temporary_mux = None
     committed = False
     engine = None
@@ -171,6 +174,7 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
 
         if traffic is not None:
             traffic.reset()
+            signal_voice = TrafficVoice()
 
         if risk_enabled:
             engine = RiskEngine(risk_settings, tracking_config)
@@ -204,6 +208,8 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
                 frame, frame_id=processed_frames + 1,
                 captured_at_ms=processed_frames * 1000 / fps,
             ) if traffic is not None else None
+            if traffic_result is not None:
+                signal_voice.observe(traffic_result, processed_frames + 1, processed_frames / fps)
             if traffic_result is not None:
                 # 일반 장애물 모델의 traffic_light 박스와 대상 신호등 표시가 겹치지 않게 한다.
                 detections = [item for item in detections if item["class_name"] != "traffic_light"]
@@ -239,19 +245,31 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
         writer = None
 
         video_to_publish = temporary_path
-        if voice is not None and voice.events:
+        walking_events = voice.events if voice is not None else []
+        signal_events = signal_voice.events if signal_voice is not None else []
+        if walking_events or signal_events:
             with tempfile.NamedTemporaryFile(
                 dir=output_path.parent, prefix=f".{output_path.stem}.",
                 suffix=".partial.wav", delete=False,
             ) as temporary_file:
                 temporary_wav = Path(temporary_file.name)
-            render_voice_track(voice.events, processed_frames / fps, temporary_wav)
+            render_voice_track(walking_events or signal_events, processed_frames / fps, temporary_wav)
+            if walking_events and signal_events:
+                with tempfile.NamedTemporaryFile(
+                    dir=output_path.parent, prefix=f".{output_path.stem}.",
+                    suffix=".signal.partial.wav", delete=False,
+                ) as temporary_file:
+                    temporary_signal_wav = Path(temporary_file.name)
+                render_voice_track(signal_events, processed_frames / fps, temporary_signal_wav)
             with tempfile.NamedTemporaryFile(
                 dir=output_path.parent, prefix=f".{output_path.stem}.",
                 suffix=".voice.partial.mp4", delete=False,
             ) as temporary_file:
                 temporary_mux = Path(temporary_file.name)
-            mux_voice(temporary_path, temporary_wav, temporary_mux)
+            if temporary_signal_wav is None:
+                mux_voice(temporary_path, temporary_wav, temporary_mux)
+            else:
+                mux_voice(temporary_path, temporary_wav, temporary_mux, temporary_signal_wav)
             video_to_publish = temporary_mux
 
         if risk_log is not None:
@@ -269,6 +287,8 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
                 temporary_path.unlink(missing_ok=True)
             if temporary_wav is not None:
                 temporary_wav.unlink(missing_ok=True)
+            if temporary_signal_wav is not None:
+                temporary_signal_wav.unlink(missing_ok=True)
             if temporary_mux is not None:
                 temporary_mux.unlink(missing_ok=True)
             if risk_log is not None:
