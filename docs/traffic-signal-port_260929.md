@@ -1,4 +1,4 @@
-# 신호등 판단·표시 이식 (SESAC-78·94, 2026-09-29)
+# 신호등 판단·표시·음성 이식 (SESAC-78·94·104, 2026-09-29)
 
 `gildongmu-test-app`의 커밋 `b3e4707` ([PR #6](https://github.com/ai-cv-prj/gildongmu-test-app/pull/6))과
 신호등 가림 복원 커밋 `a31ed6f`의 검출·추적·대상 선택 로직을 통합 프로젝트의 영상
@@ -6,8 +6,8 @@
 기존 `feature/sesac-73-traffic-tracking` 브랜치의 임시 선택·횡단보도 재확인 정책도 유지합니다.
 독립 실행하며 테스트 앱 폴더나 FastAPI를 import하지 않습니다.
 
-사용자 요청에 따라 **음성 안내는 실시간 입력 전환 때 추가**합니다.
-이번 변경에는 MP3, 음성 재생, 결과 영상의 음성 삽입을 포함하지 않습니다.
+SESAC-104에서 테스트 앱의 신호등 음원과 안내 규칙을 저장 영상에도 반영했습니다.
+추론 중 실시간 재생하지 않고, 완료된 결과 MP4의 오디오 트랙에서 들을 수 있습니다.
 
 ## 반영한 변경
 
@@ -92,6 +92,8 @@ OpenCV 결과 영상은 영문 라벨을 사용합니다. TARGET·CANDIDATE·UNS
 `configs/inference.yaml`의 기본 경로 `weights/traffic/best_YOLO.pt`는 **v2 내용**입니다.
 테스트 앱의 `best_YOLO_v2.pt`와 SHA-256이 같으며 색상 분류기도 동일합니다.
 가중치는 Git 제외 대상이므로 다른 환경에는 별도로 배치해야 합니다.
+보행 모델은 `weights/walking/mask2former/`와
+`weights/walking/yolo/finetune_v2_exp02_stage2_best.pt`에 두고 파일명은 유지합니다.
 
 - 검출기 SHA-256: `d530a19b53570988ded114defdbd77af51d0ad06228cad38b7464c9758da42aa`
 - 분류기 SHA-256: `e3fb14c1efd89686be7f03fba98f5aac34c57430436d1e1415fc448f25745098`
@@ -101,11 +103,17 @@ OpenCV 결과 영상은 영문 라벨을 사용합니다. TARGET·CANDIDATE·UNS
 
 ```bash
 python -m pip install lap==0.5.13
-python -m scripts.run_video_inference --mode traffic --video-path /경로/입력.mp4
-python -m unittest discover -s tests -v
+python -m scripts.run_video_inference --sample-dir data/samples/sample3
+python -m scripts.run_video_inference --mode traffic --sample-dir data/samples/sample3 \
+  --output-dir outputs/traffic_samples
+python -m pytest -q
 ```
 
-`both`는 도보·장애물, `all`은 신호등까지 포함합니다. 공용 `--conf`, `--imgsz`는
+기본 모드는 `all`입니다. `both`는 도보·장애물, `traffic`은 신호등 단독 추론입니다.
+예시 입력의 출력은 `outputs/result_samples/sample3/result_원본파일명.mp4`이며,
+신호등 단독 비교 영상은 `outputs/traffic_samples/sample3/`에 따로 저장합니다.
+위험 로그를 켜면 같은 폴더에 `.risk.jsonl`도 저장합니다. 폴더가 없으면 생성하고,
+같은 이름의 결과가 있으면 추론 완료 후 교체합니다. 공용 `--conf`, `--imgsz`는
 장애물 검출용이며 신호등 설정은 YAML의 `traffic` 항목을 사용합니다.
 
 ## 검증 결과
@@ -188,21 +196,31 @@ PYTHONPATH=/tmp/gildongmu-port-deps PYTHONDONTWRITEBYTECODE=1 \
   /home/user/gildongmu-test-app/.venv/bin/python -B -m unittest discover -s tests -v
 ```
 
-## 실시간 전환 시 추가할 음성 안내
+## 저장 영상의 신호등 음성 안내 (SESAC-104)
 
-이번에는 음성 모듈·음원·영상 음성 삽입을 추가하지 않습니다. 후속 실시간 작업에서
-테스트 앱의 최신 기준을 적용할 예정입니다.
+`src/traffic_voice.py`가 프레임 시각에 따라 안내 대상을 확인합니다. 테스트 앱에서 가져온
+한국어 MP3 7개는 `assets/audio/ko-v1/`에 있으며, `src/video_audio.py`가 결과 MP4에 합성합니다.
+영상 시작에는 “신호 안내를 시작합니다.”가 들어가고, 이 음원이 끝나기 전 프레임은 색상 안내의
+근거로 사용하지 않습니다. 선택된 신호등의 정수 `track_id`와 빨강·초록 색상이 필요합니다.
 
 - 같은 대상·같은 색을 3프레임·400ms 이상 확인 후 안내.
 - 최초 초록불은 “초록불입니다. 다음 초록 신호를 기다려 주세요.”.
 - 같은 대상의 연속 빨강↔초록 전환 시 변경 안내, 같은 색 반복 억제.
 - 신호색 확인 이력이 있을 때만 2초 이상 확인 불가 구간에서 한 번 안내.
 - 확인 불가 안내 후 재확인한 색은 같은 색이어도 한 번 안내.
-- 재확인 초록불은 “초록불입니다.”. 후속 음성은 현재 문장이 끝난 뒤 순서대로 재생.
+- 재확인 초록불은 “초록불입니다.”. 신호등 음성끼리는 앞 문장이 끝난 뒤 순서대로 재생.
+
+신호등과 도보 장애물 음성은 별도 트랙을 합쳐 겹치는 구간도 그대로 저장합니다.
+두 안내의 우선순위나 겹침 조정은 아직 적용하지 않았습니다. 입력이 영상 파일이므로 테스트 앱의
+브라우저 재생 제어·네트워크 응답 지연 검사는 적용 대상이 아닙니다. 음성은 영상 길이에서 끝납니다.
+
+자동 테스트는 전체 191개가 통과했고, 실제 가중치를 사용한 `all` 모드 2프레임 영상에서
+MP4 오디오 트랙 생성을 확인했습니다. 이 짧은 확인으로 sample3의 신호색 안내 정확도를
+검증한 것은 아닙니다.
 
 통합 영상은 원본 FPS와 영상 시각을 사용하며, 테스트 앱은 초당 최대 5회 처리합니다.
 횡단보도 연결의 3프레임 조건은 5FPS에서 약 0.4초, 30FPS에서 약 0.067초입니다.
-이 선택 조건에는 별도의 최소 400ms 검사가 없으며, 위 음성 확정 조건과 구분합니다.
+횡단보도 대상 선택 조건에는 별도의 최소 400ms 검사가 없으며, 위 음성 확정 조건과 구분합니다.
 직접 `predict(frame)`만 호출하면 호환용 연속 번호·200ms 간격을 사용하므로 실제 입력에서는
 명시적인 촬영 시각을 전달해야 합니다.
 

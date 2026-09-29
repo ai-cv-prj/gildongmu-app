@@ -5,6 +5,7 @@ file_path: scripts/run_video_inference.py
 실제 처리 로직은 src.pipeline에서 실행한다.
 
 [영상 테스트 실행]
+# sample1 폴더에 있는 모든 MP4를 처리
 python -m scripts.run_video_inference --sample-dir data/samples/sample1
 
 [영상 테스트 결과물]

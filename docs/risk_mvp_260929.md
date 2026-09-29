@@ -1,8 +1,8 @@
 # 장애물 위험 판단 MVP: 실제 구현과 초기 가정
 
-> 2026-09-21 후속 수정으로 ROI·접점·경고 해제·보도 방향 설정이 변경됐다. 아래는 초기 MVP 기록이다. 현재 구현은 [피드백 반영 구현](risk_revision_implementation_20260921.md)을 참고한다.
+> 2026-09-21 후속 수정으로 ROI·접점·경고 해제·보도 방향 설정이 변경됐다. 아래는 초기 MVP 기록이다. 현재 위험 판단은 [피드백 반영 구현](risk_revision_implementation_20260921.md)을, 현재 실행·음성 안내는 [README](../README.md)와 [신호등 이식 문서](traffic-signal-port_260929.md)를 참고한다.
 
-2026-09-21. 초기 구현은 저장된 MP4를 대상으로 한다. 위험 등급은 실험용 규칙의 결과이며 실제 충돌 확률이나 측정 거리가 아니다.
+2026-09-21. 아래 구현 범위와 수치는 당시 초기 MVP 기록이다. 위험 등급은 실험용 규칙의 결과이며 실제 충돌 확률이나 측정 거리가 아니다.
 
 ## 구현한 내용
 
@@ -20,8 +20,8 @@
 - 결과 MP4와 같은 이름의 .risk.jsonl에 객체별 판단과 사유를 저장한다.
 - 신호등 탐지·연결·색상 분류·표시 코드와 traffic 설정은 수정하지 않았다.
   일반 traffic_light는 추가 위험 평가 대상에서 제외한다.
-- ARCore, 음성·진동 출력, 실시간 카메라·비동기 추론은 아직 구현하지 않았다.
-  현재 이벤트는 영상 표시와 JSONL 기록에 사용된다.
+- 초기 MVP 당시 ARCore, 음성·진동 출력, 실시간 카메라·비동기 추론은 구현하지 않았다.
+  이후 저장 MP4에 장애물·신호등 안내 음성이 추가됐다. 이벤트는 영상 표시와 JSONL 기록에도 사용된다.
 
 ## ROI를 잘라 탐지하지 않는 이유
 
@@ -121,7 +121,7 @@ alert_level은 해제 유지 시간을 반영한 표시/알림 등급이고 risk
 - src/risk.py: 시간·상태 관리와 등급 규칙.
 - src/alert_policy.py: 중복 억제·상향·해제.
 - src/risk_visualization.py: 별도 위험 표시. 기존 클래스 색상/신호등 함수 보존.
-- src/risk_log.py: 기존 파일을 덮어쓰지 않는 로그 저장.
+- src/risk_log.py: 프레임별 위험 근거를 임시 JSONL에 기록하고 완료된 결과와 함께 교체.
 - src/pipeline.py: YOLO→위험 평가→Mask2Former 문맥→기존 신호등→표시·저장.
 
 현재 설정은 risk.enabled=true이다. both, obstacle, all에서 장애물 위험 기능을 사용한다.
@@ -129,21 +129,19 @@ traffic, sidewalk 단독 모드에는 위험 모듈을 실행하지 않는다.
 기존과 같은 표시가 필요하면 --no-risk 또는 risk.enabled=false를 사용한다.
 
 ```bash
-# 통합 레포 루트에서, 기존 환경 사용
-obs_env/bin/python -m scripts.run_video_inference \
-  --video-path data/samples/sample1/OBS_260913_G24P_001.mp4 \
-  --output-path outputs/runs/manual/result_OBS_260913_G24P_001_risk.mp4 \
-  --mode both --risk
+# 통합 레포 루트에서 위험 판단을 포함한 기본 all 모드 실행
+python -m scripts.run_video_inference --sample-dir data/samples/sample3
 
-# 기존 탐지 표시만
-obs_env/bin/python -m scripts.run_video_inference \
-  --video-path data/samples/sample1/OBS_260913_G24P_001.mp4 \
-  --output-path outputs/runs/manual/result_OBS_260913_G24P_001_no_risk.mp4 \
-  --mode both --no-risk
+# 위험 판단 없이 도보·장애물 표시만 확인
+python -m scripts.run_video_inference --sample-dir data/samples/sample3 \
+  --mode both --no-risk --output-dir outputs/no_risk_samples
 ```
 
-출력은 MP4와 .risk.jsonl이다. JSONL 첫 프레임에는 적용된 risk/tracking 설정도 기록한다.
-파일이 이미 있으면 다른 출력 이름을 사용한다. 추론 오류 시 이번 실행의 임시 파일을 정리한다.
+기본 출력은 `outputs/result_samples/sample3/result_원본파일명.mp4`이며, 위험 판단과 로그가
+켜져 있으면 같은 폴더에 `.risk.jsonl`도 저장한다. JSONL 첫 프레임에는 적용된 risk/tracking
+설정을 기록한다. 출력 폴더는 자동 생성하고 같은 이름의 결과는 완성 후 교체한다.
+위 비교 명령의 위험 판단 없는 영상은 `outputs/no_risk_samples/sample3/`에 따로 저장한다.
+추론 오류 시 기존 결과를 유지하고 이번 실행의 임시 파일을 정리한다.
 시간은 소스 PTS를 사용한다. PTS가 유효하지 않으면 명목 FPS로 표시 시각만 계산하고 운동 판단을 끈다.
 시간 역전·긴 공백·해상도 변경은 상태를 초기화한다. state_epoch로 로그에서 구분할 수 있다.
 실시간 프레임 드롭에 맞춰 기존 칼만 필터의 dt를 수정하는 기능은 아직 없다.
