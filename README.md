@@ -165,10 +165,13 @@ python -m scripts.run_video_inference --mode all \
 기존 `both`는 도보+장애물만 실행하고, 신호등까지 사용하려면 `all`을 선택합니다.
 `traffic` 모드에는 도보·장애물 가중치가 필요하지 않습니다.
 
-신호등은 `gildongmu-test-app` SESAC-78(`b3e4707`)의 BoT-SORT 추적·대상 선택 정책을 반영했습니다.
+신호등은 `gildongmu-test-app` SESAC-78(`b3e4707`)과 SESAC-94(`a31ed6f`)의
+BoT-SORT 추적·대상 선택·가림 복원 정책을 반영했습니다.
 중복 검출을 제거하고 낮은 신뢰도의 검출은 기존 객체 연결에만 사용합니다. 신호등이 하나면
 임시 선택하고, 복수 검출 시 횡단보도로 재확인하며 확정 대상은 정상 추적 중 유지합니다.
-미검출 대상 보관·예측 박스 표시는 없습니다. 모든 표시 신호등에 객체 ID를 표시합니다.
+신호등이 가려지면 촬영 시각 기준 최대 3초 동안 대상 ID를 보관하고, 명확히 다시 검출되면
+기존 ID로 복원합니다. 가림 중 과거 박스·색상은 표시하지 않습니다. 모든 현재 검출 신호등에
+객체 ID를 표시합니다.
 
 `requirements.txt`에 추가된 객체 매칭 의존성 `lap==0.5.13`을 설치해야 합니다.
 기존 모델 환경에서는 `python -m pip install lap==0.5.13`로 추가할 수 있습니다.
@@ -318,7 +321,7 @@ python -m scripts.run_video_inference \
 | [src/obstacle.py](src/obstacle.py) | YOLO 로딩과 장애물 추론 |
 | [src/traffic.py](src/traffic.py) | 신호등 YOLO, MobileNet 로딩·선택 대상 색상 분류 |
 | [src/traffic_association.py](src/traffic_association.py) | 중복 제거·횡단보도 연결·임시 대상 재확인·확정 대상 유지 |
-| [src/traffic_tracker.py](src/traffic_tracker.py) | 영상별 BoT-SORT ID·낮은 신뢰도 연결·미검출 이력 해제 |
+| [src/traffic_tracker.py](src/traffic_tracker.py) | 영상별 BoT-SORT ID·낮은 신뢰도 연결·3초 가림 복원 |
 | [src/traffic_geometry.py](src/traffic_geometry.py) | 도색 줄무늬 경계 기반 횡단보도 방향 추정 |
 | [src/traffic_motion.py](src/traffic_motion.py) | 카메라 이동 검증과 이전 박스 좌표 보정 |
 | [src/visualization.py](src/visualization.py) | 반투명 마스크와 클래스별 색상의 객체 박스·글자 표시 |
@@ -357,6 +360,11 @@ python -B -m unittest discover -s tests -p 'test_*.py' -v
 중복 제거, 임시 대상 재확인·확정 대상 유지, 미검출 즉시 해제, 영상별 ID 격리와
 기존 도보·장애물·영상 출력 경로를 검증했습니다.
 
+2026-09-29 SESAC-94의 신호등 가림 정책을 추가 이식했습니다. 현재 검출이 사라진 동안에는
+박스·색상을 만들지 않고 대상 ID만 최대 3초 보관하며, 복귀 위치가 명확할 때만 기존 ID를
+복원합니다. 신호등 회귀 테스트 62개와 전체 자동 테스트 168개가 통과했습니다.
+위 2026-09-22 기록의 즉시 해제 정책은 이 변경 이전의 검증 기록입니다.
+
 최신 `dev`의 장애물 위험 판단 변경을 반영한 PR 최종 상태에서는 **전체 154개 테스트가 통과**했습니다.
 공용 객체 매칭 의존성 `lap`은 중복 버전 지정을 제거하고 0.5.13으로 통일했습니다.
 
@@ -391,7 +399,7 @@ Transformers 5.17.0으로 CPU 검증했습니다. 위 Python 3.12 기준 고정 
 | 신호등 파이프라인 연동 | 신호등 전용 YOLO → 횡단보도 연결 → MobileNetV3-Small 색상 분류 연결 |
 | 대상 선택 | 1개 검출 시 즉시 분류, 2개 이상이면 횡단보도 소실점의 수평 거리와 신호등 크기로 비교 |
 | 객체 추적 | 영상별 BoT-SORT, 낮은 신뢰도는 기존 객체 연결에만 사용, IoU 0.60 중복 제거 |
-| 선택 안정화 | 단일 검출 대상은 복수 검출 시 횡단보도로 재확인; 확정 대상은 정상 추적 중 유지. 추적 실패 시 즉시 재선택 |
+| 선택 안정화 | 단일 검출 대상은 복수 검출 시 횡단보도로 재확인; 확정 대상은 정상 추적 중 유지. 신호등 가림은 최대 3초 복원 대기 |
 | 실행 모드 | traffic 단독 및 all 통합 추가, 기존 both·sidewalk·obstacle 유지 |
 | 영상 표시 | 전체 신호등의 미선택·후보·최종 대상 구분 및 색상 표시. 횡단보도 검출·연결 진단은 숨김 |
 | 구조 확인 | scripts 실행 진입점, src 추론·표시, configs 설정, tests 검증 구조 유지 |
