@@ -19,7 +19,7 @@ Mask2Former·YOLO 통합 추론의 준비, 실행 및 검증 방법 안내.
 | 신호등 YOLO의 횡단보도 | 보라 박스 + 신뢰도·탈락 사유, 연결 판단에 사용한 박스는 청록색 |
 
 현재는 **저장된 영상 파일을 분석하는 기능**입니다. 파인튜닝, 실시간 카메라 입력, BEV,
-거리 추정과 진동 알림은 포함하지 않습니다. 보행 장애물 위험 음성은 결과 MP4에 저장합니다.
+거리 추정과 진동 알림은 포함하지 않습니다. 보행 장애물 위험과 신호등 안내 음성을 결과 MP4에 저장합니다.
 2026-09-21부터 실험용 장애물 위험 판단(ROI·추적·측방 진입)과 JSONL 기록을 지원합니다.
 초기값과 수식, 실행 방법은 [위험 판단 MVP](docs/risk_mvp.md)를 참고하세요.
 현재 설정에서 활성화되어 있으며 `--no-risk`로 기존 탐지 표시만 사용할 수 있습니다.
@@ -68,12 +68,13 @@ GPU를 쓰려면 NVIDIA 드라이버와 CUDA 지원 PyTorch 설치 구성을 확
 ```text
 gildongmu-integration/
 ├── weights/
-│   ├── mask2former/
-│   │   ├── config.json
-│   │   ├── preprocessor_config.json
-│   │   └── model.safetensors
-│   ├── yolo/
-│   │   └── finetune_v2_exp02_stage2_best.pt
+│   ├── walking/
+│   │   ├── mask2former/
+│   │   │   ├── config.json
+│   │   │   ├── preprocessor_config.json
+│   │   │   └── model.safetensors
+│   │   └── yolo/
+│   │       └── finetune_v2_exp02_stage2_best.pt
 │   └── traffic/
 │       ├── best_YOLO.pt
 │       └── best_MobileNet.pt
@@ -95,7 +96,7 @@ gildongmu-integration/
 - **색상 분류기:** 입력 224의 `mobilenet_v3_small` 체크포인트입니다. 체크포인트에 저장된
   `class_names` 순서를 사용하므로 `[green, red]`를 임의로 `[red, green]`으로 바꾸지 않습니다.
 - **영상:** 폴더 일괄 처리는 MP4만 지원합니다. 하위 폴더까지 자동 탐색하지 않습니다.
-- **출력:** `outputs/runs/manual/`가 미리 있어야 합니다. 추론 코드는 입출력 폴더를 자동 생성하지 않습니다.
+- **출력:** `outputs/result_samples/sample1/`처럼 입력 샘플 폴더 이름으로 결과 폴더를 자동 생성합니다. 입력 영상 폴더는 미리 준비해야 합니다.
 
 ## 2. 영상 실행하기
 
@@ -115,18 +116,16 @@ python -m scripts.run_video_inference --sample-dir data/samples/sample1
 주의: 옵션을 생략하면 YAML의 `sample_dir: data/samples`를 사용합니다.
 영상이 `sample1` 안에 있다면 위처럼 하위 폴더를 지정하거나 YAML의 `sample_dir`를 바꿔야 합니다.
 
-### 기존 결과가 있거나 영상 하나만 처리할 때
+### 영상 하나만 처리할 때
 
-기존 결과는 덮어쓰거나 자동으로 건너뛰지 않습니다. 같은 이름이 있으면 실행을 중단합니다.
-재실행할 때는 다음처럼 **다른 결과 파일명**을 지정하세요.
+같은 영상으로 재실행하면 기존 MP4와 JSONL을 새 결과로 교체합니다.
 
 ```bash
 python -m scripts.run_video_inference \
-  --video-path data/samples/sample1/OBS_260914_G24P_001.mp4 \
-  --output-path outputs/runs/manual/result_OBS_260914_G24P_001_combined.mp4
+  --video-path data/samples/sample1/OBS_260914_G24P_001.mp4
 ```
 
-이 이름도 이미 존재하면 다른 이름을 지정해야 합니다.
+`--output-path`를 지정하면 해당 경로에 저장하고 기존 결과를 교체합니다.
 
 ### 도보·장애물을 따로 확인할 때
 
@@ -136,12 +135,12 @@ python -m scripts.run_video_inference \
 # 도보 마스크만 표시
 python -m scripts.run_video_inference --mode sidewalk \
   --video-path data/samples/sample1/OBS_260914_G24P_001.mp4 \
-  --output-path outputs/runs/manual/result_OBS_260914_G24P_001_sidewalk.mp4
+  --output-path outputs/result_samples/sample1/result_OBS_260914_G24P_001_sidewalk.mp4
 
 # 장애물 박스만 표시
 python -m scripts.run_video_inference --mode obstacle \
   --video-path data/samples/sample1/OBS_260914_G24P_001.mp4 \
-  --output-path outputs/runs/manual/result_OBS_260914_G24P_001_obstacle.mp4
+  --output-path outputs/result_samples/sample1/result_OBS_260914_G24P_001_obstacle.mp4
 ```
 
 단독 모드에서는 해당 모델만 로딩합니다. YAML은 아래의 전체 설정 구조를 유지하세요.
@@ -152,12 +151,12 @@ python -m scripts.run_video_inference --mode obstacle \
 # 신호등 검출 + 횡단보도 연결 + 색상 분류
 python -m scripts.run_video_inference --mode traffic \
   --video-path data/samples/sample1/OBS_260914_G24P_001.mp4 \
-  --output-path outputs/runs/manual/result_signal.mp4
+  --output-path outputs/result_samples/sample1/result_signal.mp4
 
 # 도보 + 장애물 + 신호등을 한 영상에 표시
 python -m scripts.run_video_inference --mode all \
   --video-path data/samples/sample1/OBS_260914_G24P_001.mp4 \
-  --output-path outputs/runs/manual/result_all.mp4
+  --output-path outputs/result_samples/sample1/result_all.mp4
 ```
 
 신호등 가중치를 다른 곳에 두었다면 `--traffic-weights /경로/YOLO.pt`와
@@ -177,7 +176,9 @@ BoT-SORT 추적·대상 선택·가림 복원 정책을 반영했습니다.
 
 `requirements.txt`에 추가된 객체 매칭 의존성 `lap==0.5.13`을 설치해야 합니다.
 기존 모델 환경에서는 `python -m pip install lap==0.5.13`로 추가할 수 있습니다.
-신호등 음성 안내는 현재 결과 영상에 포함하지 않습니다.
+신호등 안내는 테스트 앱과 같은 MP3 음원·문구를 사용합니다. 선택된 대상의 색을 3프레임·400ms
+확인한 뒤 안내하며, 색상 전환·2초간 신호 미확인·복구 후 재안내·같은 색 반복 억제를 적용합니다.
+영상 시작 안내가 끝난 시점부터 신호를 확인합니다. 장애물 음성과 겹치는 구간은 그대로 합성합니다.
 판단 기준·반환 필드·FPS 차이·검증 결과는 [신호등 이식 문서](docs/traffic-signal-port.md)에 정리했습니다.
 
 횡단보도 선택은 **신호등 전용 YOLO의 crosswalk 박스**를 사용합니다.
@@ -197,8 +198,9 @@ Mask2Former의 핑크 마스크는 화면에 함께 표시하지만 현재 신�
 
 ## 3. 결과 확인하기
 
-기본 저장 위치는 `outputs/runs/manual/result_원본파일명.mp4`입니다.
-예를 들어 `test.mp4`의 결과는 `result_test.mp4`로 저장됩니다.
+기본 저장 위치는 `outputs/result_samples/샘플폴더명/`입니다.
+예를 들어 `data/samples/sample5/test.mp4`는 `outputs/result_samples/sample5/result_test.mp4`와
+`outputs/result_samples/sample5/result_test.risk.jsonl`로 저장됩니다.
 `--output-path`를 지정하면 지정한 이름을 그대로 사용합니다.
 
 - 원본 영상 크기와 저장 FPS를 유지하며 MP4로 다시 인코딩합니다. 원본 오디오는 포함하지 않습니다.
@@ -206,7 +208,9 @@ Mask2Former의 핑크 마스크는 화면에 함께 표시하지만 현재 신�
 - 같은 방향에 여러 위험 장애물이 있으면 “왼쪽에 여러 장애물.”처럼, 여러 방향에 있으면 “여러 방향에 장애물.”이라고 안내합니다. 위험이 없으면 음성 트랙을 만들지 않습니다.
 - 진행 중에는 콘솔에 `영상 처리: 처리한 프레임 수/전체 프레임 수`가 표시됩니다.
 - 완료되면 `결과 영상 저장: ...` 메시지가 나옵니다.
-- 위험 기능을 켜면 MP4와 같은 이름의 `.risk.jsonl`에 객체 좌표·선택적 ID·위험 등급·판단 사유·이벤트를 저장합니다. 안내가 시작된 프레임에는 `voice_text`와 `voice_clip`도 기록합니다.
+- 위험 기능을 켜면 MP4와 같은 폴더의 `.risk.jsonl`에 객체 좌표·선택적 ID·위험 등급·판단 사유·이벤트를 저장합니다. 안내가 시작된 프레임에는 `voice_text`와 `voice_clip`도 기록합니다.
+- JSONL은 프레임별 위험 판정 근거를 검토하거나 이전 결과와 비교할 때 사용합니다. MP4 생성 과정에서 다시 읽지는 않습니다. 필요 없으면 `risk.log_jsonl: false`로 끌 수 있습니다.
+- 출력 폴더가 없으면 만들고, 같은 이름의 결과가 있으면 추론 완료 후 MP4와 JSONL을 교체합니다. 추론이 실패하면 기존 결과를 유지합니다.
 - `--no-risk`에서는 영상만 저장합니다. 성능 평가표나 새 모델 가중치는 생성하지 않습니다.
 - 저장 FPS를 유지한다는 뜻이지, 그 속도로 실시간 추론한다는 뜻은 아닙니다. 별도 속도 측정이 필요합니다.
 
@@ -216,16 +220,16 @@ Mask2Former의 핑크 마스크는 화면에 함께 표시하지만 현재 신�
 
 ```yaml
 sample_dir: data/samples
-output_dir: outputs/runs/manual
+output_dir: outputs/result_samples
 device: auto
 overlay_alpha: 0.55
 mode: all
 
 mask2former:
-  weights: weights/mask2former
+  weights: weights/walking/mask2former
 
 yolo:
-  weights: weights/yolo/finetune_v2_exp02_stage2_best.pt
+  weights: weights/walking/yolo/finetune_v2_exp02_stage2_best.pt
   conf: 0.25
   imgsz: 640
   head: nms
@@ -246,7 +250,7 @@ traffic:
 | 설정 | 의미 |
 | --- | --- |
 | `sample_dir` | 처리할 MP4가 직접 들어 있는 폴더 |
-| `output_dir` | 결과를 저장할 기존 폴더 |
+| `output_dir` | 샘플 입력 폴더별 결과 폴더의 상위 경로. 없으면 생성 |
 | `device` | `auto`: CUDA 가능 시 GPU, 아니면 CPU / `cuda`: GPU 지정 / `cpu`: CPU 지정 |
 | `mode` | `both`: 도보+장애물 / `all`: 전체 / `sidewalk`, `obstacle`, `traffic`: 각 단독 |
 | `mask2former.weights` | 가중치와 모델·전처리 설정이 있는 **폴더** |
@@ -274,8 +278,8 @@ YOLO 신뢰도 0.25는 시작 설정이며, 실제 영상의 오탐·미탐을 �
 ```bash
 python -m scripts.run_video_inference \
   --sample-dir data/samples/sample1 \
-  --mask2former-weights weights/mask2former \
-  --yolo-weights weights/yolo/finetune_v2_exp02_stage2_best.pt \
+  --mask2former-weights weights/walking/mask2former \
+  --yolo-weights weights/walking/yolo/finetune_v2_exp02_stage2_best.pt \
   --conf 0.25 --imgsz 640 --device cuda
 ```
 
@@ -300,9 +304,9 @@ python -m scripts.run_video_inference \
 
 | 메시지·상황 | 확인할 것 |
 | --- | --- |
-| 결과 영상이 이미 있음 | 다른 `--output-path`나 기존 출력 폴더를 지정. 자동 덮어쓰기·건너뛰기 없음 |
+| 같은 영상 재실행 | 기존 MP4와 JSONL을 새 결과로 교체. 원본 영상을 `--output-path`로 지정할 수 없음 |
 | 샘플 MP4가 없음 | `data/samples`가 아니라 실제 영상이 들어 있는 `data/samples/sample1`을 지정했는지 확인 |
-| 출력 폴더가 없음 | `outputs/runs/manual` 등 지정한 폴더를 먼저 준비. 자동 생성하지 않음 |
+| 출력 폴더가 없음 | `outputs/result_samples/샘플폴더명`을 자동 생성하는지 확인 |
 | 모델 파일이 없음 | Mask2Former 설정 파일까지 모두 준비했는지, YOLO 파일명이 설정과 같은지 확인 |
 | 3클래스·32클래스 오류 | 현재 코드에 맞는 팀 가중치인지 확인. 임의의 기본 모델은 사용할 수 없음 |
 | CUDA를 사용할 수 없음 | GPU 환경 확인. CPU로 실행하려면 명령어에 `--device cpu` 추가 |
@@ -316,7 +320,7 @@ python -m scripts.run_video_inference \
 - 여러 영상 중 앞서 완료한 결과는 유지됩니다. 실패한 영상은 `--video-path`로 개별 재실행하세요.
 - 전체 프레임 수를 알 수 없으면 누락 여부를 검증할 수 없다는 경고 후 읽을 수 있는 프레임을 처리합니다.
 - 강제 종료나 전원 종료 시에는 임시 파일이 남을 수 있습니다. 실행 중인 작업의 임시 파일은 건드리지 마세요.
-- 최종 등록에는 같은 파일시스템의 하드 링크를 사용하며, 실행 도중 만들어진 다른 결과도 덮어쓰지 않습니다.
+- 새 MP4와 JSONL을 완성한 뒤 기존 결과와 교체합니다. 공개 중 오류가 나면 이전 결과를 복구합니다.
 
 ## 6. 코드 구성과 테스트
 
@@ -329,7 +333,8 @@ python -m scripts.run_video_inference \
 | [src/obstacle.py](src/obstacle.py) | YOLO 로딩과 장애물 추론 |
 | [src/risk.py](src/risk.py) | 예상보행경로(ROI)와 장애물 위험 등급·대표 경고 판정 |
 | [src/walking_voice.py](src/walking_voice.py) | 위험 장애물의 방향·종류·개수에 따른 음성 선택과 반복 억제 |
-| [src/video_audio.py](src/video_audio.py) | 위험 음원을 영상 시점에 배치하고 결과 MP4에 합성 |
+| [src/traffic_voice.py](src/traffic_voice.py) | 테스트 앱의 신호등 음성 안정화·전환·소실 안내 |
+| [src/video_audio.py](src/video_audio.py) | 안내 음원을 영상 시점에 배치하고 결과 MP4에 합성 |
 | [src/ground_extent.py](src/ground_extent.py) | 보행가능영역에 따른 ROI 상단 보정과 가림 시 경계 유지 |
 | [src/camera_view.py](src/camera_view.py) | 촬영 상태가 불확실할 때 위험 판정 표시 제한 |
 | [src/hazard_labels.py](src/hazard_labels.py), [src/warning_summary.py](src/warning_summary.py) | 객체 이름 안정화와 대표 경고 선택 |
@@ -342,6 +347,7 @@ python -m scripts.run_video_inference \
 | [tests/test_integration.py](tests/test_integration.py) | 설정·옵션·좌표·클래스별 색상·영상 저장 동작 검증. 일반 추론 실행에는 사용하지 않음 |
 | [tests/test_walking_risk_sync.py](tests/test_walking_risk_sync.py) | 넓은 ROI, 측면 위험, 촬영 상태와 보행불가 영역 경고 검증 |
 | [tests/test_walking_voice.py](tests/test_walking_voice.py) | 방향·다중 위험 안내와 MP4 오디오 저장 검증 |
+| [tests/test_traffic_voice.py](tests/test_traffic_voice.py) | 신호등 안내 규칙과 MP4 오디오 저장 검증 |
 | [tests/test_traffic.py](tests/test_traffic.py) | 단일·복수 신호등 선택, 색상 전처리, unknown, 모드 호환성 검증 |
 | [tests/test_traffic_tracking.py](tests/test_traffic_tracking.py) | 대상 전환·재확인·색상 보류·흔들림·방향·표시 검증 |
 | [tests/test_traffic_botsort.py](tests/test_traffic_botsort.py) | 실제 BoT-SORT ID·낮은 신뢰도 연결·중복 제거·영상별 초기화 검증 |
@@ -424,7 +430,7 @@ Transformers 5.17.0으로 CPU 검증했습니다. 위 Python 3.12 기준 고정 
 | 실행 모드 | traffic 단독 및 all 통합 추가, 기존 both·sidewalk·obstacle 유지 |
 | 영상 표시 | 전체 신호등의 미선택·후보·최종 대상 구분 및 색상 표시. 횡단보도 검출·연결 진단은 숨김 |
 | 구조 확인 | scripts 실행 진입점, src 추론·표시, configs 설정, tests 검증 구조 유지 |
-| 입출력 규칙 | 원본 BGR·원본 픽셀 좌표, 모델 1회 로딩, 영상별 선택 이력 초기화, 결과 덮어쓰기 금지 유지 |
+| 입출력 규칙 | 원본 BGR·원본 픽셀 좌표, 모델 1회 로딩, 영상별 선택 이력 초기화, 완료 후 결과 교체 |
 | 검증 | 최신 dev 반영 후 전체 154개 테스트 통과, 실제 v2·MobileNet으로 실촬영 211프레임 재추론 및 45초 확인용 영상 검증 |
 | 로컬 가중치 | 기존 경로의 v1을 v2로 교체, 원본 v2와 해시 일치. 가중치 파일은 Git 제외 |
 
@@ -458,10 +464,10 @@ Transformers 5.17.0으로 CPU 검증했습니다. 위 Python 3.12 기준 고정 
 
 5. 실시간 전환 시 연속 프레임 수와 최소 확인 시간을 함께 적용할지 검토합니다.
    기존 테스트 앱은 초당 최대 5회로 첫 확인부터 세 번째 확인까지 정상 주기에서 약 0.4초입니다.
-6. 신호등 음성은 실시간 전환 때 추가합니다. 테스트 앱의 3프레임·400ms 확인, 2초 소실 안내,
-   같은 색 반복 억제·복구 후 재안내와 순차 재생 정책을 적용할 예정입니다.
+6. 영상 신호등 음성은 테스트 앱의 3프레임·400ms 확인, 2초 소실 안내,
+   같은 색 반복 억제·복구 후 재안내와 순차 재생 정책을 적용합니다.
 
-요약: 가상환경 활성화 → 가중치·영상 준비 → 샘플 폴더 선택 → 실행 → outputs/runs/manual 결과 확인.
+요약: 가상환경 활성화 → 가중치·영상 준비 → 샘플 폴더 선택 → 실행 → outputs/result_samples/샘플폴더명 결과 확인.
 
 ## 8. 장애물 위험 판단 MVP (2026-09-21)
 

@@ -4,11 +4,12 @@ file_path: scripts/run_video_inference.py
 명령어 옵션을 받아 도보·장애물·신호등 영상 추론을 시작한다.
 실제 처리 로직은 src.pipeline에서 실행한다.
 
-[실행]
+[영상 테스트 실행]
 python -m scripts.run_video_inference --sample-dir data/samples/sample1
 
-[결과물]
-outputs/runs/manual/result_*.mp4로 저장됨
+[영상 테스트 결과물]
+outputs/result_samples/샘플폴더명/에 결과 MP4를 저장함
+위험 판정이 켜져 있으면 같은 폴더에 .risk.jsonl도 저장함
 """
 
 import argparse

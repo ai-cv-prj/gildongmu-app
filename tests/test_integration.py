@@ -65,9 +65,10 @@ class IntegrationTests(unittest.TestCase):
     def test_default_config_and_paths(self):
         """설정 경로는 프로젝트 루트를 기준으로 해석한다."""
         config = load_config(DEFAULT_CONFIG)
-        self.assertEqual(resolve_path(config["mask2former"]["weights"]), PROJECT_DIR / "weights/mask2former")
+        self.assertEqual(resolve_path(config["mask2former"]["weights"]), PROJECT_DIR / "weights/walking/mask2former")
+        self.assertEqual(resolve_path(config["yolo"]["weights"]), PROJECT_DIR / "weights/walking/yolo/finetune_v2_exp02_stage2_best.pt")
         self.assertNotIn("model_dir", config)
-        self.assertEqual(resolve_path(config["output_dir"]), PROJECT_DIR / "outputs/runs/manual")
+        self.assertEqual(resolve_path(config["output_dir"]), PROJECT_DIR / "outputs/result_samples")
         self.assertEqual(resolve_path("/tmp/example.mp4"), Path("/tmp/example.mp4"))
         self.assertEqual(config["overlay_alpha"], 0.55)
         self.assertEqual(config["mode"], "all")
@@ -79,7 +80,7 @@ class IntegrationTests(unittest.TestCase):
     def test_invalid_mask2former_weights_config_rejected(self):
         """누락되거나 잘못된 Mask2Former 가중치 설정은 명확하게 거부한다."""
         config = load_config(DEFAULT_CONFIG)
-        for section in (None, "weights/mask2former", {}, {"weights": ""}, {"weights": " "}, {"weights": None}, {"weights": 123}):
+        for section in (None, "weights/walking/mask2former", {}, {"weights": ""}, {"weights": " "}, {"weights": None}, {"weights": 123}):
             with self.subTest(section=section), patch(
                 "src.pipeline.yaml.safe_load", return_value={**config, "mask2former": section}
             ), self.assertRaisesRegex(ValueError, "mask2former"):
@@ -91,18 +92,18 @@ class IntegrationTests(unittest.TestCase):
         for option in ("--mask2former-weights", "--model-dir"):
             with self.subTest(option=option), patch("sys.argv", [
                 "run_video_inference", option, "weights/custom-mask2former",
-                "--yolo-weights", "weights/yolo/custom.pt",
+                "--yolo-weights", "weights/walking/yolo/custom.pt",
             ]), patch("src.pipeline.run_video_inference") as run:
                 main()
                 run.assert_called_once()
                 self.assertEqual(run.call_args.kwargs["mask2former_weights"], Path("weights/custom-mask2former"))
-                self.assertEqual(run.call_args.kwargs["yolo_weights"], Path("weights/yolo/custom.pt"))
+                self.assertEqual(run.call_args.kwargs["yolo_weights"], Path("weights/walking/yolo/custom.pt"))
                 self.assertNotIn("model_dir", run.call_args.kwargs)
 
     # 통일된 가중치 인자로 모델 로딩
     def test_segmenter_loads_weights_directory(self):
         """weights 인자를 전처리기와 모델의 로컬 폴더로 전달한다."""
-        weights = PROJECT_DIR / "weights/mask2former"
+        weights = PROJECT_DIR / "weights/walking/mask2former"
         with patch.object(Path, "is_file", return_value=True), patch(
             "src.sidewalk.AutoImageProcessor.from_pretrained"
         ) as processor, patch("src.sidewalk.Mask2FormerForUniversalSegmentation.from_pretrained") as model:
@@ -207,7 +208,7 @@ class IntegrationTests(unittest.TestCase):
     # 여러 영상에서 모델 한 번 로딩
     def test_multiple_videos_load_model_once(self):
         """모든 영상에 같은 모델 인스턴스를 전달한다."""
-        videos = [Path("/tmp/a.mp4"), Path("/tmp/b.mp4")]
+        videos = [Path("/tmp/sample1/a.mp4"), Path("/tmp/sample1/b.mp4")]
         with patch("src.pipeline.find_sample_videos", return_value=videos), patch.object(
             Path, "is_file", return_value=True
         ), patch.object(Path, "is_dir", return_value=True), patch.object(
@@ -216,25 +217,44 @@ class IntegrationTests(unittest.TestCase):
             "src.pipeline.ObstacleDetector"
         ) as detector_loader, patch(
             "src.pipeline.process_video"
-        ) as process, redirect_stdout(io.StringIO()):
+        ) as process, patch.object(Path, "mkdir") as mkdir, redirect_stdout(io.StringIO()):
             outputs = run_video_inference(device="cpu", mode="sidewalk")
-        loader.assert_called_once_with(PROJECT_DIR / "weights/mask2former", device="cpu")
+        loader.assert_called_once_with(PROJECT_DIR / "weights/walking/mask2former", device="cpu")
         detector_loader.assert_not_called()
         self.assertEqual(process.call_count, 2)
         self.assertEqual(outputs, [
-            PROJECT_DIR / "outputs/runs/manual/result_a.mp4",
-            PROJECT_DIR / "outputs/runs/manual/result_b.mp4",
+            PROJECT_DIR / "outputs/result_samples/sample1/result_a.mp4",
+            PROJECT_DIR / "outputs/result_samples/sample1/result_b.mp4",
         ])
+        self.assertEqual(mkdir.call_count, 2)
         for call in process.call_args_list:
             self.assertIs(call.args[2], loader.return_value)
 
-    # 입력 및 기존 결과 덮어쓰기 방지
-    def test_existing_output_rejected_before_model_load(self):
-        """기존 파일을 출력으로 지정하면 모델 로딩 전에 거부한다."""
+    # 샘플 입력 폴더별 결과 폴더 생성
+    def test_default_result_folder_is_created_for_sample(self):
+        """출력 상위 폴더가 없어도 sample 폴더 이름으로 결과 폴더를 만든다."""
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "sample5/sample_video.mp4"
+            source.parent.mkdir()
+            source.touch()
+            config = load_config(DEFAULT_CONFIG)
+            config["output_dir"] = str(Path(folder) / "results")
+            with patch("src.pipeline.load_config", return_value=config), patch(
+                "src.pipeline.SidewalkSegmenter"
+            ), patch("src.pipeline.process_video") as process, redirect_stdout(io.StringIO()):
+                outputs = run_video_inference(video_path=source, mode="sidewalk", device="cpu")
+            expected = Path(folder) / "results/sample5/result_sample_video.mp4"
+            self.assertEqual(outputs, [expected])
+            self.assertTrue(expected.parent.is_dir())
+            self.assertEqual(process.call_args.args[1], expected)
+
+    # 입력 영상을 출력으로 지정하지 못하게 확인
+    def test_input_video_cannot_be_overwritten(self):
+        """결과를 덮어쓰더라도 원본 영상을 출력 경로로 지정할 수 없다."""
         with tempfile.NamedTemporaryFile(suffix=".mp4") as video, patch(
             "src.pipeline.SidewalkSegmenter"
         ) as loader:
-            with self.assertRaises(FileExistsError):
+            with self.assertRaisesRegex(ValueError, "입력 영상을"):
                 run_video_inference(video_path=video.name, output_path=video.name)
             loader.assert_not_called()
 
@@ -333,9 +353,9 @@ class IntegrationTests(unittest.TestCase):
                 finally:
                     output_path.unlink(missing_ok=True)
 
-    # 실행 도중 생성된 최종 파일 보호
-    def test_output_created_during_inference_is_not_overwritten(self):
-        """다른 작업이 최종 경로에 파일을 생성해도 기존 내용을 보존한다."""
+    # 실행 도중 생성된 이전 결과 교체
+    def test_output_created_during_inference_is_replaced(self):
+        """완료된 추론 결과는 이미 있는 출력 파일을 교체한다."""
         with tempfile.NamedTemporaryFile(suffix=".mp4") as destination:
             output_path = Path(destination.name)
             destination.close()
@@ -349,9 +369,8 @@ class IntegrationTests(unittest.TestCase):
             segmenter = SimpleNamespace(label_ids=LABEL_IDS, predict=predict)
             try:
                 with patch("src.pipeline.cv2.VideoCapture", return_value=make_capture(1, 1)), redirect_stdout(io.StringIO()):
-                    with self.assertRaises(FileExistsError):
-                        process_video("mock.mp4", output_path, segmenter)
-                self.assertEqual(output_path.read_bytes(), b"existing result")
+                    self.assertEqual(process_video("mock.mp4", output_path, segmenter), 1)
+                self.assertNotEqual(output_path.read_bytes(), b"existing result")
                 self.assertEqual(list(output_path.parent.glob(f".{output_path.stem}.*.partial.mp4")), [])
             finally:
                 output_path.unlink(missing_ok=True)
@@ -579,7 +598,7 @@ class IntegrationTests(unittest.TestCase):
                 "src.pipeline.SidewalkSegmenter"
             ) as seg, patch("src.pipeline.ObstacleDetector") as det, patch(
                 "src.pipeline.process_video"
-            ) as process, redirect_stdout(io.StringIO()):
+            ) as process, patch.object(Path, "mkdir"), redirect_stdout(io.StringIO()):
                 det.return_value.device = "cpu"
                 run_video_inference(
                     mode=mode, device="cpu", mask2former_weights="/tmp/custom-mask2former",
