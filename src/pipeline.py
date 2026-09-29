@@ -77,15 +77,47 @@ def find_sample_videos(sample_dir):
     return videos
 
 
+# 완성된 결과 파일을 기존 결과와 교체
+def publish_video_result(video_source, output_path, risk_log=None):
+    """MP4와 JSONL을 교체하고 공개 오류가 나면 이전 결과를 복구한다."""
+    risk_path = output_path.with_suffix(".risk.jsonl")
+    targets = (output_path, risk_path)
+    with tempfile.TemporaryDirectory(dir=output_path.parent, prefix=f".{output_path.stem}.backup.") as folder:
+        backups = {}
+        for target in targets:
+            if target.exists():
+                backup = Path(folder) / target.name
+                os.link(target, backup)
+                backups[target] = backup
+        changed = []
+        try:
+            os.replace(video_source, output_path)
+            changed.append(output_path)
+            if risk_log is not None:
+                os.replace(risk_log.temporary, risk_path)
+                changed.append(risk_path)
+            elif risk_path.exists():
+                risk_path.unlink()
+                changed.append(risk_path)
+        except BaseException:
+            for target in reversed(changed):
+                backup = backups.get(target)
+                if backup is None:
+                    target.unlink(missing_ok=True)
+                else:
+                    os.replace(backup, target)
+            raise
+
+
 # 영상 한 개 처리
 def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=None, traffic=None,
                   risk_config=None, tracking_config=None):
-    """임시 MP4로 처리한 뒤 프레임 수 확인에 성공하면 최종 파일을 저장한다."""
+    """임시 MP4로 처리한 뒤 프레임 수 확인에 성공하면 이전 결과를 교체한다."""
     if segmenter is None and detector is None and traffic is None:
         raise ValueError("도보, 장애물 또는 신호등 모델이 하나 이상 필요합니다.")
     video_path, output_path = Path(video_path), Path(output_path)
-    if output_path.exists():
-        raise FileExistsError(f"결과 영상이 이미 있습니다: {output_path}")
+    if video_path.resolve() == output_path.resolve():
+        raise ValueError("입력 영상을 결과 경로로 덮어쓸 수 없습니다.")
     if not output_path.parent.is_dir():
         raise FileNotFoundError(f"출력 폴더가 없습니다: {output_path.parent}")
     if output_path.suffix.lower() != ".mp4":
@@ -93,8 +125,6 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
 
     risk_settings = normalize_risk(risk_config)
     risk_enabled = risk_settings["enabled"] and detector is not None
-    if risk_enabled and risk_settings["log_jsonl"] and output_path.with_suffix(".risk.jsonl").exists():
-        raise FileExistsError(f"Risk log already exists: {output_path.with_suffix('.risk.jsonl')}")
     capture = cv2.VideoCapture(str(video_path))
     writer = None
     temporary_path = None
@@ -147,7 +177,7 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
             clock = VideoClock(fps)
             voice = WalkingVoice()
             if risk_settings["log_jsonl"]:
-                risk_log = RiskLog(output_path)
+                risk_log = RiskLog(output_path, overwrite=True)
 
         while True:
             success, frame = capture.read()
@@ -204,7 +234,7 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
                 "최종 결과 파일은 저장하지 않습니다."
             )
 
-        # 인코딩 종료 후 최종 이름 등록, 기존 파일 덮어쓰기 금지
+        # 인코딩 종료 후 완성된 파일만 최종 이름으로 교체
         writer.release()
         writer = None
 
@@ -225,8 +255,8 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
             video_to_publish = temporary_mux
 
         if risk_log is not None:
-            risk_log.publish()
-        os.link(video_to_publish, output_path)
+            risk_log.close()
+        publish_video_result(video_to_publish, output_path, risk_log)
         committed = True
     finally:
         try:
@@ -314,7 +344,7 @@ def run_video_inference(
     destination = resolve_path(output_dir if output_dir is not None else config["output_dir"])
     outputs = [
         resolve_path(output_path) if output_path is not None
-        else destination / f"result_{video.stem}.mp4"
+        else destination / video.parent.name / f"result_{video.stem}.mp4"
         for video in videos
     ]
 
@@ -326,12 +356,8 @@ def run_video_inference(
             raise FileNotFoundError(f"입력 영상이 없습니다: {video}")
         if output.suffix.lower() != ".mp4":
             raise ValueError(f"결과 영상 확장자는 .mp4여야 합니다: {output}")
-        if not output.parent.is_dir():
-            raise FileNotFoundError(f"출력 폴더가 없습니다: {output.parent}")
-        if output.exists():
-            raise FileExistsError(f"결과 영상이 이미 있습니다: {output}")
-        if risk_settings["enabled"] and risk_settings["log_jsonl"] and output.with_suffix(".risk.jsonl").exists():
-            raise FileExistsError(f"Risk log already exists: {output.with_suffix('.risk.jsonl')}")
+        if video.resolve() == output.resolve():
+            raise ValueError(f"입력 영상을 결과 경로로 덮어쓸 수 없습니다: {video}")
 
     # 사용할 모델만 로딩, 모든 영상에서 재사용
     detector = None
@@ -365,6 +391,7 @@ def run_video_inference(
     print(f"추론 모드: {mode} | 장치: {device}")
     for index, (video, output) in enumerate(zip(videos, outputs), start=1):
         print(f"입력 영상 [{index}/{len(videos)}]: {video}")
+        output.parent.mkdir(parents=True, exist_ok=True)
         process_video(video, output, segmenter, config["overlay_alpha"], detector=detector,
                       traffic=traffic, risk_config=risk_settings, tracking_config=tracking_settings)
     return outputs

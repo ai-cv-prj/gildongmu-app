@@ -17,7 +17,7 @@ from src.risk_geometry import geometry
 from src.risk_motion import MotionHistory
 from src.tracking import DetectionTracker
 from src.alert_policy import AlertPolicy
-from src.pipeline import process_video
+from src.pipeline import process_video, publish_video_result
 from src.risk_log import RiskLog
 from src.risk_visualization import draw_risk
 
@@ -283,14 +283,82 @@ class RiskPipelineTests(unittest.TestCase):
                               risk_config={"enabled":False})
             self.assertFalse(output.with_suffix(".risk.jsonl").exists())
 
-    def test_existing_log_rejected_before_inference(self):
+    # 완료된 결과로 기존 영상과 위험 로그 교체
+    def test_existing_video_and_log_replaced(self):
+        """이전 MP4와 JSONL이 있으면 새 분석 결과로 교체한다."""
+        with tempfile.TemporaryDirectory() as folder:
+            source=Path(folder)/"input.mp4"
+            output=Path(folder)/"out.mp4"
+            self.make_video(source)
+            output.write_bytes(b"old video")
+            output.with_suffix(".risk.jsonl").write_text("existing")
+            detector=SimpleNamespace(predict=Mock(return_value=[]))
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(process_video(source,output,detector=detector,
+                    risk_config={"enabled":True},tracking_config={"enabled":False}),3)
+            self.assertNotEqual(output.read_bytes(),b"old video")
+            rows=[json.loads(line) for line in output.with_suffix(".risk.jsonl").read_text().splitlines()]
+            self.assertEqual(len(rows),3)
+
+    # 위험 기능을 끈 재실행에서 이전 로그 제거
+    def test_replacing_with_risk_disabled_removes_old_log(self):
+        """위험 판정이 없는 새 영상에는 이전 실행의 JSONL을 남기지 않는다."""
+        with tempfile.TemporaryDirectory() as folder:
+            source,output=Path(folder)/"input.mp4",Path(folder)/"out.mp4"
+            self.make_video(source)
+            output.write_bytes(b"old video")
+            output.with_suffix(".risk.jsonl").write_text("old log")
+            with redirect_stdout(io.StringIO()):
+                process_video(source,output,detector=SimpleNamespace(predict=lambda frame:[]),
+                              risk_config={"enabled":False})
+            self.assertFalse(output.with_suffix(".risk.jsonl").exists())
+
+    # 추론 실패 시 이전 결과 보존
+    def test_failed_rerun_preserves_existing_result(self):
+        """새 추론이 실패하면 이전 MP4와 JSONL을 유지한다."""
+        with tempfile.TemporaryDirectory() as folder:
+            source,output=Path(folder)/"input.mp4",Path(folder)/"out.mp4"
+            self.make_video(source)
+            output.write_bytes(b"old video")
+            output.with_suffix(".risk.jsonl").write_text("old log")
+            detector=SimpleNamespace(predict=Mock(side_effect=RuntimeError("broken")))
+            with self.assertRaisesRegex(RuntimeError,"broken"),redirect_stdout(io.StringIO()):
+                process_video(source,output,detector=detector,risk_config={"enabled":True},
+                              tracking_config={"enabled":False})
+            self.assertEqual(output.read_bytes(),b"old video")
+            self.assertEqual(output.with_suffix(".risk.jsonl").read_text(),"old log")
+
+    # 공개 단계의 로그 교체 실패 시 이전 결과 복구
+    def test_publish_failure_restores_existing_video_and_log(self):
+        """영상 교체 후 로그 교체에 실패해도 이전 파일 두 개를 복구한다."""
+        import os
         with tempfile.TemporaryDirectory() as folder:
             output=Path(folder)/"out.mp4"
-            output.with_suffix(".risk.jsonl").write_text("existing")
-            detector=Mock()
-            with self.assertRaises(FileExistsError):
-                process_video("unused",output,detector=detector,risk_config={"enabled":True})
-            detector.predict.assert_not_called()
+            output.write_bytes(b"old video")
+            risk_path=output.with_suffix(".risk.jsonl")
+            risk_path.write_text("old log")
+            new_video=Path(folder)/"new.partial.mp4"
+            new_video.write_bytes(b"new video")
+            log=RiskLog(output,overwrite=True)
+            log.write({"new":True})
+            log.close()
+            replace=os.replace
+
+            # JSONL 교체만 실패하게 하고 복구 작업은 실제 파일시스템에서 실행한다.
+            def fail_log_replace(source,target):
+                """새 임시 로그의 최종 경로 이동만 실패시킨다."""
+                if Path(source)==log.temporary and Path(target)==risk_path:
+                    raise OSError("log replace failed")
+                return replace(source,target)
+
+            try:
+                with patch("src.pipeline.os.replace",side_effect=fail_log_replace):
+                    with self.assertRaisesRegex(OSError,"log replace failed"):
+                        publish_video_result(new_video,output,log)
+                self.assertEqual(output.read_bytes(),b"old video")
+                self.assertEqual(risk_path.read_text(),"old log")
+            finally:
+                log.finish(False)
 
     def test_error_does_not_publish_video_or_log(self):
         with tempfile.TemporaryDirectory() as folder:

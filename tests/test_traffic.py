@@ -168,6 +168,7 @@ class TrafficTests(unittest.TestCase):
             self.assertEqual(run.call_args.kwargs["traffic_weights"], Path("signal.pt"))
 
     def test_modes_load_only_requested_models_once(self):
+        """모드별 모델 로딩을 확인하되 가상 입력의 출력 폴더는 만들지 않는다."""
         for mode in ("traffic", "both", "all"):
             with patch("src.pipeline.find_sample_videos", return_value=[Path("/tmp/a.mp4"), Path("/tmp/b.mp4")]), \
                  patch.object(Path, "is_file", return_value=True), \
@@ -176,7 +177,8 @@ class TrafficTests(unittest.TestCase):
                  patch("src.pipeline.SidewalkSegmenter") as sidewalk, \
                  patch("src.pipeline.ObstacleDetector") as obstacle, \
                  patch("src.pipeline.TrafficSignalPipeline") as traffic, \
-                 patch("src.pipeline.process_video") as process, redirect_stdout(io.StringIO()):
+                 patch("src.pipeline.process_video") as process, \
+                 patch.object(Path, "mkdir"), redirect_stdout(io.StringIO()):
                 sidewalk.return_value.device = torch.device("cpu")
                 obstacle.return_value.device = "cpu"
                 traffic.return_value.device = "cpu"
