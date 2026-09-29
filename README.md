@@ -68,12 +68,13 @@ GPU를 쓰려면 NVIDIA 드라이버와 CUDA 지원 PyTorch 설치 구성을 확
 ```text
 gildongmu-integration/
 ├── weights/
-│   ├── mask2former/
-│   │   ├── config.json
-│   │   ├── preprocessor_config.json
-│   │   └── model.safetensors
-│   ├── yolo/
-│   │   └── finetune_v2_exp02_stage2_best.pt
+│   ├── walking/
+│   │   ├── mask2former/
+│   │   │   ├── config.json
+│   │   │   ├── preprocessor_config.json
+│   │   │   └── model.safetensors
+│   │   └── yolo/
+│   │       └── finetune_v2_exp02_stage2_best.pt
 │   └── traffic/
 │       ├── best_YOLO.pt
 │       └── best_MobileNet.pt
@@ -223,10 +224,10 @@ overlay_alpha: 0.55
 mode: all
 
 mask2former:
-  weights: weights/mask2former
+  weights: weights/walking/mask2former
 
 yolo:
-  weights: weights/yolo/finetune_v2_exp02_stage2_best.pt
+  weights: weights/walking/yolo/finetune_v2_exp02_stage2_best.pt
   conf: 0.25
   imgsz: 640
   head: nms
@@ -275,8 +276,8 @@ YOLO 신뢰도 0.25는 시작 설정이며, 실제 영상의 오탐·미탐을 �
 ```bash
 python -m scripts.run_video_inference \
   --sample-dir data/samples/sample1 \
-  --mask2former-weights weights/mask2former \
-  --yolo-weights weights/yolo/finetune_v2_exp02_stage2_best.pt \
+  --mask2former-weights weights/walking/mask2former \
+  --yolo-weights weights/walking/yolo/finetune_v2_exp02_stage2_best.pt \
   --conf 0.25 --imgsz 640 --device cuda
 ```
 

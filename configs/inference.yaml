@@ -9,10 +9,10 @@ overlay_alpha: 0.55 # 오버레이 투명도
 mode: all # all: 도보+장애물+신호등, both: 도보+장애물, 나머지: 단독
 
 mask2former:
-  weights: weights/mask2former # 가중치·모델·전처리 설정 폴더
+  weights: weights/walking/mask2former # 가중치·모델·전처리 설정 폴더
 
 yolo:
-  weights: weights/yolo/finetune_v2_exp02_stage2_best.pt
+  weights: weights/walking/yolo/finetune_v2_exp02_stage2_best.pt
   conf: 0.25
   imgsz: 640
   head: nms # Ultralytics nms=None, NMS 후처리 사용
