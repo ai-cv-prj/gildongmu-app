@@ -16,11 +16,10 @@ MISSING_SECONDS = 2.0
 class TrafficVoice:
     """선택된 신호의 연속 관측을 확인하고 음성 이벤트를 기록한다."""
 
-    # 영상마다 시작 안내와 관측 이력 초기화
+    # 영상마다 신호 관측 이력 초기화
     def __init__(self):
-        """시작 안내가 끝난 뒤부터 신호 관측을 받는다."""
-        self.events = [(0.0, "startup.mp3")]
-        self.ready_at = len(decode_clip("startup.mp3")) / (2 * SAMPLE_RATE)
+        """빈 음성 이벤트와 신호 관측 상태를 준비한다."""
+        self.events = []
         self.target = None
         self.color = None
         self.candidate = None
@@ -31,7 +30,7 @@ class TrafficVoice:
         self.missing_announced = False
         self.last_announced_target = None
         self.last_announced_color = None
-        self.queue_end = self.ready_at
+        self.queue_end = 0.0
 
     # 현재 대상의 색상 증거 폐기
     def _reset_evidence(self):
@@ -50,8 +49,6 @@ class TrafficVoice:
     # 한 프레임의 신호 상태 관측
     def observe(self, result, frame_id, time_s):
         """테스트앱과 같은 3프레임·400ms, 소실·반복 억제 규칙을 적용한다."""
-        if time_s < self.ready_at:
-            return
         if self.last_valid is not None and time_s - self.last_valid > MAX_GAP_SECONDS:
             self._reset_evidence()
         if (self.confirmed and not self.missing_announced and self.last_valid is not None
