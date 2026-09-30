@@ -17,3 +17,9 @@ imageio-ffmpeg==0.6.0
 
 # 테스트 실행
 pytest==9.1.1
+
+# 휴대폰 실시간 테스트 서버
+fastapi>=0.110,<1
+uvicorn[standard]>=0.29,<1
+python-multipart>=0.0.9,<1
+httpx>=0.27,<1
