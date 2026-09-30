@@ -67,13 +67,14 @@ def test_normalized_detection_contains_tracking_and_event_ids():
     """정규화된 모바일 응답에 추적 ID와 위험 이벤트 ID를 보존한다."""
     item = {
         "xyxy": [8, 10, 30, 40], "track_id": 12, "event_id": 34,
-        "hazard_id": "track:12", "voice_suppressed_reason": "red_signal_crosswalk_obstacle",
+        "hazard_id": "track:12",
+        "voice_suppressed_reason": "non_green_signal_crosswalk_obstacle",
     }
     result = normalize_detections([item], 100, 80)[0]
     assert result["track_id"] == 12
     assert result["event_id"] == 34
     assert result["hazard_id"] == "track:12"
-    assert result["voice_suppressed_reason"] == "red_signal_crosswalk_obstacle"
+    assert result["voice_suppressed_reason"] == "non_green_signal_crosswalk_obstacle"
 
 
 # 웹 테스트 클라이언트 없이 세션 응답 계약 확인
@@ -87,6 +88,11 @@ def test_session_response_contains_crosswalk_event(tmp_path):
     folder = tmp_path / session["date"] / session["folder_name"]
     logged = json.loads((folder / "results.jsonl").read_text(encoding="utf-8"))
     assert logged["crosswalk"]["event"]["event_id"] == 4
+    assert logged["frame_file"] == "frames/000001.jpg"
+    assert result["frame_file"] == logged["frame_file"]
+    saved = folder / logged["frame_file"]
+    assert saved.is_file()
+    assert cv2.imread(str(saved)).shape == frame.shape
 
 
 # 실제 JPEG 디코딩부터 API 응답·로그까지 확인
@@ -142,7 +148,8 @@ def test_mobile_session_flow(tmp_path):
     folder = tmp_path / start.json()["date"] / folder_name
     logged = json.loads((folder / "results.jsonl").read_text(encoding="utf-8"))
     assert "mask_png" not in logged["walking"]
-    assert not (folder / "frames").exists()
+    assert (folder / "frames" / "000001.jpg").is_file()
+    assert logged["frame_file"] == "frames/000001.jpg"
     assert (folder / "camera_overlay.mp4").is_file()
     assert (folder / "camera.mp4").is_file()
     for name in ("camera.mp4", "camera_overlay.mp4"):

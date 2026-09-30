@@ -11,9 +11,9 @@
     ["초록불로 바뀌었습니다.", "green-changed"],
     ["빨간불로 바뀌었습니다.", "red-changed"],
     ["신호를 확인할 수 없습니다.", "missing"],
-    ["위험! 횡단보도 이탈! 오른쪽으로 이동하세요!", "crosswalk-exit-right"],
-    ["위험! 횡단보도 이탈! 왼쪽으로 이동하세요!", "crosswalk-exit-left"],
-    ["위험! 횡단보도 이탈!", "crosswalk-exit-unknown"],
+    ["횡단보도 이탈! 오른쪽으로 이동하세요!", "crosswalk-exit-right"],
+    ["횡단보도 이탈! 왼쪽으로 이동하세요!", "crosswalk-exit-left"],
+    ["횡단보도 이탈!", "crosswalk-exit-unknown"],
   ]);
   for (const [text, name] of [...CLIPS]) CLIPS.set(`모의 신호. ${text}`, `mock-${name}`);
   const directions = [["left", "왼쪽"], ["center", "가운데"], ["right", "오른쪽"]];

@@ -63,9 +63,9 @@ crosswalk_safety:
   finish_walkable_fraction: 0.60
   outside_finish_walkable_fraction: 0.80
   entry_box_bottom: 0.70
-  red_obstacle_voice_suppression: true
-  red_obstacle_crosswalk_threshold: 0.20
-  red_obstacle_contact_half_height: 0.02
+  non_green_obstacle_voice_suppression: true
+  non_green_obstacle_crosswalk_threshold: 0.20
+  non_green_obstacle_contact_half_height: 0.02
 
 # Experimental forward-camera profile: normalized image coordinates, NOT metres.
 # Detection always uses the full frame. These thresholds require scene calibration.

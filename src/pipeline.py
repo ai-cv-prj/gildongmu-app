@@ -22,7 +22,7 @@ from src.risk import RiskEngine, VideoClock
 from src.risk_config import risk_config as normalize_risk, tracking_config as normalize_tracking
 from src.risk_visualization import draw_risk
 from src.risk_log import RiskLog
-from src.walking_voice import WalkingVoice, suppress_red_crosswalk_voice
+from src.walking_voice import WalkingVoice, suppress_non_green_crosswalk_voice
 from src.traffic_voice import TrafficVoice
 from src.video_audio import render_voice_track, mux_voice
 from src.crosswalk_safety import CrosswalkSafetyEngine, crosswalk_safety_config as normalize_crosswalk
@@ -217,7 +217,7 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
                 captured_at_ms=processed_frames * 1000 / fps,
             ) if traffic is not None else None
             if risk_result is not None:
-                suppress_red_crosswalk_voice(
+                suppress_non_green_crosswalk_voice(
                     risk_result, traffic_result, class_map,
                     segmenter.label_ids if segmenter is not None else None,
                     frame.shape, crosswalk_settings,

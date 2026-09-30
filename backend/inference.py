@@ -14,7 +14,7 @@ from src.risk import RiskEngine
 from src.risk_config import risk_config, tracking_config
 from src.sidewalk import SidewalkSegmenter
 from src.traffic import TrafficSignalPipeline, validate_traffic_config
-from src.walking_voice import WalkingVoice, suppress_red_crosswalk_voice
+from src.walking_voice import WalkingVoice, suppress_non_green_crosswalk_voice
 
 
 class RealtimeInference:
@@ -65,7 +65,7 @@ class RealtimeInference:
         self.risk.add_sidewalk_context(risk, class_map, self.segmenter.label_ids, frame.shape)
         signal = self.traffic.predict(frame, frame_id=frame_id,
                                       captured_at_ms=captured_at_ms)
-        suppress_red_crosswalk_voice(
+        suppress_non_green_crosswalk_voice(
             risk, signal, class_map, self.segmenter.label_ids, frame.shape,
             self.crosswalk_settings,
         )
