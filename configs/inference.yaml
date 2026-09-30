@@ -44,7 +44,6 @@ crosswalk_safety:
   roi_bottom: 1.00
   roi_crosswalk_threshold: 0.05
   roi_occlusion_threshold: 0.08
-  roi_exit_confirm_s: 0.30
   entry_confirm_s: 0.50
   edge_confirm_s: 0.20
   exit_confirm_s: 0.25
@@ -62,7 +61,6 @@ crosswalk_safety:
   min_valid_rows: 8
   finish_walkable_fraction: 0.60
   outside_finish_walkable_fraction: 0.80
-  entry_box_bottom: 0.70
   non_green_obstacle_voice_suppression: true
   non_green_obstacle_crosswalk_threshold: 0.20
   non_green_obstacle_contact_half_height: 0.02
@@ -145,7 +143,7 @@ risk:
   event_match_iou: 0.3
   draw_roi: true
   # 큰 검토용 오버레이(채운 ROI·카드 라벨·하단 요약 패널)로 표시한다. false면 간략 표시.
-  review_overlay: true
+  review_overlay: false
   log_jsonl: true
   # Shared image profile: no individual body dimensions, depth or ground-height model.
   side_proximity_enabled: true

@@ -53,12 +53,17 @@ assert.equal(spoken.at(-1), "횡단보도 이탈! 왼쪽으로 이동하세요!"
 coordinator.acceptCrosswalk({ status: "crossing", repeat: false }, now + 100);
 assert.equal(cancelCount, 4);
 
-// ROI에서 경계가 사라진 방향 미확정 이탈도 같은 우선순위로 반복한다.
-coordinator.acceptCrosswalk({ status: "outside_unknown", repeat: true,
-  voice_text: "횡단보도 이탈!" }, now + 150);
-assert.equal(spoken.at(-1), "횡단보도 이탈!");
+// 진입 전 정렬 안내를 반복하고 발이 경계 안에 들어오면 즉시 중단한다.
+coordinator.acceptCrosswalk({ status: "align_right", repeat: true,
+  voice_text: "오른쪽으로 이동하세요!" }, now + 150);
+assert.equal(spoken.at(-1), "오른쪽으로 이동하세요!");
 coordinator.acceptCrosswalk({ status: "crossing", repeat: false }, now + 160);
 assert.equal(cancelCount, 5);
+
+// 방향 미확정 상태는 이탈 음성을 시작하지 않는다.
+coordinator.acceptCrosswalk({ status: "outside_unknown", repeat: true,
+  voice_text: "횡단보도 이탈!" }, now + 180);
+assert.equal(spoken.at(-1), "오른쪽으로 이동하세요!");
 
 // 가장자리 진동은 같은 이벤트 번호에 한 번만 실행한다.
 const edge = { status: "edge", vibration: "edge", event_id: 8 };

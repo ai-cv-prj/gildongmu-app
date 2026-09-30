@@ -25,11 +25,21 @@ def draw_crosswalk_safety(frame, event):
     if all(isinstance(value, (int, float)) for value in values):
         left, right, foot, y = values
         y_px = round(y * height)
-        color = (30, 30, 245) if str(event.get("status", "")).startswith("outside") else (220, 90, 210)
+        color = ((91, 67, 255) if str(event.get("status", "")).startswith("outside")
+                 else (224, 107, 241))
         cv2.line(result, (round(left * width), y_px), (round(right * width), y_px), color, 4)
         cv2.circle(result, (round(foot * width), y_px), 7, (255, 255, 255), -1)
     status = (event or {}).get("status")
-    if status and status not in ("search", "disabled"):
-        cv2.putText(result, f"CROSSWALK:{status}", (16, max(28, height - 18)),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2, cv2.LINE_AA)
+    if status and status != "disabled":
+        text = f"CROSSWALK: {status}"
+        font, scale, thickness = cv2.FONT_HERSHEY_SIMPLEX, max(.45, width / 760), 1
+        (text_width, text_height), baseline = cv2.getTextSize(
+            text, font, scale, thickness)
+        padding = 8
+        left = max(0, width - text_width - padding * 2 - 8)
+        top = 8
+        bottom = top + text_height + baseline + padding * 2
+        cv2.rectangle(result, (left, top), (width - 8, bottom), (24, 24, 24), -1)
+        cv2.putText(result, text, (left + padding, bottom - baseline - padding),
+                    font, scale, (255, 255, 255), thickness, cv2.LINE_AA)
     return result

@@ -38,15 +38,54 @@ def engine():
                                   "max_boundary_shift": .5})
 
 
-# 멀리 보이는 횡단보도 무음 확인
-def test_far_crosswalk_never_starts_crossing():
-    """화면 아래까지 닿지 않은 핑크 마스크는 횡단 시작 근거로 사용하지 않는다."""
+# ROI 밖 횡단보도 무음 확인
+def test_crosswalk_outside_roi_never_starts_crossing():
+    """핑크 마스크가 보여도 하단 ROI에 5% 미만이면 횡단을 시작하지 않는다."""
     item = engine()
     result = item.update(mask(top=.15, bottom=.55), LABELS, SHAPE, SIGNAL, 0)
     result = item.update(mask(top=.15, bottom=.55), LABELS, SHAPE, SIGNAL, .3)
-    assert result["status"] == "approach"
+    assert result["status"] == "search"
     assert not result["crossing_active"]
     assert result["voice_text"] is None
+
+
+# 신호등 검출 없이 ROI 마스크만 사용하는 진입 확인
+def test_crossing_requires_only_sustained_roi_mask_and_inside_foot():
+    """YOLO 횡단보도 검출 없이도 ROI 마스크와 발 경계 조건만으로 횡단한다."""
+    item = engine()
+    no_signal = {"crosswalks": []}
+    first = item.update(mask(), LABELS, SHAPE, no_signal, 0)
+    result = item.update(mask(), LABELS, SHAPE, no_signal, .2)
+    assert first["status"] == "approach"
+    assert result["status"] == "crossing"
+    assert result["crossing_active"]
+
+
+# 횡단 진입 전 오른쪽 정렬 안내 확인
+def test_pre_entry_left_side_guides_right_until_foot_is_inside():
+    """가상 발 왼쪽에 횡단보도가 있으면 오른쪽 정렬을 안내하고 진입 시 중단한다."""
+    item = engine()
+    outside = mask(left=.58, right=.95)
+    result = item.update(outside, LABELS, SHAPE, {"crosswalks": []}, 0)
+    assert result["status"] == "align_right"
+    assert result["voice_text"] == "오른쪽으로 이동하세요!"
+    assert result["voice_clip"] == "crosswalk-align-right.mp3"
+    assert not result["crossing_active"]
+    item.update(outside, LABELS, SHAPE, {"crosswalks": []}, .2)
+    result = item.update(mask(), LABELS, SHAPE, {"crosswalks": []}, .21)
+    assert result["status"] == "crossing"
+    assert result["voice_text"] is None
+
+
+# 횡단 진입 전 왼쪽 정렬 안내 확인
+def test_pre_entry_right_side_guides_left():
+    """가상 발 오른쪽에 횡단보도가 있으면 왼쪽 정렬을 안내한다."""
+    item = engine()
+    result = item.update(mask(left=.05, right=.42), LABELS, SHAPE,
+                         {"crosswalks": []}, 0)
+    assert result["status"] == "align_left"
+    assert result["direction"] == "left"
+    assert result["voice_clip"] == "crosswalk-align-left.mp3"
 
 
 # 진입 뒤 가장자리 진동 확인
@@ -108,24 +147,19 @@ def test_walkable_destination_finishes_without_exit_warning():
     assert result["voice_text"] is None
 
 
-# 하단 ROI에서 횡단보도가 사라진 경우의 방향 미확정 이탈 확인
-def test_crosswalk_roi_loss_warns_and_recovers_without_direction():
-    """횡단 중 하단 ROI의 핑크 마스크가 사라지면 방향 없는 이탈 경고를 유지한다."""
+# 하단 ROI에서 횡단보도가 사라진 경우의 무음 보류 확인
+def test_crosswalk_roi_loss_is_uncertain_without_unknown_exit_warning():
+    """횡단 중 마스크만 사라지면 방향을 추측하지 않고 무음 보류한다."""
     item = engine()
     item.update(mask(), LABELS, SHAPE, SIGNAL, 0)
     item.update(mask(), LABELS, SHAPE, SIGNAL, .2)
     missing = np.full(SHAPE[:2], LABELS["non_walkable"], np.uint8)
-    first = item.update(missing, LABELS, SHAPE, SIGNAL, .3)
     result = item.update(missing, LABELS, SHAPE, SIGNAL, .61)
-    assert first["status"] == "crossing"
-    assert result["status"] == "outside_unknown"
+    assert result["status"] == "uncertain"
     assert result["crosswalk_roi"]["crosswalk_fraction"] == 0
-    assert result["voice_text"] == "횡단보도 이탈!"
-    assert result["voice_clip"] == "crosswalk-exit-unknown.mp3"
-    assert result["repeat"]
+    assert result["voice_text"] is None
+    assert result["voice_clip"] is None
     result = item.update(mask(), LABELS, SHAPE, SIGNAL, .7)
-    assert result["status"] == "outside_unknown"
-    result = item.update(mask(), LABELS, SHAPE, SIGNAL, .91)
     assert result["status"] == "crossing"
 
 
@@ -208,7 +242,7 @@ def test_crosswalk_config_rejects_invalid_margins():
 
 # Ava 횡단보도 음원 파일 확인
 def test_crosswalk_ava_clips_are_decodable():
-    """왼쪽·오른쪽·방향 미확정 안내 MP3가 실제 PCM으로 해독되는지 확인한다."""
+    """진입 정렬과 방향 확정 이탈 안내 MP3가 실제 PCM으로 해독되는지 확인한다."""
     for filename in ("crosswalk-exit-left.mp3", "crosswalk-exit-right.mp3",
-                     "crosswalk-exit-unknown.mp3"):
+                     "crosswalk-align-left.mp3", "crosswalk-align-right.mp3"):
         assert decode_clip(filename)
