@@ -33,7 +33,7 @@ YOLO는 초록·핑크 영역에 한정하지 않고 전체 화면에서 객체�
 ## 휴대폰에서 실시간 테스트
 
 PC의 이 레포에서 두 터미널을 열어 순서대로 실행하세요. `.venv`가 없으면 `run.sh`가 만들고
-패키지를 설치합니다. 기존 `.venv`에는 웹 서버 패키지만 부족할 때 설치합니다.
+패키지를 설치합니다. 기존 `.venv`에는 웹 서버와 YAML 패키지가 부족할 때 설치합니다.
 
 ```bash
 # 터미널 1: PC 추론 서버
@@ -49,7 +49,7 @@ PC의 이 레포에서 두 터미널을 열어 순서대로 실행하세요. `.v
 보행 위험 판단의 일부로 유지됩니다. 화면을 켠 상태에서 테스트하세요.
 
 첫 시작에는 세 모델을 로딩하므로 시간이 걸릴 수 있습니다. 가중치는
-`configs/inference.yaml`에 정해진 경로에서 읽으며, 영상 추론과 동일한 파일을 사용합니다.
+`configs/paths.yaml`에 정해진 경로에서 읽으며, 영상 추론과 동일한 파일을 사용합니다.
 신호 음성은 테스트앱의 3프레임·400ms 확정과 2초 소실 안내를 사용하며, 세 모델의 처리 시간을
 감안해 프레임 연속성 허용 간격만 2초로 늘렸습니다. 처리·전송이 1.5초 이상 걸린 오래된 프레임은
 안내하지 않습니다.
@@ -73,7 +73,7 @@ PC의 이 레포에서 두 터미널을 열어 순서대로 실행하세요. `.v
 
 브라우저에는 전역 음성 관리자가 하나만 있으며 음성을 대기열에 오래 쌓지 않습니다. 이탈 중 발생한
 장애물·신호 안내는 이탈 반복 사이에 끼워 넣지 않고 폐기합니다.
-테스트 결과는 한국 날짜 기준 `outputs/result_realtime/YYYYMMDD/<기종명_촬영시각_테스트메모>/`에 저장합니다.
+테스트 결과는 한국 날짜 기준 `data/sessions/YYYYMMDD/<기종명_촬영시각_테스트메모>/`에 저장합니다.
 테스트 메모가 없으면 폴더명에서 생략하고, 폴더명에 붙는 메모는 사용할 수 없는 문자를 `_`로 바꾼 뒤 40자까지만 사용합니다.
 촬영시각은 테스트 시작 시각이며 `YYYYMMDD_HHMMSS` 형식입니다. 같은 시각에 시작한 테스트는 폴더명 뒤에 `_2`, `_3`을 붙입니다. 세션 ID는 내부 요청에만 사용합니다.
 테스트 시작 버튼부터 종료까지의 카메라 원본은 오버레이·현장 소리 없이 10FPS `camera.mp4`에 저장합니다.
@@ -96,7 +96,7 @@ sudo mv /tmp/cloudflared /usr/local/bin/cloudflared
 기존 저장 영상 추론은 아래 명령을 그대로 사용합니다.
 
 ```bash
-python -m scripts.run_video_inference --sample-dir data/samples/sample1
+python -m scripts.run_video_inference --sample-dir data/samples/input/sample1
 ```
 
 ## 1. 실행 준비
@@ -137,7 +137,7 @@ GPU를 쓰려면 NVIDIA 드라이버와 CUDA 지원 PyTorch 설치 구성을 확
 레포를 clone한 것만으로 준비되지 않습니다. 필요한 파일과 입출력 폴더는 구글 드라이브 '모델' 폴더에서 다운로드 받으세요.
 
 ```text
-gildongmu-integration/
+gildongmu-app/
 ├── weights/
 │   ├── walking/
 │   │   ├── mask2former/
@@ -149,12 +149,22 @@ gildongmu-integration/
 │   └── traffic/
 │       ├── best_YOLO.pt
 │       └── best_MobileNet.pt
-├── data/
-│   └── samples/
-│       └── sample1/
-│           └── OBS_260914_G24P_001.mp4
-└── outputs/
-    └── videos/
+└── data/
+    ├── samples/
+    │   ├── input/
+    │   │   └── sample1/
+    │   │       └── OBS_260914_G24P_001.mp4
+    │   └── output/
+    │       └── sample1/
+    │           └── result_OBS_260914_G24P_001.mp4
+    └── sessions/
+        └── 20260930/
+            └── Galaxy S24+_20260930_120739/
+                ├── camera.mp4
+                ├── frames/
+                ├── camera_overlay.mp4
+                ├── results.jsonl
+                └── session.json
 ```
 
 - **Mask2Former:** 학습 결과의 `model` 폴더 내용 전체를 넣습니다. 가중치 파일만 넣으면 안 됩니다.
@@ -167,7 +177,8 @@ gildongmu-integration/
 - **색상 분류기:** 입력 224의 `mobilenet_v3_small` 체크포인트입니다. 체크포인트에 저장된
   `class_names` 순서를 사용하므로 `[green, red]`를 임의로 `[red, green]`으로 바꾸지 않습니다.
 - **영상:** 폴더 일괄 처리는 MP4만 지원합니다. 하위 폴더까지 자동 탐색하지 않습니다.
-- **출력:** `outputs/result_samples/sample1/`처럼 입력 샘플 폴더 이름으로 결과 폴더를 자동 생성합니다. 입력 영상 폴더는 미리 준비해야 합니다.
+- **세션:** `data/sessions/날짜/세션명/`에 촬영 원본과 추론 결과를 함께 보관합니다. 저장 위치는 `configs/paths.yaml`의 `session_dir`로 지정합니다.
+- **출력:** `data/samples/output/sample1/`처럼 입력 샘플 폴더 이름으로 결과 폴더를 자동 생성합니다. 입력 영상 폴더는 미리 준비해야 합니다.
 
 ## 2. 영상 실행하기
 
@@ -177,14 +188,14 @@ gildongmu-integration/
 ### sample1의 모든 영상 처리
 
 ```bash
-python -m scripts.run_video_inference --sample-dir data/samples/sample1
+python -m scripts.run_video_inference --sample-dir data/samples/input/sample1
 ```
 
 현재 기본 설정은 `mode: all`이므로 보도·장애물·신호등을 함께 추론합니다.
 지정 폴더 바로 아래의 MP4를 파일명 순서대로 처리합니다.
-`sample2`를 쓰려면 `--sample-dir data/samples/sample2`로 바꾸면 됩니다.
+`sample2`를 쓰려면 `--sample-dir data/samples/input/sample2`로 바꾸면 됩니다.
 
-주의: 옵션을 생략하면 YAML의 `sample_dir: data/samples`를 사용합니다.
+주의: 옵션을 생략하면 `configs/paths.yaml`의 `sample_dir: data/samples/input`를 사용합니다.
 영상이 `sample1` 안에 있다면 위처럼 하위 폴더를 지정하거나 YAML의 `sample_dir`를 바꿔야 합니다.
 
 ### 영상 하나만 처리할 때
@@ -193,7 +204,7 @@ python -m scripts.run_video_inference --sample-dir data/samples/sample1
 
 ```bash
 python -m scripts.run_video_inference \
-  --video-path data/samples/sample1/OBS_260914_G24P_001.mp4
+  --video-path data/samples/input/sample1/OBS_260914_G24P_001.mp4
 ```
 
 `--output-path`를 지정하면 해당 경로에 저장하고 기존 결과를 교체합니다.
@@ -205,13 +216,13 @@ python -m scripts.run_video_inference \
 ```bash
 # 도보 마스크만 표시
 python -m scripts.run_video_inference --mode sidewalk \
-  --video-path data/samples/sample1/OBS_260914_G24P_001.mp4 \
-  --output-path outputs/result_samples/sample1/result_OBS_260914_G24P_001_sidewalk.mp4
+  --video-path data/samples/input/sample1/OBS_260914_G24P_001.mp4 \
+  --output-path data/samples/output/sample1/result_OBS_260914_G24P_001_sidewalk.mp4
 
 # 장애물 박스만 표시
 python -m scripts.run_video_inference --mode obstacle \
-  --video-path data/samples/sample1/OBS_260914_G24P_001.mp4 \
-  --output-path outputs/result_samples/sample1/result_OBS_260914_G24P_001_obstacle.mp4
+  --video-path data/samples/input/sample1/OBS_260914_G24P_001.mp4 \
+  --output-path data/samples/output/sample1/result_OBS_260914_G24P_001_obstacle.mp4
 ```
 
 단독 모드에서는 해당 모델만 로딩합니다. YAML은 아래의 전체 설정 구조를 유지하세요.
@@ -221,13 +232,13 @@ python -m scripts.run_video_inference --mode obstacle \
 ```bash
 # 신호등 검출 + 횡단보도 연결 + 색상 분류
 python -m scripts.run_video_inference --mode traffic \
-  --video-path data/samples/sample1/OBS_260914_G24P_001.mp4 \
-  --output-path outputs/result_samples/sample1/result_signal.mp4
+  --video-path data/samples/input/sample1/OBS_260914_G24P_001.mp4 \
+  --output-path data/samples/output/sample1/result_signal.mp4
 
 # 도보 + 장애물 + 신호등을 한 영상에 표시
 python -m scripts.run_video_inference --mode all \
-  --video-path data/samples/sample1/OBS_260914_G24P_001.mp4 \
-  --output-path outputs/result_samples/sample1/result_all.mp4
+  --video-path data/samples/input/sample1/OBS_260914_G24P_001.mp4 \
+  --output-path data/samples/output/sample1/result_all.mp4
 ```
 
 신호등 가중치를 다른 곳에 두었다면 `--traffic-weights /경로/YOLO.pt`와
@@ -269,9 +280,9 @@ Mask2Former의 핑크 마스크는 화면에 함께 표시하지만 현재 신�
 
 ## 3. 결과 확인하기
 
-기본 저장 위치는 `outputs/result_samples/샘플폴더명/`입니다.
-예를 들어 `data/samples/sample5/test.mp4`는 `outputs/result_samples/sample5/result_test.mp4`와
-`outputs/result_samples/sample5/result_test.risk.jsonl`로 저장됩니다.
+기본 저장 위치는 `data/samples/output/샘플폴더명/`입니다.
+예를 들어 `data/samples/input/sample5/test.mp4`는 `data/samples/output/sample5/result_test.mp4`와
+`data/samples/output/sample5/result_test.risk.jsonl`로 저장됩니다.
 `--output-path`를 지정하면 지정한 이름을 그대로 사용합니다.
 같은 이름의 MP4나 위험 로그가 이미 있으면 기존 파일을 보존하고 `result_test(1).mp4`,
 `result_test(1).risk.jsonl`처럼 다음 번호로 함께 저장합니다.
@@ -290,20 +301,42 @@ Mask2Former의 핑크 마스크는 화면에 함께 표시하지만 현재 신�
 
 ## 4. 설정 바꾸기
 
-기본 설정 파일은 [configs/inference.yaml](configs/inference.yaml)입니다.
+설정은 용도별 YAML 네 파일에서 관리합니다.
+
+| 파일 | 변경할 항목 |
+| --- | --- |
+| `configs/paths.yaml` | 입력·결과·세션·가중치·음원·화면 경로 |
+| `configs/inference.yaml` | 장치, 모델 임계값, 추적, 위험 판단 |
+| `configs/app.yaml` | 서버 기본 주소·포트, 촬영·JPEG·녹화, 업로드 제한, 세션 시간대 |
+| `configs/audio.yaml` | 음성 샘플레이트·비트레이트, 브라우저 음량·재생 시간, 안내 관측 기준 |
+
+모든 상대 경로는 프로젝트 루트 기준이며 절대 경로도 가능합니다. 필요한 입력·가중치를 준비하고,
+결과와 세션 폴더는 실행 시 생성합니다. 경로를 별도 실험용으로 바꾸려면 `paths.yaml`을 복사하고
+추론 설정의 `paths_config`에 지정할 수 있습니다. 이 항목은 영상 추론의 입력·결과·모델 경로에 적용합니다.
+
+명령행 추론 옵션은 YAML보다 우선합니다. 이전 실험 YAML의 인라인 입출력·가중치 경로도
+계속 읽지만, 기본 설정에서는 `paths.yaml` 한 곳에만 작성합니다.
+`run.sh`와 `tunnel.sh`는 `app.yaml`의 서버 기본값을 공유하며, `.env` 또는 환경변수의
+`APP_HOST`·`APP_PORT`가 있으면 해당 값을 우선 사용합니다. `.env` 파일을 읽으면 그 값이 현재 환경에 적용됩니다.
+
+앱 서버는 시작할 때 설정을 검증하고 `/api/config`로 카메라·녹화·음성 공개 항목만 전달합니다.
+브라우저는 설정을 받은 뒤 카메라 버튼을 활성화합니다. 내부 경로·가중치 위치는 제공하지 않습니다.
+`recording.fps`는 브라우저 오버레이 녹화와 서버의 원본·오버레이 MP4 변환에 함께 적용되며,
+원본 카메라 스트림 자체의 FPS는 기기가 결정합니다. 설정 변경 후 서버를 재시작하고 화면을 새로고침하세요.
+
+`audio.guidance`의 신호 확정·소실 기준은 영상과 실시간 앱이 공유합니다.
+관측 허용 간격은 기존 동작에 맞게 영상 1000ms, 실시간 2000ms로 구분하며,
+횡단보도 반복 안내는 기존처럼 문장 종료 직후 이어서 재생합니다.
+
+다음은 `configs/inference.yaml`의 주요 항목입니다.
 
 ```yaml
-sample_dir: data/samples
-output_dir: outputs/result_samples
+paths_config: configs/paths.yaml
 device: auto
 overlay_alpha: 0.55
 mode: all
 
-mask2former:
-  weights: weights/walking/mask2former
-
 yolo:
-  weights: weights/walking/yolo/finetune_v2_exp02_stage2_best.pt
   conf: 0.25
   imgsz: 640
   head: nms
@@ -312,8 +345,6 @@ yolo:
   rect: true
 
 traffic:
-  weights: weights/traffic/best_YOLO.pt
-  classifier_weights: weights/traffic/best_MobileNet.pt
   conf: 0.25
   imgsz: 960
   crosswalk_min_confidence: 0.50
@@ -323,18 +354,18 @@ traffic:
 
 | 설정 | 의미 |
 | --- | --- |
-| `sample_dir` | 처리할 MP4가 직접 들어 있는 폴더 |
-| `output_dir` | 샘플 입력 폴더별 결과 폴더의 상위 경로. 없으면 생성 |
+| `sample_dir` (`paths.yaml`) | 처리할 MP4가 직접 들어 있는 폴더 |
+| `output_dir` (`paths.yaml`) | 샘플 입력 폴더별 결과 폴더의 상위 경로. 없으면 생성 |
 | `device` | `auto`: CUDA 가능 시 GPU, 아니면 CPU / `cuda`: GPU 지정 / `cpu`: CPU 지정 |
 | `mode` | `both`: 도보+장애물 / `all`: 전체 / `sidewalk`, `obstacle`, `traffic`: 각 단독 |
-| `mask2former.weights` | 가중치와 모델·전처리 설정이 있는 **폴더** |
-| `yolo.weights` | YOLO 가중치 **파일** |
+| `mask2former_weights` (`paths.yaml`) | 가중치와 모델·전처리 설정이 있는 **폴더** |
+| `yolo_weights` (`paths.yaml`) | YOLO 가중치 **파일** |
 | `overlay_alpha` | 마스크 색상 비율. `0.55`는 원본 45% + 색상 55%. 클수록 진하게 표시 |
 | `yolo.conf` | 객체 신뢰도 기준. 높이면 더 엄격하게 걸러지지만 놓치는 객체가 늘 수 있음 |
 | `yolo.imgsz` | YOLO 내부 전처리 크기 기준. 결과 영상의 크기를 바꾸는 값은 아님 |
 | `yolo.head` | 현재는 `nms`만 지원. 겹치는 탐지 박스를 정리하는 후처리 사용 |
 | `yolo.iou` / `yolo.max_det` / `yolo.rect` | 장애물 YOLO의 중복 판정 기준 / 최대 검출 수 / 입력 크기 정렬 여부 |
-| `traffic.weights` / `traffic.classifier_weights` | 신호등 YOLO / MobileNet 가중치 파일 |
+| `traffic_weights` / `traffic_classifier_weights` (`paths.yaml`) | 신호등 YOLO / MobileNet 가중치 파일 |
 | `traffic.conf` / `traffic.imgsz` | 신호등 검출 기준 / YOLO 입력 크기 |
 | `traffic.crosswalk_min_confidence` | 연결에 사용할 횡단보도 검출 기준 |
 | `traffic.classifier_min_confidence` | 이 값보다 낮으면 색상을 `unknown` 처리 |
@@ -353,7 +384,7 @@ traffic:
 Mask2Former의 전처리는 저장된 `preprocessor_config.json`을 사용합니다.
 YOLO 신뢰도 0.25는 시작 설정이며, 실제 영상의 오탐·미탐을 확인해 조정해야 합니다.
 
-안내 음원 폴더는 [configs/audio.yaml](configs/audio.yaml)의 `audio.voice_dir`에서 지정합니다.
+안내 음원 폴더는 [configs/paths.yaml](configs/paths.yaml)의 `voice_dir`에서 지정합니다.
 상대 경로는 프로젝트 루트 기준이고 절대 경로도 사용할 수 있습니다. 영상 MP4 음성 합성과
 실시간 FastAPI 앱이 이 값을 공통으로 읽으며, 변경 후에는 서버를 다시 시작해야 합니다.
 브라우저는 실제 폴더 위치와 관계없이 `/audio/<파일명>.mp3` 주소로 음원을 요청합니다.
@@ -365,7 +396,7 @@ YOLO 신뢰도 0.25는 시작 설정이며, 실제 영상의 오탐·미탐을 �
 
 ```bash
 python -m scripts.run_video_inference \
-  --sample-dir data/samples/sample1 \
+  --sample-dir data/samples/input/sample1 \
   --mask2former-weights weights/walking/mask2former \
   --yolo-weights weights/walking/yolo/finetune_v2_exp02_stage2_best.pt \
   --conf 0.25 --imgsz 640 --device cuda
@@ -393,8 +424,8 @@ python -m scripts.run_video_inference \
 | 메시지·상황 | 확인할 것 |
 | --- | --- |
 | 같은 영상 재실행 | 기존 MP4와 JSONL을 새 결과로 교체. 원본 영상을 `--output-path`로 지정할 수 없음 |
-| 샘플 MP4가 없음 | `data/samples`가 아니라 실제 영상이 들어 있는 `data/samples/sample1`을 지정했는지 확인 |
-| 출력 폴더가 없음 | `outputs/result_samples/샘플폴더명`을 자동 생성하는지 확인 |
+| 샘플 MP4가 없음 | `data/samples/input`가 아니라 실제 영상이 들어 있는 `data/samples/input/sample1`을 지정했는지 확인 |
+| 출력 폴더가 없음 | `data/samples/output/샘플폴더명`을 자동 생성하는지 확인 |
 | 모델 파일이 없음 | Mask2Former 설정 파일까지 모두 준비했는지, YOLO 파일명이 설정과 같은지 확인 |
 | 3클래스·32클래스 오류 | 현재 코드에 맞는 팀 가중치인지 확인. 임의의 기본 모델은 사용할 수 없음 |
 | CUDA를 사용할 수 없음 | GPU 환경 확인. CPU로 실행하려면 명령어에 `--device cpu` 추가 |
@@ -415,8 +446,10 @@ python -m scripts.run_video_inference \
 | 파일 | 역할 |
 | --- | --- |
 | [scripts/run_video_inference.py](scripts/run_video_inference.py) | 명령어 옵션을 받아 실행 시작 |
-| [configs/inference.yaml](configs/inference.yaml) | 가중치·입출력 경로와 추론 설정 |
-| [configs/audio.yaml](configs/audio.yaml) | 영상과 실시간 앱이 함께 읽는 안내 음원 폴더 경로 |
+| [configs/inference.yaml](configs/inference.yaml) | 모델 실행·추적·위험 판단 설정 |
+| [configs/paths.yaml](configs/paths.yaml) | 샘플·세션·가중치·화면·음원 경로 |
+| [configs/app.yaml](configs/app.yaml) | 서버·카메라·전송·녹화·업로드·세션 설정 |
+| [configs/audio.yaml](configs/audio.yaml) | 음성 합성·재생·관측 시간 설정 |
 | [src/pipeline.py](src/pipeline.py) | 영상 읽기 → 모드별 모델 추론 → 결과 합성 → MP4 저장 |
 | [src/sidewalk.py](src/sidewalk.py) | Mask2Former 로딩과 보행 영역 추론 |
 | [src/obstacle.py](src/obstacle.py) | YOLO 로딩과 장애물 추론 |
@@ -561,7 +594,7 @@ Transformers 5.17.0으로 CPU 검증했습니다. 위 Python 3.12 기준 고정 
 6. 영상 신호등 음성은 테스트 앱의 3프레임·400ms 확인, 2초 소실 안내,
    같은 색 반복 억제·복구 후 재안내와 순차 재생 정책을 적용합니다.
 
-요약: 가상환경 활성화 → 가중치·영상 준비 → 샘플 폴더 선택 → 실행 → outputs/result_samples/샘플폴더명 결과 확인.
+요약: 가상환경 활성화 → 가중치·영상 준비 → 샘플 폴더 선택 → 실행 → data/samples/output/샘플폴더명 결과 확인.
 
 ## 8. 장애물 위험 판단 MVP (2026-09-21)
 
@@ -578,7 +611,7 @@ Transformers 5.17.0으로 CPU 검증했습니다. 위 Python 3.12 기준 고정 
 하단 ROI 확장, 조건부 보도 방향, 정적 장애물 근접 구간, 경고 해제 확인을 반영했습니다.
 [실제 구현·초기값·후속 검증 사항](docs/risk_revision_implementation_20260921.md)을 참고하세요.
 자동 테스트 87개가 통과했습니다. 화면 이탈/관측 소실은 실제 신체 주변의 안전 확인을 뜻하지 않습니다.
-새 결과와 좌우 비교 영상은 실행한 로컬 환경의 `outputs/experiments/` 아래에 생성합니다.
+당시 비교 영상은 `outputs/experiments/`에 저장했습니다. 과거 검증 문서의 해당 경로는 당시 기록이며, 현재 샘플 결과는 `data/samples/output/`에 저장합니다.
 
 ### 공통 ROI와 보도 기반 경고 (3차)
 
@@ -586,5 +619,5 @@ Transformers 5.17.0으로 CPU 검증했습니다. 위 Python 3.12 기준 고정 
 [구현 기준과 초기값](docs/risk_shared_profile_20260921.md)을 참고하세요. 자동 테스트 116개가 통과했습니다.
 강하게 겹친 같은 클래스의 경고는 한 알림 단위로 표시하되, 모든 탐지·개별 위험 등급·감사 이벤트는 유지합니다.
 기존 MP4 8개와 sample2의 MP4 2개를 처리하며 MOV는 제외합니다.
-결과 영상과 회차별 안내는 `outputs/` 아래에 생성하며, 용량 때문에 저장소에 포함하지 않습니다.
+현재 샘플 결과는 `data/samples/output/`, 촬영 기록은 `data/sessions/`에 저장하며, `data/` 전체는 Git에서 제외합니다.
 저장소에서 확인할 수 있는 근거는 위 docs 문서들이고, 영상은 직접 실행해 재현합니다.

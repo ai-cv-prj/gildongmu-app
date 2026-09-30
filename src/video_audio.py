@@ -11,11 +11,12 @@ from pathlib import Path
 
 import imageio_ffmpeg
 
-from src.audio_config import audio_directory
+from src.audio_config import load_audio_config
 
 
-AUDIO_DIR = audio_directory()
-SAMPLE_RATE = 16000
+AUDIO_SETTINGS = load_audio_config()
+AUDIO_DIR = AUDIO_SETTINGS["voice_dir"]
+SAMPLE_RATE = AUDIO_SETTINGS["sample_rate_hz"]
 
 
 # 동봉된 FFmpeg 실행 파일 조회
@@ -26,7 +27,7 @@ def ffmpeg_executable():
 
 # 음성 MP3를 단일 채널 PCM으로 해독
 def decode_clip(filename):
-    """동봉된 한국어 MP3를 16 kHz PCM 바이트로 바꾼다."""
+    """동봉된 한국어 MP3를 설정된 샘플레이트의 PCM 바이트로 바꾼다."""
     path = AUDIO_DIR / filename
     if path.name != filename or not path.is_file():
         raise FileNotFoundError(f"위험 안내 음원이 없습니다: {path}")
@@ -85,6 +86,6 @@ def mux_voice(video_path, wav_path, output_path, other_wav_path=None):
                     "-map", "0:v:0", "-map", "[a]"]
     else:
         command += ["-map", "0:v:0", "-map", "1:a:0"]
-    command += ["-c:v", "copy", "-c:a", "aac", "-b:a", "96k",
+    command += ["-c:v", "copy", "-c:a", "aac", "-b:a", f"{AUDIO_SETTINGS['bitrate_kbps']}k",
                 "-movflags", "+faststart", str(output_path)]
     subprocess.run(command, check=True, capture_output=True)

@@ -12,8 +12,8 @@ import warnings
 from pathlib import Path
 
 import cv2
-import yaml
 
+from src.settings import DEFAULT_PATHS_CONFIG, load_paths, read_yaml
 from src.sidewalk import SidewalkSegmenter
 from src.obstacle import ObstacleDetector, validate_yolo_config
 from src.visualization import draw_detections, overlay_segmentation, draw_traffic
@@ -44,8 +44,17 @@ def resolve_path(value):
 # YAML 설정 읽기
 def load_config(config_path):
     """모델별 가중치 경로와 공통 추론 설정을 확인한다."""
-    with resolve_path(config_path).open(encoding="utf-8") as file:
-        config = yaml.safe_load(file)
+    config = read_yaml(config_path)
+    paths = load_paths(config.get("paths_config", DEFAULT_PATHS_CONFIG))
+    for key in ("sample_dir", "output_dir", "session_dir"):
+        config.setdefault(key, paths[key])
+    config.setdefault("mask2former", {"weights": paths["mask2former_weights"]})
+    for name in ("yolo", "traffic"):
+        settings = config.setdefault(name, {})
+        if isinstance(settings, dict):
+            settings.setdefault("weights", paths[f"{name}_weights"])
+    if isinstance(config["traffic"], dict):
+        config["traffic"].setdefault("classifier_weights", paths["traffic_classifier_weights"])
     required = {"mask2former", "sample_dir", "output_dir", "device", "overlay_alpha"}
     if not isinstance(config, dict) or not required.issubset(config):
         raise ValueError(f"설정에 필요한 항목: {', '.join(sorted(required))}")

@@ -11,12 +11,15 @@ from datetime import datetime
 
 import cv2
 import numpy as np
+import pytest
+import yaml
 from fastapi.testclient import TestClient
 
 from backend.app import create_app
 from backend.response import normalize_detections
 from backend.session import SessionManager
 from src.video_audio import ffmpeg_executable
+from src.settings import load_app_config, load_paths
 
 
 class FakeModels:
@@ -96,11 +99,20 @@ def test_session_response_contains_crosswalk_event(tmp_path):
 
 
 # 실제 JPEG 디코딩부터 API 응답·로그까지 확인
-def test_mobile_session_flow(tmp_path):
-    """추론 결과와 원본·오버레이 영상이 저장되고 프레임 이미지는 남지 않는다."""
+@pytest.mark.parametrize("recording_fps", [10, 7])
+def test_mobile_session_flow(tmp_path, recording_fps):
+    """추론 결과·프레임·원본·오버레이 영상을 저장하고 실제 저장 위치를 알린다."""
     models = FakeModels()
     manager = SessionManager(tmp_path, model_factory=lambda: models)
-    client = TestClient(create_app(manager))
+    settings = load_app_config()
+    settings["recording"]["fps"] = recording_fps
+    app_config = tmp_path / "app.yaml"
+    app_config.write_text(yaml.safe_dump(settings), encoding="utf-8")
+    client = TestClient(create_app(manager, app_config=app_config))
+    public = client.get("/api/config")
+    assert public.headers["cache-control"] == "no-store"
+    assert public.json()["recording"]["fps"] == recording_fps
+    assert set(public.json()) == {"camera", "recording", "audio"}
     assert client.get("/api/health").json() == {"ok": True}
     assert client.get("/").status_code == 200
     assert client.get("/audio/red.mp3").status_code == 200
@@ -146,6 +158,7 @@ def test_mobile_session_flow(tmp_path):
     assert folder_name.startswith("Galaxy S24+_" + start.json()["date"] + "_")
     assert session_id not in folder_name
     folder = tmp_path / start.json()["date"] / folder_name
+    assert stopped.json()["storage_path"] == str(folder.resolve())
     logged = json.loads((folder / "results.jsonl").read_text(encoding="utf-8"))
     assert "mask_png" not in logged["walking"]
     assert (folder / "frames" / "000001.jpg").is_file()
@@ -156,7 +169,7 @@ def test_mobile_session_flow(tmp_path):
         capture = cv2.VideoCapture(str(folder / name))
         try:
             assert capture.isOpened()
-            assert capture.get(cv2.CAP_PROP_FPS) == 10
+            assert capture.get(cv2.CAP_PROP_FPS) == recording_fps
         finally:
             capture.release()
     assert not (folder / "camera_overlay.upload.webm").exists()
@@ -173,6 +186,36 @@ def test_mobile_session_flow(tmp_path):
     assert silent.returncode != 0
     assert client.post("/api/sessions", json={"device_name": "iPhone"}).status_code == 200
     assert models.resets == 1
+
+
+# 기본 앱 생성 경로와 용량 제한 변경 확인
+def test_configured_session_directory_and_upload_limit(tmp_path, monkeypatch):
+    """주입한 paths.yaml의 위치에 저장하고 app.yaml의 작은 업로드 제한을 적용한다."""
+    paths = load_paths()
+    paths["session_dir"] = str(tmp_path / "custom_sessions")
+    paths_file = tmp_path / "paths.yaml"
+    paths_file.write_text(yaml.safe_dump(paths), encoding="utf-8")
+    settings = load_app_config()
+    settings["upload"]["max_jpeg_bytes"] = 10
+    app_file = tmp_path / "app.yaml"
+    app_file.write_text(yaml.safe_dump(settings), encoding="utf-8")
+
+    # 실제 세션 저장 로직을 쓰되 모델 가중치 로딩만 대체한다.
+    def manager_factory(output_dir, session_settings):
+        """설정된 저장 위치와 시간대를 유지하는 테스트 세션 관리자를 만든다."""
+        return SessionManager(output_dir, model_factory=FakeModels, session_settings=session_settings)
+
+    monkeypatch.setattr("backend.app.SessionManager", manager_factory)
+    client = TestClient(create_app(app_config=app_file, paths_config=paths_file))
+    started = client.post("/api/sessions", json={"device_name": "Phone"}).json()
+    response = client.post(f"/api/sessions/{started['session_id']}/frames",
+                           data={"frame_id": 1, "captured_at_ms": 1000},
+                           files={"image": ("frame.jpg", b"x" * 11, "image/jpeg")})
+    assert response.status_code == 413
+    stopped = client.post("/api/sessions/stop", json={"session_id": started["session_id"]}).json()
+    folder = tmp_path / "custom_sessions" / started["date"] / started["folder_name"]
+    assert (folder / "session.json").is_file()
+    assert stopped["storage_path"] == str(folder)
 
 
 # 기종명과 한국 촬영시각으로 세션 폴더 생성 확인

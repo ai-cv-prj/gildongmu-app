@@ -18,7 +18,8 @@ const player = {
   },
   cancel() { cancelCount++; onEnd = null; },
 };
-const context = { window: {}, performance: { now: () => now }, navigator: {} };
+const settings = require("./settings");
+const context = { window: { GConfig: { get: () => settings } }, performance: { now: () => now }, navigator: {} };
 vm.runInNewContext(fs.readFileSync("frontend/js/audio_coordinator.js", "utf8"), context);
 const coordinator = context.window.GAudioCoordinator.create({ player, now: () => now,
   vibrate: pattern => vibrations.push([...pattern]) });

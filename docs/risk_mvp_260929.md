@@ -130,17 +130,17 @@ traffic, sidewalk 단독 모드에는 위험 모듈을 실행하지 않는다.
 
 ```bash
 # 통합 레포 루트에서 위험 판단을 포함한 기본 all 모드 실행
-python -m scripts.run_video_inference --sample-dir data/samples/sample3
+python -m scripts.run_video_inference --sample-dir data/samples/input/sample3
 
 # 위험 판단 없이 도보·장애물 표시만 확인
-python -m scripts.run_video_inference --sample-dir data/samples/sample3 \
-  --mode both --no-risk --output-dir outputs/no_risk_samples
+python -m scripts.run_video_inference --sample-dir data/samples/input/sample3 \
+  --mode both --no-risk --output-dir data/samples/output/no_risk
 ```
 
-기본 출력은 `outputs/result_samples/sample3/result_원본파일명.mp4`이며, 위험 판단과 로그가
+기본 출력은 `data/samples/output/sample3/result_원본파일명.mp4`이며, 위험 판단과 로그가
 켜져 있으면 같은 폴더에 `.risk.jsonl`도 저장한다. JSONL 첫 프레임에는 적용된 risk/tracking
 설정을 기록한다. 출력 폴더는 자동 생성하고 같은 이름의 결과는 완성 후 교체한다.
-위 비교 명령의 위험 판단 없는 영상은 `outputs/no_risk_samples/sample3/`에 따로 저장한다.
+위 비교 명령의 위험 판단 없는 영상은 `data/samples/output/no_risk/sample3/`에 따로 저장한다.
 추론 오류 시 기존 결과를 유지하고 이번 실행의 임시 파일을 정리한다.
 시간은 소스 PTS를 사용한다. PTS가 유효하지 않으면 명목 FPS로 표시 시각만 계산하고 운동 판단을 끈다.
 시간 역전·긴 공백·해상도 변경은 상태를 초기화한다. state_epoch로 로그에서 구분할 수 있다.

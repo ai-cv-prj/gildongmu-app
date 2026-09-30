@@ -21,8 +21,10 @@ htmlcov/
 .env.*
 !.env.example
 
-# 학습 데이터 및 모델 산출물
+# 샘플 입력·출력 및 날짜별 촬영 세션
 data/
+
+# 모델 가중치 및 이전 실험 산출물
 weights/
 outputs/
 checkpoints/

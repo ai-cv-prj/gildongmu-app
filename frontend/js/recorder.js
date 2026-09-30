@@ -8,8 +8,6 @@ window.GRecorder = (() => {
   const overlay = document.getElementById("overlay");
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
-  const RECORDING_FPS = 10;
-  const FRAME_INTERVAL_MS = 1000 / RECORDING_FPS;
   let recorder = null;
   let chunks = [];
   let rawRecorder = null;
@@ -71,11 +69,11 @@ window.GRecorder = (() => {
     const mimeType = supportedMimeType(false);
     rawRecorder = new MediaRecorder(new MediaStream([cameraTrack]), {
       ...(mimeType ? { mimeType } : {}),
-      videoBitsPerSecond: 2500000,
+      videoBitsPerSecond: window.GConfig.get().recording.video_bits_per_second,
     });
     rawRecorder.ondataavailable = (event) => { if (event.data.size) rawChunks.push(event.data); };
     rawRecorder.onerror = (event) => { rawError = event.error || new Error("원본 카메라 녹화 실패"); };
-    rawRecorder.start(1000);
+    rawRecorder.start(window.GConfig.get().recording.chunk_interval_ms);
   }
 
   // 원본 카메라 영상 녹화 종료
@@ -98,17 +96,18 @@ window.GRecorder = (() => {
   }
 
   // 카메라와 현재 탐지 화면 합성
-  /** 화면 갱신마다 호출되더라도 녹화용 합성은 30FPS 주기로만 수행한다. */
+  /** 화면 갱신마다 호출되더라도 설정된 녹화 FPS 주기로만 합성한다. */
   function drawFrame(now = performance.now()) {
     if (!recorder || recorder.state === "inactive") return;
     animationId = requestAnimationFrame(drawFrame);
+    const frameIntervalMs = 1000 / window.GConfig.get().recording.fps;
     if (lastFrameAt !== null) {
       const elapsed = now - lastFrameAt;
-      // 33.333...ms 경계에서 부동소수점 오차로 정상 프레임이 빠지는 것을 막는다.
-      const intervals = Math.floor((elapsed + 0.001) / FRAME_INTERVAL_MS);
+      // 프레임 간격 경계에서 부동소수점 오차로 정상 프레임이 빠지는 것을 막는다.
+      const intervals = Math.floor((elapsed + 0.001) / frameIntervalMs);
       if (intervals < 1) return;
       // 시간 오차만 보정하고, 밀린 프레임을 한꺼번에 합성하지 않는다.
-      lastFrameAt += intervals * FRAME_INTERVAL_MS;
+      lastFrameAt += intervals * frameIntervalMs;
     } else {
       lastFrameAt = now;
     }
@@ -125,29 +124,30 @@ window.GRecorder = (() => {
   }
 
   // 실시간 탐지 화면 녹화 시작
-  /** 최대 긴 변 720px, 약 10FPS로 화면과 안내 음성 녹화를 시작한다. */
+  /** 서버에서 받은 해상도와 FPS로 화면과 안내 음성 녹화를 시작한다. */
   function start() {
     if (!window.MediaRecorder || !canvas.captureStream) {
       throw new Error("이 브라우저는 화면 녹화를 지원하지 않습니다.");
     }
     const displayWidth = overlay.clientWidth || video.videoWidth;
     const displayHeight = overlay.clientHeight || video.videoHeight;
-    const scale = Math.min(1, 720 / Math.max(displayWidth, displayHeight));
+    const settings = window.GConfig.get().recording;
+    const scale = Math.min(1, settings.max_side / Math.max(displayWidth, displayHeight));
     canvas.width = Math.max(2, Math.round(displayWidth * scale / 2) * 2);
     canvas.height = Math.max(2, Math.round(displayHeight * scale / 2) * 2);
 
     chunks = [];
     lastFrameAt = null;
-    const stream = canvas.captureStream(RECORDING_FPS);
+    const stream = canvas.captureStream(settings.fps);
     const audioTrack = preparedTrack;
     if (audioTrack) stream.addTrack(audioTrack);
     const mimeType = supportedMimeType(!!audioTrack);
     recorder = new MediaRecorder(stream, {
       ...(mimeType ? { mimeType } : {}),
-      videoBitsPerSecond: 2500000,
+      videoBitsPerSecond: settings.video_bits_per_second,
     });
     recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
-    recorder.start(1000);
+    recorder.start(settings.chunk_interval_ms);
     drawFrame();
   }
 

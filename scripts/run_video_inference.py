@@ -6,10 +6,10 @@ file_path: scripts/run_video_inference.py
 
 [영상 테스트 실행]
 # sample1 폴더에 있는 모든 MP4를 처리
-python -m scripts.run_video_inference --sample-dir data/samples/sample1
+python -m scripts.run_video_inference --sample-dir data/samples/input/sample1
 
 [영상 테스트 결과물]
-outputs/result_samples/샘플폴더명/에 결과 MP4를 저장함
+data/samples/output/샘플폴더명/에 결과 MP4를 저장함
 위험 판정이 켜져 있으면 같은 폴더에 .risk.jsonl도 저장함
 """
 

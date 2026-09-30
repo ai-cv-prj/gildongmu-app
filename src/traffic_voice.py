@@ -5,12 +5,14 @@ file_path: src/traffic_voice.py
 """
 
 from src.video_audio import decode_clip, SAMPLE_RATE
+from src.settings import load_audio_settings
 
 
-STABLE_FRAMES = 3
-STABLE_SECONDS = 0.4
-MAX_GAP_SECONDS = 1.0
-MISSING_SECONDS = 2.0
+AUDIO_SETTINGS = load_audio_settings()
+STABLE_FRAMES = AUDIO_SETTINGS["guidance"]["stable_frames"]
+STABLE_SECONDS = AUDIO_SETTINGS["guidance"]["stable_ms"] / 1000
+MAX_GAP_SECONDS = AUDIO_SETTINGS["video_max_gap_ms"] / 1000
+MISSING_SECONDS = AUDIO_SETTINGS["guidance"]["missing_ms"] / 1000
 
 
 class TrafficVoice:

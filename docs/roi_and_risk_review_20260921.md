@@ -1,6 +1,6 @@
 # ROI 방식 비교와 8개 영상 위험 표시 검토
 
-2026-09-21. 대상은 data/samples/sample1의 MP4 8개, 총 5,591프레임이다.
+2026-09-21. 대상은 data/samples/input/sample1의 MP4 8개, 총 5,591프레임이다.
 결과 위치: outputs/experiments/2026-09-21_risk-detection-evaluation/04_attempt-1_fixed-roi.
 전체 프레임 YOLO + Mask2Former + BoT-SORT를 실행하며, 이번 검토 설정에서 확대 TTC 위험 반영을 켰다.
 신호등 코드는 수정하지 않았다. 이번 실행 모드는 기존 기본값인 both(장애물+보도)이다.

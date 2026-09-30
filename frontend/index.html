@@ -50,7 +50,7 @@ file_path: frontend/index.html
     </section>
 
     <section class="controls" aria-label="테스트 제어">
-      <button id="camera-button" type="button" class="secondary">카메라 켜기</button>
+      <button id="camera-button" type="button" class="secondary" disabled>카메라 켜기</button>
       <button id="test-button" type="button" class="primary" disabled>테스트 시작</button>
     </section>
 
@@ -59,6 +59,7 @@ file_path: frontend/index.html
       <p id="status">서버와 카메라를 준비해 주세요.</p>
     </section>
   </main>
+  <script defer src="/static/js/config.js"></script>
   <script defer src="/static/js/camera.js"></script>
   <script defer src="/static/js/tts.js"></script>
   <script defer src="/static/js/audio_coordinator.js"></script>
