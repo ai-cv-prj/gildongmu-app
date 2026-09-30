@@ -7,10 +7,64 @@ file_path: src/walking_voice.py
 
 from math import isfinite
 
+import numpy as np
+
 
 VEHICLE_CLASSES = {"car", "bus", "truck", "motorcycle"}
 DIRECTION_NAMES = {"left": "왼쪽", "center": "가운데", "right": "오른쪽"}
 WARNING_NAMES = {"person": "사람", "vehicle": "차량", "obstacle": "장애물"}
+
+
+# 객체 바닥에서 횡단보도 픽셀 비율 계산
+def crosswalk_contact_fraction(item, class_map, label_ids, shape, half_height):
+    """객체 박스 바닥의 좁은 접촉 영역에서 횡단보도 픽셀 비율을 계산한다."""
+    if (class_map is None or not label_ids or "crosswalk" not in label_ids
+            or class_map.shape != tuple(shape[:2])):
+        return None
+    box = item.get("xyxy")
+    if not isinstance(box, (list, tuple)) or len(box) != 4:
+        return None
+    try:
+        x1, _, x2, y2 = map(float, box)
+    except (TypeError, ValueError):
+        return None
+    if not all(isfinite(value) for value in (x1, x2, y2)):
+        return None
+    height, width = shape[:2]
+    if height <= 0 or width <= 0:
+        return None
+    left = max(0, min(width - 1, int(np.floor(x1))))
+    right = max(left + 1, min(width, int(np.ceil(x2))))
+    radius = max(1, round(height * half_height))
+    top = max(0, min(height - 1, round(y2) - radius))
+    bottom = max(top + 1, min(height, round(y2) + radius))
+    patch = class_map[top:bottom, left:right]
+    if patch.size == 0:
+        return None
+    return float(np.mean(patch == label_ids["crosswalk"]))
+
+
+# 빨간불 횡단보도 장애물의 음성 제외 표시
+def suppress_red_crosswalk_voice(prediction, signal, class_map, label_ids, shape, config):
+    """빨간불이며 횡단보도 위로 확인된 위험 객체만 음성 대상에서 제외한다."""
+    for item in prediction.get("detections", []):
+        item.pop("voice_suppressed_reason", None)
+        item.pop("crosswalk_contact_fraction", None)
+    if (not config.get("red_obstacle_voice_suppression", True)
+            or (signal or {}).get("signal_state") != "red"):
+        return prediction
+    threshold = config.get("red_obstacle_crosswalk_threshold", .20)
+    half_height = config.get("red_obstacle_contact_half_height", .02)
+    for item in prediction.get("detections", []):
+        if item.get("alert_level", item.get("risk_level")) != "danger":
+            continue
+        fraction = crosswalk_contact_fraction(
+            item, class_map, label_ids, shape, half_height)
+        if fraction is not None:
+            item["crosswalk_contact_fraction"] = fraction
+        if fraction is not None and fraction >= threshold:
+            item["voice_suppressed_reason"] = "red_signal_crosswalk_obstacle"
+    return prediction
 
 
 # 신뢰할 수 있는 물체 이름을 음성용 범주로 묶기
@@ -54,7 +108,8 @@ def danger_voice_target(prediction):
         return None
     item = next((d for d in prediction.get("detections", [])
                  if d.get("detection_index") == index), None)
-    if item is None or item.get("alert_level", item.get("risk_level")) != "danger":
+    if (item is None or item.get("alert_level", item.get("risk_level")) != "danger"
+            or item.get("voice_suppressed_reason")):
         return None
     category = ("obstacle" if selected.get("source") in ("surface", "surface_object", "advisory")
                 or item.get("semantic_path_overlap") else warning_category(item))
@@ -64,20 +119,26 @@ def danger_voice_target(prediction):
 # 한 프레임의 안내 대상 수집
 def danger_voice_targets(prediction, image_width):
     """대표 위험과 같은 장면의 기본 위험 객체를 방향과 ID로 정리한다."""
+    warning = prediction.get("warning") or {}
+    if warning.get("level") != "danger":
+        return []
     selected = danger_voice_target(prediction)
-    if selected is None:
+    selected_index = warning.get("detection_index")
+    if not isinstance(selected_index, int) or isinstance(selected_index, bool):
         return []
     targets, seen = [], set()
     for item in prediction.get("detections", []):
         if (item.get("alert_level", item.get("risk_level")) != "danger"
-                or not item.get("warning_primary", True)):
+                or not item.get("warning_primary", True)
+                or item.get("voice_suppressed_reason")):
             continue
         event_id = voice_event_id(item)
         direction = warning_direction(item, image_width)
         if event_id is None or direction is None or event_id in seen:
             continue
         seen.add(event_id)
-        category = selected["category"] if event_id == selected["event_id"] else warning_category(item)
+        category = (selected["category"] if selected is not None
+                    and event_id == selected["event_id"] else warning_category(item))
         targets.append({"event_id": event_id, "direction": direction, "category": category})
     return targets
 
