@@ -12,6 +12,8 @@ from pathlib import Path
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+import cv2
+
 from backend.inference import RealtimeInference
 from backend.response import make_response
 
@@ -70,6 +72,7 @@ class SessionManager:
                     break
                 except FileExistsError:
                     index += 1
+            (folder / "frames").mkdir()
             self.session = {
                 "id": session_id, "device_name": device_name, "note": note,
                 "date": date, "folder_name": folder_name,
@@ -99,6 +102,13 @@ class SessionManager:
             )
             result = make_response(session_id, frame_id, captured_at_ms, frame,
                                    risk, signal, crosswalk, class_map, label_ids, elapsed)
+            frame_name = f"{frame_id:06d}.jpg"
+            frame_file = Path("frames") / frame_name
+            encoded, jpeg = cv2.imencode(".jpg", frame)
+            if not encoded:
+                raise SessionError("추론 프레임 이미지를 저장할 수 없습니다.")
+            (session["folder"] / frame_file).write_bytes(jpeg.tobytes())
+            result["frame_file"] = frame_file.as_posix()
             # 응답의 큰 PNG는 로그에서 제외하고 판단 결과와 선택 대상만 기록한다.
             record = {
                 **{key: value for key, value in result.items() if key not in ("walking", "traffic")},

@@ -77,7 +77,8 @@ PC의 이 레포에서 두 터미널을 열어 순서대로 실행하세요. `.v
 테스트 메모가 없으면 폴더명에서 생략하고, 폴더명에 붙는 메모는 사용할 수 없는 문자를 `_`로 바꾼 뒤 40자까지만 사용합니다.
 촬영시각은 테스트 시작 시각이며 `YYYYMMDD_HHMMSS` 형식입니다. 같은 시각에 시작한 테스트는 폴더명 뒤에 `_2`, `_3`을 붙입니다. 세션 ID는 내부 요청에만 사용합니다.
 테스트 시작 버튼부터 종료까지의 카메라 원본은 오버레이·현장 소리 없이 10FPS `camera.mp4`에 저장합니다.
-추론 결과는 `results.jsonl`에 기록하며, 추론용 JPEG는 저장하지 않습니다.
+추론 결과는 `results.jsonl`에 기록하고, 같은 레코드의 `frame_file`과 일치하는 추론 JPEG를
+`frames/000001.jpg` 형식으로 저장합니다.
 오버레이와 안내 음성이 포함된 10FPS `camera_overlay.mp4`도 항상 저장합니다. 마이크 소리는 녹음하지 않습니다.
 
 `cloudflared`가 없으면 WSL/Ubuntu에서 설치하세요.
@@ -345,7 +346,7 @@ traffic:
 | `crosswalk_safety.roi_crosswalk_threshold` / `roi_exit_confirm_s` | ROI의 횡단보도 비율이 5% 미만인 상태를 이탈 후보로 확인하는 기준 / 확인 시간 0.30초 |
 | `crosswalk_safety.roi_occlusion_threshold` | 객체가 ROI의 8% 이상을 가리면 ROI 손실만으로 이탈을 확정하지 않는 기준 |
 | `crosswalk_safety.outside_finish_walkable_fraction` / `outside_finish_confirm_s` | 이탈 상태에서도 보행 가능 도착을 복구하는 비율 80% / 확인 시간 0.80초 |
-| `crosswalk_safety.red_obstacle_voice_suppression` | 빨간불이고 객체 바닥이 횡단보도로 확인되면 위험 장애물 음성만 제외하는 기능 |
+| `crosswalk_safety.non_green_obstacle_voice_suppression` | 선택 신호가 초록불이 아니고 객체 바닥이 횡단보도로 확인되면 위험 장애물 음성만 제외하는 기능 |
 | `crosswalk_safety.max_boundary_shift` | 프레임 사이 경계가 이 값보다 크게 움직이면 이탈 음성을 보류하는 기준 |
 
 `overlay_alpha`는 0~1 범위이며 탐지 성능이나 YOLO 박스에는 영향을 주지 않습니다.
