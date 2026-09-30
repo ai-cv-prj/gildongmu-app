@@ -33,8 +33,9 @@ context.window.GOverlay.render({
     event: { roi: {} },
   },
   traffic: { detections: [] },
-  crosswalk: { event: {} },
+  crosswalk: { event: { status: "crossing" } },
 });
 
 assert.ok(labels.includes("person · T12 · E34"));
+assert.ok(labels.includes("CROSSWALK: crossing"));
 console.log("overlay ids: pass");

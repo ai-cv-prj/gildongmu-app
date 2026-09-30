@@ -86,6 +86,24 @@ window.GOverlay = (() => {
     ctx.fill();
   }
 
+  // 현재 횡단보도 상태 표시
+  /** 모바일 화면 오른쪽 위에 현재 횡단 상태를 짧은 배지로 표시한다. */
+  function crosswalkStatus(event) {
+    const status = event?.status;
+    if (!status || status === "disabled") return;
+    const text = `CROSSWALK: ${status}`;
+    ctx.font = `bold ${Math.max(13, canvas.width / 38)}px system-ui`;
+    const padding = 8;
+    const height = Math.max(26, canvas.height / 24);
+    const width = ctx.measureText(text).width + padding * 2;
+    const x = Math.max(0, canvas.width - width - 8);
+    const y = 8;
+    ctx.fillStyle = "rgba(24, 24, 24, 0.88)";
+    ctx.fillRect(x, y, width, height);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(text, x + padding, y + height - 8);
+  }
+
   // 하단 횡단보도 판단 ROI 표시
   /** 서버 판정에 사용한 고정 ROI를 보라색 테두리로 표시한다. */
   function crosswalkRoi(event) {
@@ -114,6 +132,7 @@ window.GOverlay = (() => {
       boxes(result.walking?.detections, "walking");
       boxes(result.traffic?.detections, "traffic");
       crosswalkSafety(result.crosswalk?.event);
+      crosswalkStatus(result.crosswalk?.event);
     };
     if (!result.walking?.mask_png) return draw(null);
     const mask = new Image();

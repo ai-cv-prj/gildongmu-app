@@ -66,7 +66,7 @@
     }
 
     // 횡단보도 안전 판정 수신
-    /** 가장자리 접근은 한 번 진동하고 이탈은 복귀할 때까지 음성·강한 진동을 반복한다. */
+    /** 진입 전 정렬과 방향이 확정된 이탈만 반복 안내하고 가장자리는 한 번 진동한다. */
     function acceptCrosswalk(event, capturedAt) {
       if (!active || !event || !Number.isFinite(capturedAt)) return;
       const staleAfter = Number.isFinite(event.stale_after_ms)
@@ -80,7 +80,13 @@
         }
         return;
       }
-      if (["outside_left", "outside_right", "outside_unknown"].includes(event.status)
+      if (["align_left", "align_right"].includes(event.status)
+          && event.repeat && event.voice_text) {
+        request({ source: "crosswalk", priority: PRIORITY.crosswalk, text: event.voice_text,
+          validUntil, repeat: true });
+        return;
+      }
+      if (["outside_left", "outside_right"].includes(event.status)
           && event.repeat && event.voice_text) {
         request({ source: "crosswalk", priority: PRIORITY.crosswalk, text: event.voice_text,
           validUntil, repeat: true, vibration: "danger" });

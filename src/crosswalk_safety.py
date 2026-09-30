@@ -1,7 +1,7 @@
 """
 file_path: src/crosswalk_safety.py
 
-횡단보도 마스크와 검출 결과를 결합해 횡단 상태와 좌우 이탈을 판단한다.
+횡단보도 마스크로 진입 정렬과 횡단 상태 및 좌우 이탈을 판단한다.
 정규화된 영상 좌표만 사용하며 실제 거리나 횡단 안전을 보장하지 않는다.
 """
 
@@ -25,7 +25,6 @@ DEFAULT_CROSSWALK_SAFETY = {
     "roi_bottom": 1.00,
     "roi_crosswalk_threshold": 0.05,
     "roi_occlusion_threshold": 0.08,
-    "roi_exit_confirm_s": 0.30,
     "entry_confirm_s": 0.50,
     "edge_confirm_s": 0.20,
     "exit_confirm_s": 0.25,
@@ -43,7 +42,6 @@ DEFAULT_CROSSWALK_SAFETY = {
     "min_valid_rows": 8,
     "finish_walkable_fraction": 0.60,
     "outside_finish_walkable_fraction": 0.80,
-    "entry_box_bottom": 0.70,
     "non_green_obstacle_voice_suppression": True,
     "non_green_obstacle_crosswalk_threshold": 0.20,
     "non_green_obstacle_contact_half_height": 0.02,
@@ -63,7 +61,7 @@ def crosswalk_safety_config(value=None):
     unit_keys = (
         "near_zone_top", "foot_x", "foot_y", "foot_half_width", "foot_half_height",
         "edge_margin", "exit_margin", "max_boundary_shift", "min_mask_area",
-        "min_row_width", "finish_walkable_fraction", "entry_box_bottom", "roi_left",
+        "min_row_width", "finish_walkable_fraction", "roi_left",
         "roi_right", "roi_top", "roi_bottom", "roi_crosswalk_threshold",
         "roi_occlusion_threshold", "outside_finish_walkable_fraction",
         "non_green_obstacle_crosswalk_threshold", "non_green_obstacle_contact_half_height",
@@ -76,7 +74,7 @@ def crosswalk_safety_config(value=None):
     time_keys = (
         "entry_confirm_s", "edge_confirm_s", "exit_confirm_s", "return_confirm_s",
         "finish_confirm_s", "uncertainty_hold_s", "max_gap_s", "boundary_smooth_s",
-        "roi_exit_confirm_s", "outside_finish_confirm_s",
+        "outside_finish_confirm_s",
     )
     for key in time_keys:
         item = cfg[key]
@@ -169,27 +167,6 @@ def crosswalk_roi_occlusion(detections, shape, cfg):
     return min(1.0, largest)
 
 
-# 신호등 파이프라인의 가까운 횡단보도 선택
-def eligible_crosswalk(signal, shape, cfg):
-    """연결 가능한 횡단보도 중 화면 아래에 가장 가까운 후보를 반환한다."""
-    height = shape[0]
-    candidates = []
-    for item in (signal or {}).get("crosswalks", []):
-        status = item.get("crosswalk_status")
-        if status not in (None, "used", "eligible"):
-            continue
-        box = item.get("xyxy")
-        if not isinstance(box, (list, tuple)) or len(box) != 4:
-            continue
-        try:
-            bottom = float(item.get("bottom_ratio", float(box[3]) / height))
-        except (TypeError, ValueError, ZeroDivisionError):
-            continue
-        if math.isfinite(bottom) and bottom >= cfg["entry_box_bottom"]:
-            candidates.append((bottom, item))
-    return max(candidates, key=lambda value: value[0])[1] if candidates else None
-
-
 # 핑크 마스크에서 횡단보도 좌우 경계 추정
 def crosswalk_geometry(class_map, label_ids, shape, cfg):
     """줄무늬 사이를 연결한 뒤 가상 발 높이의 좌우 경계를 정규화해 반환한다."""
@@ -253,10 +230,9 @@ class CrosswalkSafetyEngine:
         self.pending_kind = None
         self.pending_since = None
         self.last_timestamp = None
-        self.last_valid_at = None
         self.left_x = None
         self.right_x = None
-        self.last_edge_direction = None
+        self.roi_crosswalk_since = None
         self.event_id = 0
 
     # 연속 시간 조건 확인
@@ -286,7 +262,7 @@ class CrosswalkSafetyEngine:
     # 프레임별 횡단보도 안전 상태 갱신
     def update(self, class_map, label_ids, shape, signal, timestamp, camera_stable=True,
                detections=None):
-        """같은 프레임의 마스크·횡단보도 검출로 상태와 안내 이벤트를 반환한다."""
+        """같은 프레임의 마스크로 상태와 안내 이벤트를 반환한다."""
         result = {
             "enabled": self.config["enabled"], "status": "disabled", "crossing_active": False,
             "direction": None, "voice_text": None, "voice_clip": None, "repeat": False,
@@ -307,7 +283,6 @@ class CrosswalkSafetyEngine:
             detections, shape, self.config)
         result["crosswalk_roi"] = roi
         geometry = crosswalk_geometry(class_map, label_ids, shape, self.config)
-        candidate = eligible_crosswalk(signal, shape, self.config)
         if not camera_stable:
             result.update(status="uncertain", crossing_active=self.crossing_active,
                           reasons=["camera_unstable"])
@@ -327,25 +302,45 @@ class CrosswalkSafetyEngine:
                 geometry["left_x"] = self.left_x + alpha * (geometry["left_x"] - self.left_x)
                 geometry["right_x"] = self.right_x + alpha * (geometry["right_x"] - self.right_x)
             self.left_x, self.right_x = geometry["left_x"], geometry["right_x"]
-            self.last_valid_at = timestamp
         result["geometry"] = geometry
 
-        # 횡단 전에는 가까운 검출과 중앙 마스크가 함께 확인되어야 한다.
+        roi_fraction = roi["crosswalk_fraction"]
+        roi_visible = bool(roi_fraction is not None
+                           and roi_fraction >= self.config["roi_crosswalk_threshold"])
+        if roi_visible:
+            if self.roi_crosswalk_since is None:
+                self.roi_crosswalk_since = timestamp
+        else:
+            self.roi_crosswalk_since = None
+        roi_confirmed = bool(self.roi_crosswalk_since is not None
+                             and timestamp - self.roi_crosswalk_since + 1e-9
+                             >= self.config["entry_confirm_s"])
+
+        # 횡단 전에는 ROI 마스크 지속 시간과 가상 발의 좌우 경계만 확인한다.
         if not self.crossing_active:
-            entry = bool(geometry and geometry["near"] and candidate is not None
-                         and geometry["left_x"] <= self.config["foot_x"] <= geometry["right_x"])
-            if entry:
-                self._transition("approach")
-                if self._confirmed("entry", timestamp, self.config["entry_confirm_s"]):
-                    self.crossing_active = True
-                    self._transition("crossing")
-                    self._clear_pending()
+            foot_x = self.config["foot_x"]
+            inside = bool(geometry and geometry["left_x"] <= foot_x <= geometry["right_x"])
+            if roi_confirmed and inside:
+                self.crossing_active = True
+                self._transition("crossing")
+                self._clear_pending()
+                result.update(status="crossing", crossing_active=True,
+                              event_id=self.event_id, reasons=["entry_confirmed"])
+                return result
+            if roi_visible and geometry is not None and not inside:
+                move = "right" if foot_x < geometry["left_x"] else "left"
+                korean = "오른쪽" if move == "right" else "왼쪽"
+                self._clear_pending()
+                self._transition(f"align_{move}")
+                result.update(status=self.phase, direction=move, repeat=True,
+                              voice_text=f"{korean}으로 이동하세요!",
+                              voice_clip=f"crosswalk-align-{move}.mp3",
+                              event_id=self.event_id, reasons=["entry_alignment"])
             else:
                 self._clear_pending()
-                self._transition("approach" if geometry is not None or candidate is not None else "search")
-            result.update(status=self.phase, crossing_active=self.crossing_active,
-                          event_id=self.event_id,
-                          reasons=["entry_confirmed"] if self.crossing_active else [])
+                self._transition("approach" if roi_visible else "search")
+                result.update(status=self.phase, event_id=self.event_id,
+                              reasons=["entry_confirming"] if roi_visible else [])
             return result
 
         # 횡단보도 끝에서 보행가능영역으로 이어지면 정상 도착으로 처리한다.
@@ -354,7 +349,7 @@ class CrosswalkSafetyEngine:
             semantics["walkable_fraction"] is not None
             and semantics["walkable_fraction"] >= self.config["finish_walkable_fraction"]
         )
-        outside_phase = self.phase in ("outside_left", "outside_right", "outside_unknown")
+        outside_phase = self.phase in ("outside_left", "outside_right")
         outside_finish = outside_phase and destination_visible and (
             semantics["walkable_fraction"] is not None
             and semantics["walkable_fraction"] >= self.config["outside_finish_walkable_fraction"]
@@ -379,34 +374,18 @@ class CrosswalkSafetyEngine:
                         if korean else "횡단보도 이탈!")
                 result.update(direction=move, repeat=True, vibration="danger",
                               voice_text=text,
-                              voice_clip=f"crosswalk-exit-{move or 'unknown'}.mp3")
+                              voice_clip=f"crosswalk-exit-{move}.mp3")
             return result
-        roi_missing = (geometry is None and roi["crosswalk_fraction"] is not None
-                       and roi["crosswalk_fraction"] < self.config["roi_crosswalk_threshold"])
+        roi_missing = not roi_visible
         if roi_missing:
             if roi["occlusion_fraction"] >= self.config["roi_occlusion_threshold"]:
                 self._clear_pending()
                 result.update(status="uncertain", crossing_active=True,
                               event_id=self.event_id, reasons=["crosswalk_roi_occluded"])
                 return result
-            direction = self.last_edge_direction
-            exit_phase = (self.phase if self.phase in ("outside_left", "outside_right") else
-                          "outside_left" if direction == "right" else
-                          "outside_right" if direction == "left" else "outside_unknown")
-            if self.phase == exit_phase or self._confirmed(
-                    f"roi_{exit_phase}", timestamp, self.config["roi_exit_confirm_s"]):
-                self._transition(exit_phase)
-                self._clear_pending()
-            result.update(status=self.phase, crossing_active=True, event_id=self.event_id,
+            self._clear_pending()
+            result.update(status="uncertain", crossing_active=True, event_id=self.event_id,
                           reasons=["crosswalk_roi_missing"])
-            if self.phase in ("outside_left", "outside_right", "outside_unknown"):
-                move = ("right" if self.phase == "outside_left" else
-                        "left" if self.phase == "outside_right" else None)
-                korean = "오른쪽" if move == "right" else "왼쪽" if move == "left" else None
-                text = (f"횡단보도 이탈! {korean}으로 이동하세요!"
-                        if korean else "횡단보도 이탈!")
-                result.update(direction=move, repeat=True, vibration="danger", voice_text=text,
-                              voice_clip=f"crosswalk-exit-{move or 'unknown'}.mp3")
             return result
         if geometry is None:
             self._clear_pending()
@@ -436,16 +415,13 @@ class CrosswalkSafetyEngine:
             return result
 
         # 이탈 중에는 안쪽 복귀를 확인할 때까지 기존 방향 안내를 유지한다.
-        if self.phase in ("outside_left", "outside_right", "outside_unknown"):
+        if self.phase in ("outside_left", "outside_right"):
             if not self._confirmed("return", timestamp, self.config["return_confirm_s"]):
-                move = ("right" if self.phase == "outside_left" else
-                        "left" if self.phase == "outside_right" else None)
-                korean = "오른쪽" if move == "right" else "왼쪽" if move == "left" else None
-                text = (f"횡단보도 이탈! {korean}으로 이동하세요!"
-                        if korean else "횡단보도 이탈!")
+                move = "right" if self.phase == "outside_left" else "left"
+                korean = "오른쪽" if move == "right" else "왼쪽"
                 result.update(status=self.phase, crossing_active=True, direction=move,
-                              voice_text=text,
-                              voice_clip=f"crosswalk-exit-{move or 'unknown'}.mp3", repeat=True,
+                              voice_text=f"횡단보도 이탈! {korean}으로 이동하세요!",
+                              voice_clip=f"crosswalk-exit-{move}.mp3", repeat=True,
                               vibration="danger", event_id=self.event_id,
                               reasons=["return_confirming"])
                 return result
@@ -455,7 +431,6 @@ class CrosswalkSafetyEngine:
         edge_direction = ("right" if left_gap <= self.config["edge_margin"]
                           else "left" if right_gap <= self.config["edge_margin"] else None)
         if edge_direction is not None:
-            self.last_edge_direction = edge_direction
             edge_kind = f"edge_{edge_direction}"
             if self.phase == "edge" or self._confirmed(edge_kind, timestamp, self.config["edge_confirm_s"]):
                 changed = self._transition("edge")
@@ -466,7 +441,6 @@ class CrosswalkSafetyEngine:
             return result
 
         self._clear_pending()
-        self.last_edge_direction = None
         self._transition("crossing")
         result.update(status="crossing", crossing_active=True, event_id=self.event_id,
                       reasons=["inside_crosswalk"])

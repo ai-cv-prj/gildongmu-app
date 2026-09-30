@@ -13,7 +13,8 @@
     ["신호를 확인할 수 없습니다.", "missing"],
     ["횡단보도 이탈! 오른쪽으로 이동하세요!", "crosswalk-exit-right"],
     ["횡단보도 이탈! 왼쪽으로 이동하세요!", "crosswalk-exit-left"],
-    ["횡단보도 이탈!", "crosswalk-exit-unknown"],
+    ["오른쪽으로 이동하세요!", "crosswalk-align-right"],
+    ["왼쪽으로 이동하세요!", "crosswalk-align-left"],
   ]);
   for (const [text, name] of [...CLIPS]) CLIPS.set(`모의 신호. ${text}`, `mock-${name}`);
   const directions = [["left", "왼쪽"], ["center", "가운데"], ["right", "오른쪽"]];
