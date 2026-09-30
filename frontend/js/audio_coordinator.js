@@ -6,11 +6,11 @@
  */
 (() => {
   const PRIORITY = Object.freeze({ crosswalk: 1, walking: 2, trafficChange: 3, traffic: 4 });
-  const CROSSWALK_MAX_AGE_MS = 1500;
 
   // 전체 안내에서 하나뿐인 음성 재생 관리자 생성
   /** 단일 플레이어의 취소·반복·진동을 안내 우선순위에 맞춰 제어한다. */
   function create({ player, now = () => performance.now(), vibrate = pattern => navigator.vibrate?.(pattern) }) {
+    const crosswalkMaxAgeMs = window.GConfig.get().audio.crosswalk_max_age_ms;
     let active = false, current = null, generation = 0;
     const edgeEvents = new Set();
 
@@ -70,7 +70,7 @@
     function acceptCrosswalk(event, capturedAt) {
       if (!active || !event || !Number.isFinite(capturedAt)) return;
       const staleAfter = Number.isFinite(event.stale_after_ms)
-        ? Math.max(100, event.stale_after_ms) : CROSSWALK_MAX_AGE_MS;
+        ? Math.max(100, event.stale_after_ms) : crosswalkMaxAgeMs;
       const validUntil = capturedAt + staleAfter;
       if (event.status === "edge" && event.vibration === "edge") {
         const key = String(event.event_id);
@@ -127,5 +127,5 @@
     return { start, stop, request, clear, acceptCrosswalk, tick, PRIORITY };
   }
 
-  window.GAudioCoordinator = { create, PRIORITY, CROSSWALK_MAX_AGE_MS };
+  window.GAudioCoordinator = { create, PRIORITY };
 })();

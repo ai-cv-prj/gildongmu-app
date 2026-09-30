@@ -3,11 +3,17 @@
  *
  * 휴대폰 카메라·추론·오버레이·음성·녹화를 하나의 테스트 흐름으로 연결한다.
  */
-(() => {
+(async () => {
   const $ = id => document.getElementById(id);
   const cameraButton = $("camera-button"), testButton = $("test-button");
   const device = $("device"), customDevice = $("custom-device");
   const status = $("status"), metrics = $("metrics"), badge = $("camera-badge");
+  let settings;
+  try { settings = await GConfig.load(); }
+  catch (error) {
+    status.textContent = `${error.message} 서버를 확인한 뒤 화면을 새로고침해 주세요.`;
+    return;
+  }
   let sessionId = null, running = false, stopping = false, generation = 0, frameId = 0;
   let request = null, timer = null, voiceTick = null, inFlight = false;
   let pendingRawVideo = null;
@@ -84,7 +90,7 @@
     if (!running || version !== generation || document.hidden || !GCamera.active() || inFlight) return;
     inFlight = true;
     try {
-      const blob = await GCamera.capture(640, 0.72);
+      const blob = await GCamera.capture(settings.camera.capture_max_side, settings.camera.jpeg_quality);
       if (!blob || !running || version !== generation) return;
       const capturedAt = performance.now();
       const capturedAtMs = Math.round(performance.timeOrigin + capturedAt);
@@ -148,7 +154,7 @@
         trafficGuide.tick();
         walkingGuide.tick();
         audioCoordinator.tick();
-      }, 250);
+      }, settings.audio.tick_ms);
       nextFrame(version);
     } catch (error) {
       setStatus(`테스트 시작 실패: ${error.message}`);
@@ -221,7 +227,7 @@
         recordingError && `오버레이 영상: ${recordingError.message}`].filter(Boolean);
       setStatus(errors.length
         ? `${summary.frame_count}프레임 분석 완료. 영상 저장 실패: ${errors.join(" / ")}`
-        : `${summary.frame_count}프레임 분석 완료. outputs/result_realtime/${summary.date}/${summary.folder_name}`);
+        : `${summary.frame_count}프레임 분석 완료. ${summary.storage_path}`);
     } catch (error) { setStatus(`세션 종료 오류: ${error.message}`); }
     finally {
       pendingRawVideo = null;
@@ -247,7 +253,7 @@
         clearTimeout(timer);
         trafficGuide.interrupt();
         audioCoordinator.clear("crosswalk");
-      } else if (running) timer = setTimeout(() => nextFrame(generation), 100);
+      } else if (running) timer = setTimeout(() => nextFrame(generation), settings.camera.resume_delay_ms);
     });
     window.addEventListener("beforeunload", () => {
       request?.abort();

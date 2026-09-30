@@ -1,5 +1,21 @@
 # file_path: configs/audio.yaml
-# 영상 음성 합성과 실시간 앱이 공통으로 사용하는 안내 음원 경로이다.
+# 음성 합성·재생과 신호 안내의 시간 설정이다.
 
 audio:
-  voice_dir: frontend/audio/voice
+  sample_rate_hz: 16000
+  bitrate_kbps: 96
+  volume: 1.0
+  default_validity_ms: 8000
+  playback_timeout_ms: 15000
+  tick_ms: 250
+  crosswalk_max_age_ms: 1500
+  # 신호 확정·소실과 보행 위험 안내 해제 기준은 영상·실시간에서 공유한다.
+  guidance:
+    stable_ms: 400
+    stable_frames: 3
+    max_age_ms: 1500
+    missing_ms: 2000
+    walking_clear_ms: 1500
+  # 영상과 서버 응답 기반 실시간 앱의 기존 관측 허용 간격을 각각 유지한다.
+  video_max_gap_ms: 1000
+  realtime_max_gap_ms: 2000

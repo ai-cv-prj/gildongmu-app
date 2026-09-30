@@ -61,7 +61,7 @@ window.GCamera = (() => {
       const timer = setTimeout(() => {
         encoderFailed = true;
         closeEncoder(new Error("캡처 Worker 시간 초과"));
-      }, 2000);
+      }, window.GConfig.get().camera.encoder_timeout_ms);
       pendingCapture = { id, resolve, reject, timer };
       try { worker.postMessage({ id, bitmap, width, height, quality }, [bitmap]); }
       catch (error) { closeEncoder(error); }
@@ -76,8 +76,9 @@ window.GCamera = (() => {
     }
     stop();
     try {
+      const settings = window.GConfig.get().camera;
       stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        video: { facingMode: { ideal: settings.facing_mode }, width: { ideal: settings.width }, height: { ideal: settings.height } },
         audio: false,
       });
     } catch (e) {

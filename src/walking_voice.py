@@ -8,11 +8,13 @@ file_path: src/walking_voice.py
 from math import isfinite
 
 import numpy as np
+from src.settings import load_audio_settings
 
 
 VEHICLE_CLASSES = {"car", "bus", "truck", "motorcycle"}
 DIRECTION_NAMES = {"left": "왼쪽", "center": "가운데", "right": "오른쪽"}
 WARNING_NAMES = {"person": "사람", "vehicle": "차량", "obstacle": "장애물"}
+WALKING_CLEAR_SECONDS = load_audio_settings()["guidance"]["walking_clear_ms"] / 1000
 
 
 # 객체 바닥에서 횡단보도 픽셀 비율 계산
@@ -180,7 +182,7 @@ class WalkingVoice:
         """대표 경고가 위험일 때 새 객체가 있으면 안내 음원을 예약한다."""
         epoch = prediction.get("state_epoch")
         if epoch != self.state_epoch or (self.announced_ids and self.last_danger_at is not None
-                                         and output_time_s - self.last_danger_at >= 1.5):
+                                         and output_time_s - self.last_danger_at >= WALKING_CLEAR_SECONDS):
             self.announced_ids.clear()
         self.state_epoch = epoch
         targets = danger_voice_targets(prediction, image_width)

@@ -31,6 +31,7 @@
       ? "?v=crosswalk-ava-v1" : "?v=signal-sunhi-v1"}`;
 
   function create({ onError = () => {}, onStatus = () => {}, now = () => performance.now() } = {}) {
+    const settings = window.GConfig.get().audio;
     // 클릭으로 시작한 재생기를 이후 신호 안내에도 재사용한다.
     const audio = window.Audio ? new window.Audio() : null;
     let audioContext = null, recordingDestination = null;
@@ -38,7 +39,7 @@
     const queue = [];
     if (audio) {
       audio.preload = "auto";
-      audio.volume = 1;
+      audio.volume = settings.volume;
       audio.muted = false;
     }
 
@@ -76,7 +77,7 @@
       }
     }
 
-    function speak(text, validUntil = now() + 8000, { onEnd = () => {} } = {}) {
+    function speak(text, validUntil = now() + settings.default_validity_ms, { onEnd = () => {} } = {}) {
       if (!audio || !CLIPS.has(text)) {
         const message = !audio ? "이 브라우저는 음성 재생을 지원하지 않습니다." : "안내 음원이 없습니다. 페이지를 새로고침해 주세요.";
         onStatus(message);
@@ -111,7 +112,7 @@
         request.started = true;
         clearTimeout(timer);
         onStatus("음성 재생 중입니다. 들리지 않으면 미디어 음량과 연결된 이어폰을 확인해 주세요.");
-        timer = setTimeout(() => fail("음성 재생이 끝나지 않아 중단했습니다. 다시 시작해 주세요."), 15000);
+        timer = setTimeout(() => fail("음성 재생이 끝나지 않아 중단했습니다. 다시 시작해 주세요."), settings.playback_timeout_ms);
       };
       const rejected = error => {
         const messages = {

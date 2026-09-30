@@ -10,12 +10,18 @@ if [ -f .env ]; then
   source .env
   set +a
 fi
-APP_PORT="${APP_PORT:-8001}"
+if [ ! -x .venv/bin/python ]; then
+  echo "[tunnel] 먼저 ./scripts/run.sh로 실행 환경을 준비하세요." >&2
+  exit 1
+fi
+server_settings="$(.venv/bin/python -m scripts.app_settings)"
+mapfile -t server_values <<< "$server_settings"
+server_url="${server_values[2]}"
 if ! command -v cloudflared >/dev/null 2>&1; then
   echo "[tunnel] cloudflared 명령을 찾지 못했습니다. README의 설치 안내를 확인하세요." >&2
   exit 1
 fi
-if ! curl -fsS --max-time 3 "http://127.0.0.1:$APP_PORT/api/health" >/dev/null; then
+if ! curl -fsS --max-time 3 "$server_url/api/health" >/dev/null; then
   echo "[tunnel] 서버에 연결할 수 없습니다. 먼저 다른 터미널에서 ./scripts/run.sh 를 실행하세요." >&2
   exit 1
 fi
@@ -37,7 +43,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-cloudflared tunnel --url "http://127.0.0.1:$APP_PORT" >"$tunnel_log" 2>&1 &
+cloudflared tunnel --url "$server_url" >"$tunnel_log" 2>&1 &
 tunnel_pid="$!"
 mobile_url=""
 

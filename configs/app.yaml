@@ -1,0 +1,33 @@
+# file_path: configs/app.yaml
+# 서버와 휴대폰 촬영·전송·녹화 설정이다. 
+# 변경 후 서버와 화면을 다시 시작한다.
+
+server:
+  host: 127.0.0.1
+  port: 8001
+
+camera:
+  facing_mode: environment
+  width: 1280
+  height: 720
+  capture_max_side: 640
+  jpeg_quality: 0.72
+  encoder_timeout_ms: 2000
+  resume_delay_ms: 100
+
+recording:
+  fps: 10 # 브라우저 오버레이 녹화와 서버 MP4 변환에 함께 사용
+  max_side: 720
+  video_bits_per_second: 2500000
+  chunk_interval_ms: 1000
+  preset: veryfast # libx264 인코딩 속도
+
+upload:
+  max_jpeg_bytes: 3000000
+  max_recording_bytes: 250000000
+  min_frame_side: 64
+  max_frame_side: 2160
+
+session:
+  timezone: Asia/Seoul
+  folder_note_max_length: 40

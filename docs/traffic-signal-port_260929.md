@@ -89,7 +89,7 @@ OpenCV 결과 영상은 영문 라벨을 사용합니다. TARGET·CANDIDATE·UNS
 
 ## 모델·의존성·실행
 
-`configs/inference.yaml`의 기본 경로 `weights/traffic/best_YOLO.pt`는 **v2 내용**입니다.
+`configs/paths.yaml`의 기본 경로 `weights/traffic/best_YOLO.pt`는 **v2 내용**입니다.
 테스트 앱의 `best_YOLO_v2.pt`와 SHA-256이 같으며 색상 분류기도 동일합니다.
 가중치는 Git 제외 대상이므로 다른 환경에는 별도로 배치해야 합니다.
 보행 모델은 `weights/walking/mask2former/`와
@@ -103,15 +103,15 @@ OpenCV 결과 영상은 영문 라벨을 사용합니다. TARGET·CANDIDATE·UNS
 
 ```bash
 python -m pip install lap==0.5.13
-python -m scripts.run_video_inference --sample-dir data/samples/sample3
-python -m scripts.run_video_inference --mode traffic --sample-dir data/samples/sample3 \
-  --output-dir outputs/traffic_samples
+python -m scripts.run_video_inference --sample-dir data/samples/input/sample3
+python -m scripts.run_video_inference --mode traffic --sample-dir data/samples/input/sample3 \
+  --output-dir data/samples/output/traffic
 python -m pytest -q
 ```
 
 기본 모드는 `all`입니다. `both`는 도보·장애물, `traffic`은 신호등 단독 추론입니다.
-예시 입력의 출력은 `outputs/result_samples/sample3/result_원본파일명.mp4`이며,
-신호등 단독 비교 영상은 `outputs/traffic_samples/sample3/`에 따로 저장합니다.
+예시 입력의 출력은 `data/samples/output/sample3/result_원본파일명.mp4`이며,
+신호등 단독 비교 영상은 `data/samples/output/traffic/sample3/`에 따로 저장합니다.
 위험 로그를 켜면 같은 폴더에 `.risk.jsonl`도 저장합니다. 폴더가 없으면 생성하고,
 같은 이름의 결과가 있으면 추론 완료 후 교체합니다. 공용 `--conf`, `--imgsz`는
 장애물 검출용이며 신호등 설정은 YAML의 `traffic` 항목을 사용합니다.
@@ -199,7 +199,7 @@ PYTHONPATH=/tmp/gildongmu-port-deps PYTHONDONTWRITEBYTECODE=1 \
 ## 저장 영상의 신호등 음성 안내 (SESAC-104)
 
 `src/traffic_voice.py`가 프레임 시각에 따라 안내 대상을 확인합니다. 테스트 앱에서 가져온
-한국어 신호 안내 MP3는 `configs/audio.yaml`의 `audio.voice_dir`에 있으며,
+한국어 신호 안내 MP3는 `configs/paths.yaml`의 `voice_dir`에 있으며,
 `src/video_audio.py`가 이 설정을 읽어 결과 MP4에 합성합니다.
 시작 안내 없이 첫 프레임부터 신호를 확인합니다. 선택된 신호등의 정수 `track_id`와
 빨강·초록 색상이 필요합니다.

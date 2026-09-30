@@ -7,7 +7,8 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
 
-const context = { window: {}, performance: { now: () => 0 } };
+const settings = require("./settings");
+const context = { window: { GConfig: { get: () => settings } }, performance: { now: () => 0 } };
 vm.runInNewContext(fs.readFileSync("frontend/js/guidance.js", "utf8"), context);
 const spoken = [];
 let now = 0;
