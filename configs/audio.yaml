@@ -1,0 +1,5 @@
+# file_path: configs/audio.yaml
+# 영상 음성 합성과 실시간 앱이 공통으로 사용하는 안내 음원 경로이다.
+
+audio:
+  voice_dir: frontend/audio/voice

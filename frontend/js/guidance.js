@@ -8,7 +8,7 @@
   const LIMITS = Object.freeze({ stableMs: 400, stableFrames: 3, maxGapMs: 2000, maxAgeMs: 1500,
     missingMs: 2000, walkingClearMs: 1500 });
 
-  function create({ player, onChange = () => {}, now = () => performance.now() }) {
+  function create({ coordinator, onChange = () => {}, now = () => performance.now() }) {
     let active = false, sessionId = null, mock = false;
     let startedAt = 0, lastFrame = null, lastCapture = null, lastValid = null;
     let target = null, color = null, candidate = null, missingAnnounced = false;
@@ -23,7 +23,10 @@
     function announce(text, validUntil) {
       const message = mock && mode === "traffic" ? `모의 신호. ${text}` : text;
       update(message);
-      player.speak(message, validUntil);
+      const changed = mode === "traffic" && text.includes("바뀌었습니다");
+      coordinator.request({ source: mode, priority: changed
+        ? coordinator.PRIORITY.trafficChange
+        : coordinator.PRIORITY[mode], text: message, validUntil });
     }
     // 새 위험 장면을 받을 수 있도록 이전 장면과 남은 위험 음성을 정리한다.
     /** 마지막 위험 관측이 오래되면 지난 위험 음성을 취소한다. */
@@ -31,7 +34,7 @@
       if (!walkingAnnouncedIds.size) return;
       walkingAnnouncedIds.clear();
       walkingLastDangerAt = null;
-      player.cancel();
+      coordinator.clear("walking");
     }
     function stop(text = "음성 안내가 꺼져 있습니다.") {
       active = false;
@@ -41,7 +44,7 @@
       walkingAnnouncedIds.clear();
       walkingLastDangerAt = null;
       resetEvidence();
-      player.cancel();
+      coordinator.clear(mode);
       update(text);
     }
     function start(id, isMock = false, nextMode = "traffic") {

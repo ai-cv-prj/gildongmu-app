@@ -1,16 +1,15 @@
 /**
  * file_path: frontend/js/recorder.js
  *
- * 휴대폰 카메라와 통합 오버레이, 두 음성 안내를 WebM으로 녹화한다.
+ * 휴대폰 카메라와 통합 오버레이, 전역 안내 음성을 WebM으로 녹화한다.
  */
 window.GRecorder = (() => {
   const video = document.getElementById("video");
   const overlay = document.getElementById("overlay");
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
-  const RECORDING_FPS = 30;
+  const RECORDING_FPS = 10;
   const FRAME_INTERVAL_MS = 1000 / RECORDING_FPS;
-  const WALKING_RECORDING_GAIN = Math.pow(10, 3 / 20);
   let recorder = null;
   let chunks = [];
   let rawRecorder = null;
@@ -21,8 +20,8 @@ window.GRecorder = (() => {
   let mixContext = null;
   let preparedTrack = null;
 
-  // 사용자 클릭 중 두 안내 음성의 녹화용 혼합 준비
-  /** 현장 소리 없이 안내 음성만 합치고 보행 안내를 약 3 dB 높인다. */
+  // 사용자 클릭 중 전역 안내 음성의 녹화 트랙 준비
+  /** 현장 소리 없이 전역 음성 관리자의 단일 재생 트랙만 연결한다. */
   function prepareAudio(audioStreams) {
     cancelPreparedAudio();
     const tracks = audioStreams.map(item => item?.getAudioTracks?.()[0] || null);
@@ -32,22 +31,10 @@ window.GRecorder = (() => {
     if (Context) {
       mixContext = new Context();
       const mixed = mixContext.createMediaStreamDestination();
-      tracks.forEach((track, index) => {
+      tracks.forEach((track) => {
         if (!track) return;
         const source = mixContext.createMediaStreamSource(new MediaStream([track]));
-        if (index === 1) {
-          const gain = mixContext.createGain();
-          gain.gain.value = WALKING_RECORDING_GAIN;
-          const limiter = mixContext.createDynamicsCompressor();
-          limiter.threshold.value = -1.5;
-          limiter.knee.value = 0;
-          limiter.ratio.value = 20;
-          limiter.attack.value = 0.003;
-          limiter.release.value = 0.2;
-          source.connect(gain);
-          gain.connect(limiter);
-          limiter.connect(mixed);
-        } else source.connect(mixed);
+        source.connect(mixed);
       });
       mixContext.resume();
       preparedTrack = mixed.stream.getAudioTracks()[0];
@@ -138,7 +125,7 @@ window.GRecorder = (() => {
   }
 
   // 실시간 탐지 화면 녹화 시작
-  /** 최대 긴 변 720px, 약 30FPS로 화면과 안내 음성 녹화를 시작한다. */
+  /** 최대 긴 변 720px, 약 10FPS로 화면과 안내 음성 녹화를 시작한다. */
   function start() {
     if (!window.MediaRecorder || !canvas.captureStream) {
       throw new Error("이 브라우저는 화면 녹화를 지원하지 않습니다.");

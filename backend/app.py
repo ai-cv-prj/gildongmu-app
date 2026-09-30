@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from backend.session import SessionError, SessionManager
+from src.audio_config import audio_directory
 from src.video_audio import ffmpeg_executable
 
 
@@ -42,7 +43,7 @@ def create_app(manager=None):
     """테스트에서는 모델 저장소를 교체할 수 있는 API 앱을 반환한다."""
     app = FastAPI(title="길동무 실시간 테스트")
     sessions = manager or SessionManager(ROOT / "outputs" / "result_realtime")
-    app.mount("/static/audio", StaticFiles(directory=ROOT / "assets" / "audio"),
+    app.mount("/audio", StaticFiles(directory=audio_directory()),
               name="audio")
     app.mount("/static", StaticFiles(directory=FRONTEND), name="frontend")
 
@@ -107,7 +108,7 @@ def create_app(manager=None):
                 "-map", "0:v:0",
             ]
             command += ["-map", "0:a:0?", "-c:a", "aac"] if include_audio else ["-an"]
-            command += ["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+            command += ["-vf", "fps=10", "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
                         "-movflags", "+faststart", str(partial)]
             subprocess.run(command, check=True, capture_output=True)
             partial.replace(path)

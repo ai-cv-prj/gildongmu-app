@@ -11,11 +11,11 @@
   let sessionId = null, running = false, stopping = false, generation = 0, frameId = 0;
   let request = null, timer = null, voiceTick = null, inFlight = false;
   let pendingRawVideo = null;
-  let trafficStream = null, walkingStream = null;
-  const trafficPlayer = GTts.create({ onError: message => setStatus(message) });
-  const walkingPlayer = GTts.create({ onError: message => setStatus(message) });
-  const trafficGuide = GGuidance.create({ player: trafficPlayer });
-  const walkingGuide = GGuidance.create({ player: walkingPlayer });
+  let voiceStream = null;
+  const voicePlayer = GTts.create({ onError: message => setStatus(message) });
+  const audioCoordinator = GAudioCoordinator.create({ player: voicePlayer });
+  const trafficGuide = GGuidance.create({ coordinator: audioCoordinator });
+  const walkingGuide = GGuidance.create({ coordinator: audioCoordinator });
 
   // 사용자에게 현재 작업 상태 알림
   /** 화면의 단일 상태 문장을 바꾼다. */
@@ -38,7 +38,6 @@
     device.disabled = running;
     customDevice.disabled = running;
     $("note").disabled = running;
-    $("record").disabled = running;
     badge.textContent = running ? "추론 중" : GCamera.active() ? "카메라 켜짐" : "대기 중";
     badge.classList.toggle("live", running);
   }
@@ -67,11 +66,12 @@
     updateControls();
   }
 
-  // 도보와 신호의 한 프레임 결과 표시
-  /** 마스크를 보여주고 두 안내 정책에 동일한 촬영 시각을 전달한다. */
+  // 횡단보도와 도보 및 신호의 한 프레임 결과 표시
+  /** 횡단보도 최우선 판정을 먼저 반영하고 나머지 안내에 같은 촬영 시각을 전달한다. */
   function showResult(result, capturedAt) {
     GOverlay.render(result);
     metrics.textContent = `${result.frame_id} 프레임 · ${result.inference_ms}ms`;
+    audioCoordinator.acceptCrosswalk(result.crosswalk?.event, capturedAt);
     walkingGuide.accept({ session_id: result.session_id, frame_id: result.frame_id,
       detections: result.walking.detections, event: result.walking.event }, capturedAt);
     trafficGuide.accept({ session_id: result.session_id, frame_id: result.frame_id,
@@ -108,7 +108,7 @@
   }
 
   // 클릭 동작에서 음성 재생 준비 후 세션 시작
-  /** 서버가 준비되면 두 안내 정책과 프레임 루프를 시작한다. */
+  /** 서버가 준비되면 전역 음성과 세 안내 정책 및 프레임 루프를 시작한다. */
   async function startTest() {
     if (!GCamera.active()) return setStatus("먼저 카메라를 켜 주세요.");
     if (!deviceName()) return setStatus("휴대폰 기종을 입력해 주세요.");
@@ -121,10 +121,10 @@
     try {
       pendingRawVideo = null;
       GRecorder.startRaw();
-      // 모바일 오디오 정책에 따라 사용자 클릭 안에서 두 재생기를 활성화한다.
-      trafficStream = trafficPlayer.recordingStream();
-      walkingStream = walkingPlayer.recordingStream();
-      if ($("record").checked) GRecorder.prepareAudio([trafficStream, walkingStream]);
+      // 모바일 오디오 정책에 따라 사용자 클릭 안에서 단일 재생기를 활성화한다.
+      voiceStream = voicePlayer.recordingStream();
+      GRecorder.prepareAudio([voiceStream]);
+      audioCoordinator.start();
       trafficGuide.start("pending", false, "traffic");
       walkingGuide.start("pending", false, "walking");
       const session = await GApi.start(deviceName(), $("note").value.trim());
@@ -143,8 +143,12 @@
       sessionId = session.session_id;
       trafficGuide.bindSession(sessionId);
       walkingGuide.bindSession(sessionId);
-      if ($("record").checked) GRecorder.start();
-      voiceTick = setInterval(() => { trafficGuide.tick(); walkingGuide.tick(); }, 250);
+      GRecorder.start();
+      voiceTick = setInterval(() => {
+        trafficGuide.tick();
+        walkingGuide.tick();
+        audioCoordinator.tick();
+      }, 250);
       nextFrame(version);
     } catch (error) {
       setStatus(`테스트 시작 실패: ${error.message}`);
@@ -156,6 +160,7 @@
       running = false;
       trafficGuide.stop();
       walkingGuide.stop();
+      audioCoordinator.stop();
       GRecorder.cancelPreparedAudio();
       GCamera.stop();
       GOverlay.clear();
@@ -176,9 +181,10 @@
     request?.abort();
     trafficGuide.stop();
     walkingGuide.stop();
+    audioCoordinator.stop();
     const id = sessionId;
     sessionId = null;
-    setStatus("결과를 저장하고 있습니다.");
+    setStatus("원본 영상 저장 중입니다.");
     let recordingError = null;
     let rawRecordingError = null;
     let video = null;
@@ -205,6 +211,7 @@
       if (rawVideo) await GApi.camera(id, rawVideo);
       else rawRecordingError ||= new Error("원본 카메라 녹화 파일이 없습니다.");
     } catch (error) { rawRecordingError = error; }
+    setStatus("오버레이 영상 저장 중입니다.");
     try {
       if (video) await GApi.recording(id, video);
     } catch (error) { recordingError = error; }
@@ -239,6 +246,7 @@
       if (document.hidden) {
         clearTimeout(timer);
         trafficGuide.interrupt();
+        audioCoordinator.clear("crosswalk");
       } else if (running) timer = setTimeout(() => nextFrame(generation), 100);
     });
     window.addEventListener("beforeunload", () => {

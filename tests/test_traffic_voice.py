@@ -33,7 +33,7 @@ def signal(color="red", target=1):
 class TrafficVoiceTests(unittest.TestCase):
     """3프레임·400ms 확인, 전환, 소실 및 영상 저장을 검증한다."""
 
-    # 시작 안내 이후 프레임 관측
+    # 연속 프레임 관측
     def observe(self, voice, color, times, target=1, first_frame=1):
         """지정한 시간에 같은 신호를 연속 관측한다."""
         for index, time_s in enumerate(times):
@@ -43,35 +43,35 @@ class TrafficVoiceTests(unittest.TestCase):
     def test_initial_green_and_color_change(self):
         """처음 초록불은 대기 문구, 같은 대상의 변화는 전환 문구를 사용한다."""
         voice = TrafficVoice()
-        start = voice.ready_at + .1
+        start = .1
         self.observe(voice, "green", [start, start + .2, start + .4])
         self.observe(voice, "red", [start + .6, start + .8, start + 1], first_frame=4)
         self.assertEqual([name for _, name in voice.events],
-                         ["startup.mp3", "green-initial-wait.mp3", "red-changed.mp3"])
+                         ["green-initial-wait.mp3", "red-changed.mp3"])
 
     # 짧은 후보와 대상 변경 확인
     def test_stability_and_target_change(self):
         """짧은 후보는 침묵하고 다른 대상의 같은 색은 한 번 다시 읽는다."""
         voice = TrafficVoice()
-        start = voice.ready_at + .1
+        start = .1
         self.observe(voice, "red", [start, start + .2])
-        self.assertEqual(len(voice.events), 1)
+        self.assertEqual(voice.events, [])
         voice.observe(signal("red", 1), 3, start + .4)
         self.observe(voice, "red", [start + .6, start + .8, start + 1], target=2, first_frame=4)
         self.assertEqual([name for _, name in voice.events],
-                         ["startup.mp3", "red.mp3", "red.mp3"])
+                         ["red.mp3", "red.mp3"])
 
     # 소실 이후 복구
     def test_missing_once_then_same_color_reannounced(self):
         """확인된 신호가 2초 사라지면 한 번 알리고 복구된 색을 다시 읽는다."""
         voice = TrafficVoice()
-        start = voice.ready_at + .1
+        start = .1
         self.observe(voice, "red", [start, start + .2, start + .4])
         for index, time_s in enumerate([start + 1, start + 2.4, start + 2.6, start + 2.8, start + 3]):
             color = None if index < 2 else "red"
             voice.observe(signal(color, None if color is None else 1), 4 + index, time_s)
         self.assertEqual([name for _, name in voice.events],
-                         ["startup.mp3", "red.mp3", "missing.mp3", "red.mp3"])
+                         ["red.mp3", "missing.mp3", "red.mp3"])
 
     # 실제 파일의 영상 음성 저장
     def test_traffic_video_contains_audio(self):

@@ -29,6 +29,44 @@ traffic:
   classifier_min_confidence: 0.60
   association_stable_frames: 3
 
+# 횡단보도 마스크와 신호등 YOLO 횡단보도 검출을 함께 사용하는 측면 이탈 안내.
+# 모든 좌표와 여유값은 영상 너비·높이에 대한 정규화 비율이다.
+crosswalk_safety:
+  enabled: true
+  near_zone_top: 0.72
+  foot_x: 0.50
+  foot_y: 0.92
+  foot_half_width: 0.04
+  foot_half_height: 0.04
+  roi_left: 0.10
+  roi_right: 0.90
+  roi_top: 0.90
+  roi_bottom: 1.00
+  roi_crosswalk_threshold: 0.05
+  roi_occlusion_threshold: 0.08
+  roi_exit_confirm_s: 0.30
+  entry_confirm_s: 0.50
+  edge_confirm_s: 0.20
+  exit_confirm_s: 0.25
+  return_confirm_s: 0.40
+  finish_confirm_s: 0.40
+  outside_finish_confirm_s: 0.80
+  uncertainty_hold_s: 1.50
+  max_gap_s: 2.00
+  edge_margin: 0.08
+  exit_margin: 0.03
+  max_boundary_shift: 0.12
+  boundary_smooth_s: 0.30
+  min_mask_area: 0.006
+  min_row_width: 0.10
+  min_valid_rows: 8
+  finish_walkable_fraction: 0.60
+  outside_finish_walkable_fraction: 0.80
+  entry_box_bottom: 0.70
+  red_obstacle_voice_suppression: true
+  red_obstacle_crosswalk_threshold: 0.20
+  red_obstacle_contact_half_height: 0.02
+
 # Experimental forward-camera profile: normalized image coordinates, NOT metres.
 # Detection always uses the full frame. These thresholds require scene calibration.
 risk:

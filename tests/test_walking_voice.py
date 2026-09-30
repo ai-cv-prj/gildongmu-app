@@ -20,7 +20,13 @@ import numpy as np
 
 from src.pipeline import process_video
 from src.video_audio import SAMPLE_RATE, ffmpeg_executable, render_voice_track
-from src.walking_voice import WalkingVoice, danger_voice_message, danger_voice_targets
+from src.risk_visualization import risk_identity
+from src.walking_voice import (
+    WalkingVoice,
+    danger_voice_message,
+    danger_voice_targets,
+    suppress_red_crosswalk_voice,
+)
 
 
 # 테스트용 위험 객체 만들기
@@ -99,6 +105,53 @@ class WalkingVoiceTests(unittest.TestCase):
         targets = danger_voice_targets(prediction(item, source="surface_object"), 100)
         self.assertEqual(danger_voice_message(targets),
                          ("가운데에 장애물.", "danger-center-obstacle.mp3"))
+
+    # 빨간불 횡단보도 장애물 음성 제외 확인
+    def test_red_signal_suppresses_only_crosswalk_obstacle_voice(self):
+        """빨간불에는 횡단보도 위 위험만 음성에서 제외하고 다른 위험은 유지한다."""
+        on_crosswalk = danger_item(1, [40, 20, 60, 80])
+        outside = danger_item(2, [80, 20, 95, 80], "car")
+        result = prediction(on_crosswalk, outside)
+        class_map = np.zeros((100, 100), np.uint8)
+        class_map[76:84, 35:65] = 2
+        config = {
+            "red_obstacle_voice_suppression": True,
+            "red_obstacle_crosswalk_threshold": .20,
+            "red_obstacle_contact_half_height": .02,
+        }
+        suppress_red_crosswalk_voice(
+            result, {"signal_state": "red"}, class_map, {"crosswalk": 2},
+            (100, 100, 3), config,
+        )
+        self.assertEqual(on_crosswalk["voice_suppressed_reason"],
+                         "red_signal_crosswalk_obstacle")
+        self.assertNotIn("voice_suppressed_reason", outside)
+        self.assertEqual(danger_voice_message(danger_voice_targets(result, 100)),
+                         ("오른쪽에 차량.", "danger-right-vehicle.mp3"))
+
+    # 초록불 및 마스크 미확인 시 음성 유지 확인
+    def test_voice_is_not_suppressed_without_red_crosswalk_evidence(self):
+        """초록불이거나 횡단보도 픽셀을 확인하지 못하면 위험 음성을 유지한다."""
+        config = {
+            "red_obstacle_voice_suppression": True,
+            "red_obstacle_crosswalk_threshold": .20,
+            "red_obstacle_contact_half_height": .02,
+        }
+        for signal, class_map in (({"signal_state": "green"}, np.full((100, 100), 2)),
+                                  ({"signal_state": "red"}, None)):
+            with self.subTest(signal=signal["signal_state"], mask=class_map is not None):
+                item = danger_item(1, [40, 20, 60, 80])
+                result = prediction(item)
+                suppress_red_crosswalk_voice(
+                    result, signal, class_map, {"crosswalk": 2}, (100, 100, 3), config)
+                self.assertNotIn("voice_suppressed_reason", item)
+                self.assertEqual(danger_voice_message(danger_voice_targets(result, 100)),
+                                 ("가운데에 사람.", "danger-center-person.mp3"))
+
+    # 저장 영상 식별자 문자열 확인
+    def test_overlay_identity_contains_track_and_event_ids(self):
+        """저장 영상 장애물 라벨에 추적 ID와 위험 이벤트 ID를 함께 표시한다."""
+        self.assertEqual(risk_identity({"track_id": 12, "event_id": 34}), "T12/E34")
 
     # 새 이벤트가 이전 음성을 끊는 PCM 결과 확인
     def test_voice_track_starts_at_frame_time_and_is_video_length(self):

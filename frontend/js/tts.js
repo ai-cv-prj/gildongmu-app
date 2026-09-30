@@ -11,6 +11,9 @@
     ["초록불로 바뀌었습니다.", "green-changed"],
     ["빨간불로 바뀌었습니다.", "red-changed"],
     ["신호를 확인할 수 없습니다.", "missing"],
+    ["위험! 횡단보도 이탈! 오른쪽으로 이동하세요!", "crosswalk-exit-right"],
+    ["위험! 횡단보도 이탈! 왼쪽으로 이동하세요!", "crosswalk-exit-left"],
+    ["위험! 횡단보도 이탈!", "crosswalk-exit-unknown"],
   ]);
   for (const [text, name] of [...CLIPS]) CLIPS.set(`모의 신호. ${text}`, `mock-${name}`);
   const directions = [["left", "왼쪽"], ["center", "가운데"], ["right", "오른쪽"]];
@@ -22,7 +25,9 @@
     CLIPS.set(`${direction}에 여러 장애물.`, `danger-${key}-multiple`);
   }
   CLIPS.set("여러 방향에 장애물.", "danger-multiple-directions");
-  const source = name => `/static/audio/ko-v1/${name}.mp3${name.startsWith("danger-") ? "?v=walking-direction-v1" : ""}`;
+  const source = name => `/audio/${name}.mp3${name.startsWith("danger-")
+    ? "?v=walking-direction-v1" : name.startsWith("crosswalk-")
+      ? "?v=crosswalk-ava-v1" : "?v=signal-sunhi-v1"}`;
 
   function create({ onError = () => {}, onStatus = () => {}, now = () => performance.now() } = {}) {
     // 클릭으로 시작한 재생기를 이후 신호 안내에도 재사용한다.
@@ -78,9 +83,7 @@
         return false;
       }
       if (now() >= validUntil) return false;
-      // 위험 경고는 이전 음성의 종료를 기다리지 않고 최신 장면만 재생한다.
-      if (CLIPS.get(text).startsWith("danger-") && (current || queue.length)) cancel();
-      // 신호 안내는 대기열에서 순서대로 재생하고 위험 안내는 바로 시작한다.
+      // 안내 간 우선순위와 취소는 전역 음성 관리자가 결정한다.
       // 음원 로딩 제한 시간은 앞선 안내가 끝난 뒤 재생을 시도할 때부터 센다.
       queue.push({ text, onEnd, startTimeoutMs: validUntil - now(), started: false });
       return current ? true : playNext();

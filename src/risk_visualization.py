@@ -8,6 +8,17 @@ import numpy as np
 
 COLORS = {"monitor": (180,180,180), "caution": (0,200,255), "danger": (0,0,255)}
 
+
+# 추적과 위험 이벤트 식별자 표시
+def risk_identity(item):
+    """표시 가능한 추적 ID와 이벤트 ID를 짧은 문자열로 묶는다."""
+    values = []
+    if item.get("track_id") is not None:
+        values.append(f'T{item["track_id"]}')
+    if item.get("event_id") is not None:
+        values.append(f'E{item["event_id"]}')
+    return "/".join(values) if values else "no-ID"
+
 # 영상에 위험 판정 표시
 def draw_risk(frame, prediction, config):
     """현재 ROI와 장애물 위험도를 영상 프레임에 표시한다."""
@@ -35,7 +46,7 @@ def draw_risk(frame, prediction, config):
             continue
         if level != "monitor" and not item.get("warning_primary", True):
             continue
-        identity = f'#{item["track_id"]}' if item["track_id"] is not None else "no-ID"
+        identity = risk_identity(item)
         grouped = f' x{item.get("warning_group_size",1)}' if item.get("warning_group_size",1)>1 else ""
         text = f"{identity} {level.upper()}{grouped}"
         if item["motion"] and item["motion"]["time_to_corridor_s"] is not None:
@@ -103,7 +114,7 @@ def draw_review(frame, prediction, config):
         cv2.rectangle(result,(x1,y1),(x2,y2),color,stroke)
         if level != "monitor" and not item.get("warning_primary", True):
             continue
-        identity = f'#{item["track_id"]}' if item["track_id"] is not None else "NEW"
+        identity = risk_identity(item)
         display_level = "UNKNOWN" if item.get("alert_status") == "uncertain" and level == "monitor" else level.upper()
         grouped = f' x{item.get("warning_group_size",1)}' if item.get("warning_group_size",1)>1 else ""
         first = f'{display_level} | {item.get("display_label", "obstacle")} {identity}{grouped}'

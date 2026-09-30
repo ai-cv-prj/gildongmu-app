@@ -20,7 +20,8 @@ Mask2Former·YOLO 통합 추론의 준비, 실행 및 검증 방법 안내.
 
 영상 추론 결과 MP4에는 보행 장애물 위험과 신호등 안내 음성을 저장합니다.
 휴대폰 실시간 테스트에서는 PC 서버가 같은 모델을 실행하고 휴대폰 브라우저가 카메라·오버레이·음성을 담당합니다.
-파인튜닝, BEV, 거리 추정과 진동 알림은 포함하지 않습니다.
+파인튜닝, BEV와 실제 거리 추정은 포함하지 않습니다. 휴대폰 실시간 테스트에서는 횡단보도
+가장자리 접근과 측면 이탈에 진동을 사용합니다.
 2026-09-21부터 실험용 장애물 위험 판단(ROI·추적·측방 진입)과 JSONL 기록을 지원합니다.
 초기값과 수식, 실행 방법은 [위험 판단 MVP](docs/risk_mvp_260929.md)를 참고하세요.
 현재 설정에서 활성화되어 있으며 `--no-risk`로 기존 탐지 표시만 사용할 수 있습니다.
@@ -55,11 +56,29 @@ PC의 이 레포에서 두 터미널을 열어 순서대로 실행하세요. `.v
 마이크 권한은 요청하지 않습니다. 테스트를 시작하면 보행 장애물·신호등 안내가 자동으로 켜지며,
 시작 안내 음성은 재생하지 않습니다.
 테스트를 종료하면 카메라와 함께 꺼집니다.
-테스트 결과는 한국 날짜 기준 `outputs/result_realtime/YYYYMMDD/<기종명_촬영시각>/`에 저장합니다.
+
+횡단보도가 보이는 것만으로는 알리지 않습니다. 가까운 횡단보도 검출과 핑크 마스크 안의 사용자
+위치가 0.5초 확인된 뒤에만 `횡단 중`으로 전환합니다. 좌우 경계 접근은 짧은 진동 1회이고,
+경계를 0.25초 벗어나면 Ava 여성 음성으로 “위험! 횡단보도 이탈! 오른쪽/왼쪽으로 이동하세요!”와
+강한 진동을 복귀할 때까지 반복합니다. 짧은 카메라·경계 불확실 상태에서는 마지막 이탈 안내를
+유지하고, 복귀 또는 반대편 보행가능영역 도착이 확인되면 중단합니다. 현재 임계값은 영상 좌표 기반
+초기값이므로 실제 촬영 영상으로 조정해야 합니다.
+
+| 우선순위 | 관련 태그 | 재생 정책 |
+| --- | --- | --- |
+| 1 | 횡단보도 이탈 | 현재 음성을 즉시 취소하고 복귀까지 Ava 음성·진동 반복 |
+| 2 | 장애물 `danger` | 하위 신호 안내를 중단하며 같은 위험은 반복 억제 |
+| 3 | 신호등 색상 변경 | 상위 경고가 없을 때 1회, 상위 경고 중이면 폐기 |
+| 4 | 최초·재확인·소실 신호 | 상위 안내가 없을 때만 1회 |
+
+브라우저에는 전역 음성 관리자가 하나만 있으며 음성을 대기열에 오래 쌓지 않습니다. 이탈 중 발생한
+장애물·신호 안내는 이탈 반복 사이에 끼워 넣지 않고 폐기합니다.
+테스트 결과는 한국 날짜 기준 `outputs/result_realtime/YYYYMMDD/<기종명_촬영시각_테스트메모>/`에 저장합니다.
+테스트 메모가 없으면 폴더명에서 생략하고, 폴더명에 붙는 메모는 사용할 수 없는 문자를 `_`로 바꾼 뒤 40자까지만 사용합니다.
 촬영시각은 테스트 시작 시각이며 `YYYYMMDD_HHMMSS` 형식입니다. 같은 시각에 시작한 테스트는 폴더명 뒤에 `_2`, `_3`을 붙입니다. 세션 ID는 내부 요청에만 사용합니다.
-테스트 시작 버튼부터 종료까지의 카메라 원본은 오버레이·현장 소리 없이 `camera.mp4`에 저장합니다.
+테스트 시작 버튼부터 종료까지의 카메라 원본은 오버레이·현장 소리 없이 10FPS `camera.mp4`에 저장합니다.
 추론 결과는 `results.jsonl`에 기록하며, 추론용 JPEG는 저장하지 않습니다.
-**오버레이와 안내 음성 영상도 저장**을 선택하면 `camera_overlay.mp4`가 추가됩니다. 마이크 소리는 녹음하지 않습니다.
+오버레이와 안내 음성이 포함된 10FPS `camera_overlay.mp4`도 항상 저장합니다. 마이크 소리는 녹음하지 않습니다.
 
 `cloudflared`가 없으면 WSL/Ubuntu에서 설치하세요.
 
@@ -229,7 +248,7 @@ BoT-SORT 추적·대상 선택·가림 복원 정책을 반영했습니다.
 기존 모델 환경에서는 `python -m pip install lap==0.5.13`로 추가할 수 있습니다.
 신호등 안내는 테스트 앱과 같은 MP3 음원·문구를 사용합니다. 선택된 대상의 색을 3프레임·400ms
 확인한 뒤 안내하며, 색상 전환·2초간 신호 미확인·복구 후 재안내·같은 색 반복 억제를 적용합니다.
-영상 시작 안내가 끝난 시점부터 신호를 확인합니다. 장애물 음성과 겹치는 구간은 그대로 합성합니다.
+첫 프레임부터 신호를 확인합니다. 모든 음성은 위 우선순위의 단일 시간축으로 합성해 겹치지 않습니다.
 판단 기준·반환 필드·FPS 차이·검증 결과는 [신호등 이식 문서](docs/traffic-signal-port_260929.md)에 정리했습니다.
 
 횡단보도 선택은 **신호등 전용 YOLO의 crosswalk 박스**를 사용합니다.
@@ -259,6 +278,7 @@ Mask2Former의 핑크 마스크는 화면에 함께 표시하지만 현재 신�
 - 원본 영상 크기와 저장 FPS를 유지하며 MP4로 다시 인코딩합니다. 원본 오디오는 포함하지 않습니다.
 - 위험 판정이 켜져 있고 보행 장애물이 `danger`이면 결과 MP4에 한국어 안내 음성이 들어갑니다. 왼쪽·가운데·오른쪽과 한 개·여러 개를 구분하며, 같은 위험을 매 프레임 반복하지 않습니다.
 - 같은 방향에 여러 위험 장애물이 있으면 “왼쪽에 여러 장애물.”처럼, 여러 방향에 있으면 “여러 방향에 장애물.”이라고 안내합니다. 위험이 없으면 음성 트랙을 만들지 않습니다.
+- `all` 모드에서는 횡단보도 이탈을 판단해 Ava 음성을 복귀까지 반복하고, 장애물·신호 음성과 우선순위에 따라 한 트랙으로 저장합니다.
 - 진행 중에는 콘솔에 `영상 처리: 처리한 프레임 수/전체 프레임 수`가 표시됩니다.
 - 완료되면 `결과 영상 저장: ...` 메시지가 나옵니다.
 - 위험 기능을 켜면 MP4와 같은 폴더의 `.risk.jsonl`에 객체 좌표·선택적 ID·위험 등급·판단 사유·이벤트를 저장합니다. 안내가 시작된 프레임에는 `voice_text`와 `voice_clip`도 기록합니다.
@@ -318,10 +338,24 @@ traffic:
 | `traffic.crosswalk_min_confidence` | 연결에 사용할 횡단보도 검출 기준 |
 | `traffic.classifier_min_confidence` | 이 값보다 낮으면 색상을 `unknown` 처리 |
 | `traffic.association_stable_frames` | 최초 복수 후보 선택·임시 대상 횡단보도 재확인에 필요한 연속 프레임 수. 기본 3, 1이면 첫 후보부터 사용 |
+| `crosswalk_safety.entry_confirm_s` | 가까운 횡단보도 안에 있다고 확인할 연속 시간. 기본 0.50초 |
+| `crosswalk_safety.edge_margin` / `exit_margin` | 가장자리 진동과 실제 측면 이탈을 구분하는 정규화 영상 여유값 |
+| `crosswalk_safety.exit_confirm_s` / `return_confirm_s` | 이탈 확정과 안쪽 복귀 확정 시간. 기본 0.25초 / 0.40초 |
+| `crosswalk_safety.roi_left/right/top/bottom` | 횡단보도 유지 판단과 보라색 표시에 사용하는 화면 하단 ROI. 기본 가로 10~90%, 세로 90~100% |
+| `crosswalk_safety.roi_crosswalk_threshold` / `roi_exit_confirm_s` | ROI의 횡단보도 비율이 5% 미만인 상태를 이탈 후보로 확인하는 기준 / 확인 시간 0.30초 |
+| `crosswalk_safety.roi_occlusion_threshold` | 객체가 ROI의 8% 이상을 가리면 ROI 손실만으로 이탈을 확정하지 않는 기준 |
+| `crosswalk_safety.outside_finish_walkable_fraction` / `outside_finish_confirm_s` | 이탈 상태에서도 보행 가능 도착을 복구하는 비율 80% / 확인 시간 0.80초 |
+| `crosswalk_safety.red_obstacle_voice_suppression` | 빨간불이고 객체 바닥이 횡단보도로 확인되면 위험 장애물 음성만 제외하는 기능 |
+| `crosswalk_safety.max_boundary_shift` | 프레임 사이 경계가 이 값보다 크게 움직이면 이탈 음성을 보류하는 기준 |
 
 `overlay_alpha`는 0~1 범위이며 탐지 성능이나 YOLO 박스에는 영향을 주지 않습니다.
 Mask2Former의 전처리는 저장된 `preprocessor_config.json`을 사용합니다.
 YOLO 신뢰도 0.25는 시작 설정이며, 실제 영상의 오탐·미탐을 확인해 조정해야 합니다.
+
+안내 음원 폴더는 [configs/audio.yaml](configs/audio.yaml)의 `audio.voice_dir`에서 지정합니다.
+상대 경로는 프로젝트 루트 기준이고 절대 경로도 사용할 수 있습니다. 영상 MP4 음성 합성과
+실시간 FastAPI 앱이 이 값을 공통으로 읽으며, 변경 후에는 서버를 다시 시작해야 합니다.
+브라우저는 실제 폴더 위치와 관계없이 `/audio/<파일명>.mp3` 주소로 음원을 요청합니다.
 
 ### 명령어 옵션으로 바꾸기
 
@@ -381,12 +415,15 @@ python -m scripts.run_video_inference \
 | --- | --- |
 | [scripts/run_video_inference.py](scripts/run_video_inference.py) | 명령어 옵션을 받아 실행 시작 |
 | [configs/inference.yaml](configs/inference.yaml) | 가중치·입출력 경로와 추론 설정 |
+| [configs/audio.yaml](configs/audio.yaml) | 영상과 실시간 앱이 함께 읽는 안내 음원 폴더 경로 |
 | [src/pipeline.py](src/pipeline.py) | 영상 읽기 → 모드별 모델 추론 → 결과 합성 → MP4 저장 |
 | [src/sidewalk.py](src/sidewalk.py) | Mask2Former 로딩과 보행 영역 추론 |
 | [src/obstacle.py](src/obstacle.py) | YOLO 로딩과 장애물 추론 |
 | [src/risk.py](src/risk.py) | 예상보행경로(ROI)와 장애물 위험 등급·대표 경고 판정 |
 | [src/walking_voice.py](src/walking_voice.py) | 위험 장애물의 방향·종류·개수에 따른 음성 선택과 반복 억제 |
 | [src/traffic_voice.py](src/traffic_voice.py) | 테스트 앱의 신호등 음성 안정화·전환·소실 안내 |
+| [src/crosswalk_safety.py](src/crosswalk_safety.py) | 횡단 진입·가장자리·측면 이탈·복귀·정상 도착 상태 판정 |
+| [src/voice_priority.py](src/voice_priority.py) | 횡단보도·장애물·신호등 음성을 우선순위에 따라 단일 시간축으로 병합 |
 | [src/video_audio.py](src/video_audio.py) | 안내 음원을 영상 시점에 배치하고 결과 MP4에 합성 |
 | [src/ground_extent.py](src/ground_extent.py) | 보행가능영역에 따른 ROI 상단 보정과 가림 시 경계 유지 |
 | [src/camera_view.py](src/camera_view.py) | 촬영 상태가 불확실할 때 위험 판정 표시 제한 |
@@ -406,7 +443,7 @@ python -m scripts.run_video_inference \
 | [tests/test_traffic_botsort.py](tests/test_traffic_botsort.py) | 실제 BoT-SORT ID·낮은 신뢰도 연결·중복 제거·영상별 초기화 검증 |
 | [docs/traffic-signal-port_260929.md](docs/traffic-signal-port_260929.md) | 테스트 앱 이식 내역·설정 비교·검증 범위·후속 과제 |
 | [backend/](backend/) | 휴대폰 세션 API와 같은 프레임의 통합 추론 |
-| [frontend/](frontend/) | 휴대폰 카메라·보행/신호 오버레이·음성·녹화 UI |
+| [frontend/](frontend/) | 휴대폰 카메라·보행/신호 오버레이·전역 음성 우선순위·진동·녹화 UI |
 | [scripts/run.sh](scripts/run.sh), [scripts/tunnel.sh](scripts/tunnel.sh) | PC 서버 실행과 휴대폰용 HTTPS 주소 생성 |
 
 각 모델은 한 번만 로딩하고 모든 영상에서 재사용합니다.
