@@ -74,7 +74,7 @@ def test_left_exit_repeats_right_guidance_until_return_confirmed():
     assert result["status"] == "outside_left"
     assert result["direction"] == "right"
     assert result["repeat"]
-    assert result["voice_text"] == "위험! 횡단보도 이탈! 오른쪽으로 이동하세요!"
+    assert result["voice_text"] == "횡단보도 이탈! 오른쪽으로 이동하세요!"
     result = item.update(mask(), LABELS, SHAPE, SIGNAL, .6)
     assert result["status"] == "outside_left"
     result = item.update(mask(), LABELS, SHAPE, SIGNAL, .81)
@@ -120,7 +120,7 @@ def test_crosswalk_roi_loss_warns_and_recovers_without_direction():
     assert first["status"] == "crossing"
     assert result["status"] == "outside_unknown"
     assert result["crosswalk_roi"]["crosswalk_fraction"] == 0
-    assert result["voice_text"] == "위험! 횡단보도 이탈!"
+    assert result["voice_text"] == "횡단보도 이탈!"
     assert result["voice_clip"] == "crosswalk-exit-unknown.mp3"
     assert result["repeat"]
     result = item.update(mask(), LABELS, SHAPE, SIGNAL, .7)
@@ -157,7 +157,7 @@ def test_outside_state_finishes_on_strong_walkable_destination():
     walkable = np.full(SHAPE[:2], LABELS["walkable"], np.uint8)
     confirming = item.update(walkable, LABELS, SHAPE, {"crosswalks": []}, .6)
     assert confirming["status"] == "outside_left"
-    assert confirming["voice_text"] == "위험! 횡단보도 이탈! 오른쪽으로 이동하세요!"
+    assert confirming["voice_text"] == "횡단보도 이탈! 오른쪽으로 이동하세요!"
     result = item.update(walkable, LABELS, SHAPE, {"crosswalks": []}, 1.41)
     assert result["status"] == "finished"
     assert not result["crossing_active"]

@@ -44,9 +44,9 @@ DEFAULT_CROSSWALK_SAFETY = {
     "finish_walkable_fraction": 0.60,
     "outside_finish_walkable_fraction": 0.80,
     "entry_box_bottom": 0.70,
-    "red_obstacle_voice_suppression": True,
-    "red_obstacle_crosswalk_threshold": 0.20,
-    "red_obstacle_contact_half_height": 0.02,
+    "non_green_obstacle_voice_suppression": True,
+    "non_green_obstacle_crosswalk_threshold": 0.20,
+    "non_green_obstacle_contact_half_height": 0.02,
 }
 
 
@@ -57,7 +57,7 @@ def crosswalk_safety_config(value=None):
     if not isinstance(value, dict) or set(value) - set(DEFAULT_CROSSWALK_SAFETY):
         raise ValueError("crosswalk_safety: unknown keys or invalid mapping")
     cfg = {**deepcopy(DEFAULT_CROSSWALK_SAFETY), **deepcopy(value)}
-    for key in ("enabled", "red_obstacle_voice_suppression"):
+    for key in ("enabled", "non_green_obstacle_voice_suppression"):
         if not isinstance(cfg[key], bool):
             raise ValueError(f"crosswalk_safety.{key} must be boolean")
     unit_keys = (
@@ -66,7 +66,7 @@ def crosswalk_safety_config(value=None):
         "min_row_width", "finish_walkable_fraction", "entry_box_bottom", "roi_left",
         "roi_right", "roi_top", "roi_bottom", "roi_crosswalk_threshold",
         "roi_occlusion_threshold", "outside_finish_walkable_fraction",
-        "red_obstacle_crosswalk_threshold", "red_obstacle_contact_half_height",
+        "non_green_obstacle_crosswalk_threshold", "non_green_obstacle_contact_half_height",
     )
     for key in unit_keys:
         item = cfg[key]
@@ -375,8 +375,8 @@ class CrosswalkSafetyEngine:
                 move = ("right" if self.phase == "outside_left" else
                         "left" if self.phase == "outside_right" else None)
                 korean = "오른쪽" if move == "right" else "왼쪽" if move == "left" else None
-                text = (f"위험! 횡단보도 이탈! {korean}으로 이동하세요!"
-                        if korean else "위험! 횡단보도 이탈!")
+                text = (f"횡단보도 이탈! {korean}으로 이동하세요!"
+                        if korean else "횡단보도 이탈!")
                 result.update(direction=move, repeat=True, vibration="danger",
                               voice_text=text,
                               voice_clip=f"crosswalk-exit-{move or 'unknown'}.mp3")
@@ -403,8 +403,8 @@ class CrosswalkSafetyEngine:
                 move = ("right" if self.phase == "outside_left" else
                         "left" if self.phase == "outside_right" else None)
                 korean = "오른쪽" if move == "right" else "왼쪽" if move == "left" else None
-                text = (f"위험! 횡단보도 이탈! {korean}으로 이동하세요!"
-                        if korean else "위험! 횡단보도 이탈!")
+                text = (f"횡단보도 이탈! {korean}으로 이동하세요!"
+                        if korean else "횡단보도 이탈!")
                 result.update(direction=move, repeat=True, vibration="danger", voice_text=text,
                               voice_clip=f"crosswalk-exit-{move or 'unknown'}.mp3")
             return result
@@ -431,7 +431,7 @@ class CrosswalkSafetyEngine:
                 move = "right" if self.phase == "outside_left" else "left"
                 korean = "오른쪽" if move == "right" else "왼쪽"
                 result.update(direction=move, repeat=True, vibration="danger",
-                              voice_text=f"위험! 횡단보도 이탈! {korean}으로 이동하세요!",
+                              voice_text=f"횡단보도 이탈! {korean}으로 이동하세요!",
                               voice_clip=f"crosswalk-exit-{move}.mp3")
             return result
 
@@ -441,8 +441,8 @@ class CrosswalkSafetyEngine:
                 move = ("right" if self.phase == "outside_left" else
                         "left" if self.phase == "outside_right" else None)
                 korean = "오른쪽" if move == "right" else "왼쪽" if move == "left" else None
-                text = (f"위험! 횡단보도 이탈! {korean}으로 이동하세요!"
-                        if korean else "위험! 횡단보도 이탈!")
+                text = (f"횡단보도 이탈! {korean}으로 이동하세요!"
+                        if korean else "횡단보도 이탈!")
                 result.update(status=self.phase, crossing_active=True, direction=move,
                               voice_text=text,
                               voice_clip=f"crosswalk-exit-{move or 'unknown'}.mp3", repeat=True,

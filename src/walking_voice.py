@@ -44,17 +44,21 @@ def crosswalk_contact_fraction(item, class_map, label_ids, shape, half_height):
     return float(np.mean(patch == label_ids["crosswalk"]))
 
 
-# 빨간불 횡단보도 장애물의 음성 제외 표시
-def suppress_red_crosswalk_voice(prediction, signal, class_map, label_ids, shape, config):
-    """빨간불이며 횡단보도 위로 확인된 위험 객체만 음성 대상에서 제외한다."""
+# 비초록 신호의 횡단보도 장애물 음성 제외 표시
+def suppress_non_green_crosswalk_voice(prediction, signal, class_map, label_ids, shape, config):
+    """선택 신호가 초록불이 아니며 횡단보도 위로 확인된 위험 객체를 음성에서 제외한다."""
     for item in prediction.get("detections", []):
         item.pop("voice_suppressed_reason", None)
         item.pop("crosswalk_contact_fraction", None)
-    if (not config.get("red_obstacle_voice_suppression", True)
-            or (signal or {}).get("signal_state") != "red"):
+    signal = signal or {}
+    selected = signal.get("selected_detection_index")
+    state = signal.get("signal_state")
+    if (not config.get("non_green_obstacle_voice_suppression", True)
+            or not isinstance(selected, int) or isinstance(selected, bool)
+            or state not in ("red", "unknown")):
         return prediction
-    threshold = config.get("red_obstacle_crosswalk_threshold", .20)
-    half_height = config.get("red_obstacle_contact_half_height", .02)
+    threshold = config.get("non_green_obstacle_crosswalk_threshold", .20)
+    half_height = config.get("non_green_obstacle_contact_half_height", .02)
     for item in prediction.get("detections", []):
         if item.get("alert_level", item.get("risk_level")) != "danger":
             continue
@@ -63,7 +67,7 @@ def suppress_red_crosswalk_voice(prediction, signal, class_map, label_ids, shape
         if fraction is not None:
             item["crosswalk_contact_fraction"] = fraction
         if fraction is not None and fraction >= threshold:
-            item["voice_suppressed_reason"] = "red_signal_crosswalk_obstacle"
+            item["voice_suppressed_reason"] = "non_green_signal_crosswalk_obstacle"
     return prediction
 
 
