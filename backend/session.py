@@ -20,6 +20,17 @@ class SessionError(Exception):
     """세션 상태나 프레임 순서가 올바르지 않을 때 발생한다."""
 
 
+# 폴더명에 사용할 사용자 입력 정리
+def safe_folder_part(value, fallback="", max_length=None):
+    """
+    파일명에 사용할 수 없는 문자를 바꾸고 선택한 길이만 남기는 함수이다.
+    """
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", value).strip(" .")
+    if max_length is not None:
+        cleaned = cleaned[:max_length].rstrip(" .")
+    return cleaned or fallback
+
+
 class SessionManager:
     """한 서버에서 한 휴대폰 테스트를 순서대로 처리한다."""
 
@@ -43,10 +54,13 @@ class SessionManager:
             else:
                 self.models.reset()
             session_id = uuid4().hex
-            safe_device = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", device_name).strip(" .") or "기종미상"
+            safe_device = safe_folder_part(device_name, "기종미상")
+            safe_note = safe_folder_part(note, max_length=40)
             started_at = datetime.now(ZoneInfo("Asia/Seoul"))
             date = started_at.strftime("%Y%m%d")
             base_name = f"{safe_device}_{started_at.strftime('%Y%m%d_%H%M%S')}"
+            if safe_note:
+                base_name = f"{base_name}_{safe_note}"
             index = 1
             while True:
                 folder_name = base_name if index == 1 else f"{base_name}_{index}"

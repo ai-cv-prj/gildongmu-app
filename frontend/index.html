@@ -8,7 +8,7 @@ file_path: frontend/index.html
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#101a2a">
+  <meta name="theme-color" content="#f4f7fb">
   <title>길동무 실시간 테스트</title>
   <link rel="stylesheet" href="/static/css/app.css">
 </head>
@@ -32,8 +32,6 @@ file_path: frontend/index.html
       <input id="custom-device" type="text" maxlength="80" placeholder="휴대폰 기종 입력" hidden>
       <label for="note">테스트 메모 <span class="muted">선택</span></label>
       <input id="note" type="text" maxlength="500" placeholder="예: 금촌역 횡단보도">
-      <label class="check"><input id="record" type="checkbox"> 오버레이와 안내 음성 영상도 저장</label>
-      <span class="muted">원본 카메라 영상은 항상 저장됩니다.</span>
     </section>
 
     <section class="camera-panel" aria-label="카메라와 추론 결과">
@@ -45,6 +43,8 @@ file_path: frontend/index.html
       </div>
       <div class="legend" aria-label="화면 색상 안내">
         <div class="legend-row"><span class="walkable">보행가능영역</span><span class="crosswalk">횡단보도</span></div>
+        <div class="legend-row roi-levels"><strong>경로 테두리</strong><span class="expected">예상 경로</span><span class="immediate">근접 경로</span><span class="crosswalk-path">횡단보도 경로</span></div>
+        <div class="legend-row signal-levels"><strong>신호 테두리</strong><span class="candidate">후보</span><span class="unknown">확인 중</span><span class="red">빨간불</span><span class="green">초록불</span></div>
         <div class="legend-row risk-levels"><strong>장애물 테두리</strong><span class="monitor">관찰</span><span class="caution">주의</span><span class="danger">위험</span></div>
       </div>
     </section>
@@ -58,10 +58,10 @@ file_path: frontend/index.html
       <div class="status-heading"><h2>상태</h2><span id="metrics">0 프레임</span></div>
       <p id="status">서버와 카메라를 준비해 주세요.</p>
     </section>
-    <p class="footnote">화면을 켠 상태에서 사용하세요. 카메라 접근에는 HTTPS가 필요합니다. 추론 결과만으로 횡단·이동 안전을 판단하지 마세요.</p>
   </main>
   <script defer src="/static/js/camera.js"></script>
   <script defer src="/static/js/tts.js"></script>
+  <script defer src="/static/js/audio_coordinator.js"></script>
   <script defer src="/static/js/guidance.js"></script>
   <script defer src="/static/js/overlay.js"></script>
   <script defer src="/static/js/recorder.js"></script>

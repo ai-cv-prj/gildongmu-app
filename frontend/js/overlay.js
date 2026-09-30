@@ -48,9 +48,14 @@ window.GOverlay = (() => {
       const x = x1 * canvas.width, y = y1 * canvas.height;
       const w = (x2 - x1) * canvas.width, h = (y2 - y1) * canvas.height;
       ctx.strokeRect(x, y, w, h);
-      const name = kind === "crosswalk" ? "횡단보도" : kind === "traffic"
+      const baseName = kind === "crosswalk" ? "횡단보도" : kind === "traffic"
         ? selected ? `신호 ${item.signal_state || "확인 중"}` : "신호 후보"
         : item.display_label || item.class_name || "장애물";
+      const identifiers = kind === "walking" ? [
+        Number.isInteger(item.track_id) ? `T${item.track_id}` : null,
+        Number.isInteger(item.event_id) ? `E${item.event_id}` : null,
+      ].filter(Boolean) : [];
+      const name = identifiers.length ? `${baseName} · ${identifiers.join(" · ")}` : baseName;
       ctx.font = `bold ${Math.max(13, canvas.width / 38)}px system-ui`;
       const textWidth = ctx.measureText(name).width + 12;
       const labelY = Math.max(2, y - 26);
@@ -59,6 +64,37 @@ window.GOverlay = (() => {
       ctx.fillStyle = "#08131f";
       ctx.fillText(name, x + 6, labelY + 17);
     }
+  }
+
+  // 횡단보도 안전 경계 표시
+  /** 가상 사용자 위치 높이에서 추정한 좌우 경계와 현재 발 위치를 그린다. */
+  function crosswalkSafety(event) {
+    const geometry = event?.geometry;
+    const values = [geometry?.left_x, geometry?.right_x, geometry?.foot_x, geometry?.foot_y];
+    if (!values.every(Number.isFinite)) return;
+    const [left, right, foot, y] = values;
+    const color = String(event.status).startsWith("outside") ? "#ff435b" : "#f16be0";
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(left * canvas.width, y * canvas.height);
+    ctx.lineTo(right * canvas.width, y * canvas.height);
+    ctx.stroke();
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.arc(foot * canvas.width, y * canvas.height, 7, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 하단 횡단보도 판단 ROI 표시
+  /** 서버 판정에 사용한 고정 ROI를 보라색 테두리로 표시한다. */
+  function crosswalkRoi(event) {
+    const roi = event?.crosswalk_roi;
+    const values = [roi?.left, roi?.right, roi?.top, roi?.bottom];
+    if (!values.every(Number.isFinite)) return;
+    const [left, right, top, bottom] = values;
+    polygon([[left, top], [right, top], [right, bottom], [left, bottom]],
+      "#9b5de5", "#9b5de50d");
   }
 
   // 서버 응답의 PNG 마스크와 위험·신호 결과 합성
@@ -74,9 +110,10 @@ window.GOverlay = (() => {
       for (const points of roi.corridor_polygons || [roi.corridor_polygon])
         polygon(points, "#4ce3fa", "#4ce3fa20");
       polygon(roi.immediate_polygon, "#ff88ba", "#ff88ba24");
+      crosswalkRoi(result.crosswalk?.event);
       boxes(result.walking?.detections, "walking");
-      boxes(result.traffic?.crosswalks, "crosswalk");
       boxes(result.traffic?.detections, "traffic");
+      crosswalkSafety(result.crosswalk?.event);
     };
     if (!result.walking?.mask_png) return draw(null);
     const mask = new Image();
