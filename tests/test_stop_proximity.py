@@ -27,7 +27,42 @@ class StopProximityTests(unittest.TestCase):
         self.assertTrue(confirmed["nearby"])
         self.assertTrue(confirmed["newly_nearby"])
         self.assertEqual(confirmed["xyxy"], [0.1, 0.2, 0.6, 0.9])
+        self.assertEqual(confirmed["basis"], "bottom")
         self.assertFalse(monitor.update([stop], SHAPE, 4.5)["newly_nearby"])
+
+    def test_large_stop_on_either_side_confirms_without_bottom_threshold(self):
+        for box, expected_basis in (([0, 10, 25, 55], "left"),
+                                    ([75, 10, 100, 55], "right")):
+            with self.subTest(basis=expected_basis):
+                monitor = StopProximity()
+                for time in (1, 1.5):
+                    self.assertEqual(monitor.update([detection(box)], SHAPE, time)["status"],
+                                     "candidate")
+                result = monitor.update([detection(box)], SHAPE, 2)
+                self.assertTrue(result["nearby"])
+                self.assertEqual(result["basis"], expected_basis)
+
+    def test_side_rule_rejects_center_distant_and_small_boxes(self):
+        for box in ([40, 10, 60, 55], [0, 35, 20, 55],
+                    [0, 10, 6, 55], [0, 0, 20, 40]):
+            with self.subTest(box=box):
+                self.assertEqual(StopProximity().update([detection(box)], SHAPE, 1)["status"],
+                                 "not_detected")
+
+    def test_side_candidate_keeps_identity_and_can_follow_bottom_candidate(self):
+        monitor = StopProximity()
+        bottom = detection([10, 20, 40, 80], track_id=1)
+        left = detection([0, 10, 25, 55], track_id=1)
+        right = detection([75, 10, 100, 55], track_id=2)
+        self.assertEqual(monitor.update([bottom], SHAPE, 1)["basis"], "bottom")
+        self.assertEqual(monitor.update([left], SHAPE, 1.5)["observations"], 2)
+        result = monitor.update([left], SHAPE, 2)
+        self.assertEqual(result["status"], "nearby")
+        self.assertEqual(result["basis"], "left")
+        result = monitor.update([right], SHAPE, 2.5)
+        self.assertEqual(result["status"], "candidate")
+        self.assertEqual(result["observations"], 1)
+        self.assertEqual(result["basis"], "right")
 
     def test_different_stop_gap_and_view_loss_require_fresh_confirmation(self):
         monitor = StopProximity()

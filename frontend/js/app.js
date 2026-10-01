@@ -61,11 +61,13 @@
   // 개발 중 근접 추정 결과를 음성이나 단계 전환 없이 표시한다.
   function showStopProximity(event) {
     const state = event?.status || "not_detected";
+    const basis = { left: "좌측", right: "우측", bottom: "하단" }[event?.basis];
+    const position = basis ? ` · ${basis}` : "";
     stopStatus.dataset.state = state;
     if (state === "nearby") {
-      stopStatus.textContent = "정류장 근접 추정 · " + event.observations + "회 연속 관측 · 검출 신뢰도 " + event.confidence.toFixed(2) + " (화면 기준)";
+      stopStatus.textContent = "정류장 근접 추정" + position + " · " + event.observations + "회 연속 관측 · 검출 신뢰도 " + event.confidence.toFixed(2) + " (화면 기준)";
     } else if (state === "candidate") {
-      stopStatus.textContent = "정류장 후보 확인 중 · " + event.observations + "/" + event.required_observations + "회 관측 (화면 기준)";
+      stopStatus.textContent = "정류장 후보 확인 중" + position + " · " + event.observations + "/" + event.required_observations + "회 관측 (화면 기준)";
     } else {
       stopStatus.textContent = state === "unavailable"
         ? "정류장 근접 판단 보류 · 카메라 시야 확인 필요"

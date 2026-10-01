@@ -24,16 +24,24 @@ class StopProximity:
             "min_box_height": 0.20,
             "min_box_width": 0.05,
             "min_box_bottom": 0.60,
+            "side_center_limit": 0.25,
+            "side_min_box_height": 0.30,
+            "side_min_box_width": 0.08,
+            "side_min_box_bottom": 0.45,
             "confirm_frames": 3,
             "match_iou": 0.10,
             "max_gap_s": 2.0,
         }
         cfg.update(config or {})
-        for key in ("min_box_height", "min_box_width", "min_box_bottom", "match_iou"):
+        for key in ("min_box_height", "min_box_width", "min_box_bottom",
+                    "side_center_limit", "side_min_box_height", "side_min_box_width",
+                    "side_min_box_bottom", "match_iou"):
             value = cfg[key]
             if (isinstance(value, bool) or not isinstance(value, (int, float))
                     or not math.isfinite(value) or not 0 <= value <= 1):
                 raise ValueError(f"stop_proximity.{key} must be between 0 and 1")
+        if cfg["side_center_limit"] > 0.5:
+            raise ValueError("stop_proximity.side_center_limit must be at most 0.5")
         if (isinstance(cfg["confirm_frames"], bool) or not isinstance(cfg["confirm_frames"], int)
                 or cfg["confirm_frames"] < 1):
             raise ValueError("stop_proximity.confirm_frames must be a positive integer")
@@ -61,6 +69,7 @@ class StopProximity:
             "confidence": candidate["confidence"] if candidate else None,
             "xyxy": candidate["box"] if candidate else None,
             "track_id": candidate["track_id"] if candidate else None,
+            "basis": candidate["basis"] if candidate else None,
         }
 
     def update(self, detections, shape, timestamp_s, *, camera_view="clear", state_reset=False):
@@ -88,14 +97,29 @@ class StopProximity:
                 max(0.0, min(1.0, v / scale))
                 for v, scale in zip(box, (width, height, width, height))
             )
-            if (x2 - x1 < self.cfg["min_box_width"]
-                    or y2 - y1 < self.cfg["min_box_height"]
-                    or y2 < self.cfg["min_box_bottom"]):
+            box_width, box_height = x2 - x1, y2 - y1
+            if (box_width < self.cfg["min_box_width"]
+                    or box_height < self.cfg["min_box_height"]):
+                continue
+            if y2 >= self.cfg["min_box_bottom"]:
+                basis = "bottom"
+            elif (box_width >= self.cfg["side_min_box_width"]
+                  and box_height >= self.cfg["side_min_box_height"]
+                  and y2 >= self.cfg["side_min_box_bottom"]):
+                center_x = (x1 + x2) / 2
+                if center_x <= self.cfg["side_center_limit"]:
+                    basis = "left"
+                elif center_x >= 1 - self.cfg["side_center_limit"]:
+                    basis = "right"
+                else:
+                    continue
+            else:
                 continue
             candidates.append({
                 "box": [x1, y1, x2, y2],
                 "confidence": float(confidence),
                 "track_id": item.get("track_id"),
+                "basis": basis,
             })
 
         if not candidates:

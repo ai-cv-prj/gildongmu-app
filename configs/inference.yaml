@@ -30,6 +30,11 @@ stop_proximity:
   min_box_height: 0.20
   min_box_width: 0.05
   min_box_bottom: 0.60
+  # 박스 중심이 좌우 25% 영역에 있고 더 큰 박스가 화면 중간 높이까지 내려와야 한다.
+  side_center_limit: 0.25
+  side_min_box_height: 0.30
+  side_min_box_width: 0.08
+  side_min_box_bottom: 0.45
   confirm_frames: 3
   match_iou: 0.10
   max_gap_s: 2.0

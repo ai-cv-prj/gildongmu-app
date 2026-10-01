@@ -69,10 +69,12 @@ window.GOverlay = (() => {
   // 현장 테스트용 정류장 판정. 캔버스에 그리므로 오버레이 영상에도 남는다.
   function stopDiagnostic(event) {
     const state = event?.status || "unavailable";
+    const basis = { left: "좌측", right: "우측", bottom: "하단" }[event?.basis];
+    const position = basis ? `${basis} ` : "";
     const color = state === "nearby" ? "#57d7ab"
       : state === "candidate" ? "#ffce73" : "#c2ceda";
-    const label = state === "nearby" ? "버스 정류장 근접입니다"
-      : state === "candidate" ? `정류장 후보 ${event.observations}/${event.required_observations}`
+    const label = state === "nearby" ? `${position}정류장 근접 추정`
+      : state === "candidate" ? `${position}정류장 후보 ${event.observations}/${event.required_observations}`
       : state === "not_detected" ? "정류장 미검출" : "정류장 판정 보류";
     const box = event?.xyxy;
     ctx.save();
