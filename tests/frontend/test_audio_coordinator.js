@@ -52,12 +52,20 @@ assert.equal(spoken.at(-1), "횡단보도 이탈! 왼쪽으로 이동하세요!"
 coordinator.acceptCrosswalk({ status: "crossing", repeat: false }, now + 100);
 assert.equal(cancelCount, 4);
 
+// 장애물 안내 중 빨간불이 확정되면 즉시 중단하고 빨간불을 안내한다.
+coordinator.request({ source: "walking", priority: coordinator.PRIORITY.walking,
+  text: "가운데에 차량.", validUntil: 4000 });
+coordinator.request({ source: "traffic", priority: coordinator.PRIORITY.trafficRed,
+  text: "빨간불입니다.", validUntil: 4000 });
+assert.equal(spoken.at(-1), "빨간불입니다.");
+assert.equal(cancelCount, 5);
+
 // 진입 전 정렬 안내를 반복하고 발이 경계 안에 들어오면 즉시 중단한다.
 coordinator.acceptCrosswalk({ status: "align_right", repeat: true,
   voice_text: "오른쪽으로 이동하세요!" }, now + 150);
 assert.equal(spoken.at(-1), "오른쪽으로 이동하세요!");
 coordinator.acceptCrosswalk({ status: "crossing", repeat: false }, now + 160);
-assert.equal(cancelCount, 5);
+assert.equal(cancelCount, 7);
 
 // 방향 미확정 상태는 이탈 음성을 시작하지 않는다.
 coordinator.acceptCrosswalk({ status: "outside_unknown", repeat: true,
@@ -75,5 +83,5 @@ coordinator.acceptCrosswalk({ status: "outside_right", repeat: true,
   voice_text: "횡단보도 이탈! 왼쪽으로 이동하세요!" }, now + 300);
 now = 3000;
 coordinator.tick();
-assert.equal(cancelCount, 6);
+assert.equal(cancelCount, 8);
 console.log("audio coordinator: pass");
