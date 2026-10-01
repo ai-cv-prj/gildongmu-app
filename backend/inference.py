@@ -14,6 +14,7 @@ from src.risk_config import risk_config, tracking_config
 from src.sidewalk import SidewalkSegmenter
 from src.traffic import TrafficSignalPipeline, validate_traffic_config
 from src.walking_voice import WalkingVoice
+from backend.stop_proximity import StopProximity
 
 
 class RealtimeInference:
@@ -41,6 +42,7 @@ class RealtimeInference:
         self.traffic = TrafficSignalPipeline(device=str(self.segmenter.device), **traffic_options)
         self.risk_settings = risk_config(config["risk"])
         self.tracking_settings = tracking_config(config["tracking"])
+        self.stop_proximity_settings = config.get("stop_proximity", {})
         self.reset()
 
     # 새 휴대폰 세션의 이전 추적 상태 제거
@@ -48,6 +50,7 @@ class RealtimeInference:
         """위험·음성·신호등 추적 기록을 새 세션 기준으로 비운다."""
         self.risk = RiskEngine(self.risk_settings, self.tracking_settings)
         self.voice = WalkingVoice()
+        self.stop_proximity = StopProximity(self.stop_proximity_settings)
         self.traffic.reset()
 
     # 같은 원본 프레임의 세 모델 추론
@@ -59,6 +62,10 @@ class RealtimeInference:
         height, width = frame.shape[:2]
         risk = self.risk.update(frame, detections, captured_at_ms / 1000,
                                 True, class_map, self.segmenter.label_ids)
+        risk["stop_proximity"] = self.stop_proximity.update(
+            risk["detections"], frame.shape, captured_at_ms / 1000,
+            camera_view=risk["camera_view"]["status"], state_reset=risk["state_reset"],
+        )
         self.risk.add_sidewalk_context(risk, class_map, self.segmenter.label_ids, frame.shape)
         self.voice.observe(risk, width, captured_at_ms / 1000)
         signal = self.traffic.predict(frame, frame_id=frame_id,

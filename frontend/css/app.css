@@ -45,5 +45,8 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid #8beed1; outline-offset: 2px; }
 .status-heading { display: flex; justify-content: space-between; align-items: center; }.status-heading h2 { margin: 0; font-size: 1.05rem; }.status-heading span { color: #a5bdd0; font-size: .82rem; }
 #status { min-height: 1.5em; color: #c1d5e2; line-height: 1.5; }
+.stop-proximity-status { margin: 8px 0 0; padding: 9px 11px; border: 1px solid #42536d; border-radius: 9px; color: #b9c9d9; font-size: .86rem; }
+.stop-proximity-status[data-state="candidate"] { border-color: #b88742; color: #ffdda8; }
+.stop-proximity-status[data-state="nearby"] { border-color: #57d7ab; color: #9af0ce; font-weight: 700; }
 .footnote { color: #a8b8c7; font-size: .78rem; line-height: 1.5; }
 @media (max-width: 390px) { .page { padding: 18px 12px 28px; } .controls { gap: 7px; } button { font-size: .9rem; } }

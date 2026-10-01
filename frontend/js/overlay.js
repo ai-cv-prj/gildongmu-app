@@ -61,6 +61,36 @@ window.GOverlay = (() => {
     }
   }
 
+  // 현장 테스트용 정류장 판정. 캔버스에 그리므로 선택적 오버레이 영상에도 남는다.
+  function stopDiagnostic(event) {
+    const state = event?.status || "unavailable";
+    const color = state === "nearby" ? "#57d7ab"
+      : state === "candidate" ? "#ffce73" : "#c2ceda";
+    const label = state === "nearby" ? "버스 정류장 근접입니다"
+      : state === "candidate" ? `정류장 후보 ${event.observations}/${event.required_observations}`
+      : state === "not_detected" ? "정류장 미검출" : "정류장 판정 보류";
+    const box = event?.xyxy;
+    ctx.save();
+    if (["nearby", "candidate"].includes(state) && Array.isArray(box)
+        && box.length === 4 && box.every(Number.isFinite)) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(4, canvas.width / 120);
+      ctx.strokeRect(box[0] * canvas.width, box[1] * canvas.height,
+        (box[2] - box[0]) * canvas.width, (box[3] - box[1]) * canvas.height);
+    }
+    ctx.font = `bold ${Math.max(14, Math.min(20, canvas.width / 32))}px system-ui`;
+    const bannerWidth = Math.min(canvas.width - 16, ctx.measureText(label).width + 22);
+    const x = canvas.width - bannerWidth - 8;
+    ctx.fillStyle = "#08131feb";
+    ctx.fillRect(x, 8, bannerWidth, 36);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, 8, bannerWidth, 36);
+    ctx.fillStyle = color;
+    ctx.fillText(label, x + 11, 32);
+    ctx.restore();
+  }
+
   // 서버 응답의 PNG 마스크와 위험·신호 결과 합성
   /** 새 결과가 도착했을 때 이전 프레임의 비동기 이미지 로딩을 무효화한다. */
   function render(result) {
@@ -77,6 +107,7 @@ window.GOverlay = (() => {
       boxes(result.walking?.detections, "walking");
       boxes(result.traffic?.crosswalks, "crosswalk");
       boxes(result.traffic?.detections, "traffic");
+      stopDiagnostic(result.stop_proximity);
     };
     if (!result.walking?.mask_png) return draw(null);
     const mask = new Image();

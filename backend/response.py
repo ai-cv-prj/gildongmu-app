@@ -73,5 +73,6 @@ def make_response(session_id, frame_id, captured_at_ms, frame, risk, signal,
                 "candidate_detection_index": signal["candidate_detection_index"],
             },
         },
+        "stop_proximity": risk.get("stop_proximity"),
         "inference_ms": inference_ms,
     }

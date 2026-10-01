@@ -32,7 +32,7 @@ file_path: frontend/index.html
       <input id="custom-device" type="text" maxlength="80" placeholder="휴대폰 기종 입력" hidden>
       <label for="note">테스트 메모 <span class="muted">선택</span></label>
       <input id="note" type="text" maxlength="500" placeholder="예: 금촌역 횡단보도">
-      <label class="check"><input id="record" type="checkbox"> 오버레이와 안내 음성 영상도 저장</label>
+      <label class="check"><input id="record" type="checkbox"> 오버레이·안내 음성 영상 저장 (정류장 알림 확인용)</label>
       <span class="muted">원본 카메라 영상은 항상 저장됩니다.</span>
     </section>
 
@@ -57,6 +57,7 @@ file_path: frontend/index.html
     <section class="panel status-panel" aria-live="polite">
       <div class="status-heading"><h2>상태</h2><span id="metrics">0 프레임</span></div>
       <p id="status">서버와 카메라를 준비해 주세요.</p>
+      <p id="stop-proximity-status" class="stop-proximity-status" aria-live="off" data-state="not_detected">정류장 근접 관측 없음 · 화면 기준 시험 기능</p>
     </section>
     <p class="footnote">화면을 켠 상태에서 사용하세요. 카메라 접근에는 HTTPS가 필요합니다. 추론 결과만으로 횡단·이동 안전을 판단하지 마세요.</p>
   </main>

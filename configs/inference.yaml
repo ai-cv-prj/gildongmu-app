@@ -20,6 +20,15 @@ yolo:
   max_det: 300
   rect: true
 
+# 화면 속 정류장 크기·위치와 연속 관측으로만 근접을 추정한다. 실제 거리가 아니다.
+stop_proximity:
+  min_box_height: 0.20
+  min_box_width: 0.05
+  min_box_bottom: 0.60
+  confirm_frames: 3
+  match_iou: 0.10
+  max_gap_s: 2.0
+
 traffic:
   weights: weights/traffic/best_YOLO.pt
   classifier_weights: weights/traffic/best_MobileNet.pt

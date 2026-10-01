@@ -8,6 +8,7 @@
   const cameraButton = $("camera-button"), testButton = $("test-button");
   const device = $("device"), customDevice = $("custom-device");
   const status = $("status"), metrics = $("metrics"), badge = $("camera-badge");
+  const stopStatus = $("stop-proximity-status");
   let sessionId = null, running = false, stopping = false, generation = 0, frameId = 0;
   let request = null, timer = null, voiceTick = null, inFlight = false;
   let pendingRawVideo = null;
@@ -20,6 +21,21 @@
   // 사용자에게 현재 작업 상태 알림
   /** 화면의 단일 상태 문장을 바꾼다. */
   function setStatus(message) { status.textContent = message; }
+
+  // 개발 중 근접 추정 결과를 음성이나 단계 전환 없이 표시한다.
+  function showStopProximity(event) {
+    const state = event?.status || "not_detected";
+    stopStatus.dataset.state = state;
+    if (state === "nearby") {
+      stopStatus.textContent = "정류장 근접 추정 · " + event.observations + "회 연속 관측 · 검출 신뢰도 " + event.confidence.toFixed(2) + " (화면 기준)";
+    } else if (state === "candidate") {
+      stopStatus.textContent = "정류장 후보 확인 중 · " + event.observations + "/" + event.required_observations + "회 관측 (화면 기준)";
+    } else {
+      stopStatus.textContent = state === "unavailable"
+        ? "정류장 근접 판단 보류 · 카메라 시야 확인 필요"
+        : "정류장 근접 관측 없음 · 화면 기준 시험 기능";
+    }
+  }
 
   // 선택한 휴대폰 기종 읽기
   /** 직접 입력을 포함하여 저장할 기종 이름을 반환한다. */
@@ -71,6 +87,7 @@
   /** 마스크를 보여주고 두 안내 정책에 동일한 촬영 시각을 전달한다. */
   function showResult(result, capturedAt) {
     GOverlay.render(result);
+    showStopProximity(result.stop_proximity);
     metrics.textContent = `${result.frame_id} 프레임 · ${result.inference_ms}ms`;
     walkingGuide.accept({ session_id: result.session_id, frame_id: result.frame_id,
       detections: result.walking.detections, event: result.walking.event }, capturedAt);
@@ -113,6 +130,7 @@
     if (!GCamera.active()) return setStatus("먼저 카메라를 켜 주세요.");
     if (!deviceName()) return setStatus("휴대폰 기종을 입력해 주세요.");
     GOverlay.clear();
+    showStopProximity(null);
     running = true;
     frameId = 0;
     const version = ++generation;
@@ -176,6 +194,7 @@
     request?.abort();
     trafficGuide.stop();
     walkingGuide.stop();
+    showStopProximity(null);
     const id = sessionId;
     sessionId = null;
     setStatus("결과를 저장하고 있습니다.");
