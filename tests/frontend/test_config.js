@@ -31,7 +31,7 @@ test("recorder uses server fps, size, bitrate and chunk interval", () => {
   Object.assign(settings.recording, { fps: 7, max_side: 320,
     video_bits_per_second: 1234567, chunk_interval_ms: 345 });
   const calls = {};
-  const canvas = { getContext: () => ({ fillRect() {}, drawImage() {} }),
+  const canvas = { getContext: () => ({ fillRect() {}, clearRect() {}, drawImage() {} }),
     captureStream(fps) { calls.fps = fps; return {}; } };
   const video = { videoWidth: 1280, videoHeight: 720 };
   const overlay = { clientWidth: 1280, clientHeight: 720, width: 1280, height: 720 };
@@ -48,8 +48,10 @@ test("recorder uses server fps, size, bitrate and chunk interval", () => {
   }
   const context = { window: { GConfig: { get: () => settings }, MediaRecorder: Recorder },
     MediaRecorder: Recorder, performance: { now: () => 0 },
-    document: { getElementById: id => id === "video" ? video : overlay, createElement: () => canvas } };
+    requestAnimationFrame: () => 1, cancelAnimationFrame() {},
+    document: { getElementById: id => id === "video" ? video : id === "overlay" ? overlay : canvas } };
   vm.runInNewContext(fs.readFileSync("frontend/js/recorder.js", "utf8"), context);
+  context.window.GRecorder.startPreview();
   context.window.GRecorder.start();
   assert.equal(calls.fps, 7);
   assert.equal(canvas.width, 320);
