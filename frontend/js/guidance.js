@@ -11,8 +11,7 @@
     let startedAt = 0, lastFrame = null, lastCapture = null, lastValid = null;
     let target = null, color = null, candidate = null, missingAnnounced = false;
     let hasConfirmedSignal = false;
-    let mode = "traffic", walkingLastDangerAt = null;
-    const walkingAnnouncedIds = new Set();
+    let mode = "traffic";
     // 대상 추적 이력과 분리한다. 소실 안내 후 재확인한 경우에만 같은 색을 다시 읽는다.
     let lastAnnouncedColor = null, lastAnnouncedTarget = null;
 
@@ -28,21 +27,11 @@
         : changed ? coordinator.PRIORITY.trafficChange
           : coordinator.PRIORITY[mode], text: message, validUntil });
     }
-    // 새 위험 장면을 받을 수 있도록 이전 장면과 남은 위험 음성을 정리한다.
-    /** 마지막 위험 관측이 오래되면 지난 위험 음성을 취소한다. */
-    function clearWalkingScene() {
-      if (!walkingAnnouncedIds.size) return;
-      walkingAnnouncedIds.clear();
-      walkingLastDangerAt = null;
-      coordinator.clear("walking");
-    }
     function stop(text = "음성 안내가 꺼져 있습니다.") {
       active = false;
       hasConfirmedSignal = false;
       lastAnnouncedColor = null;
       lastAnnouncedTarget = null;
-      walkingAnnouncedIds.clear();
-      walkingLastDangerAt = null;
       resetEvidence();
       coordinator.clear(mode);
       update(text);
@@ -55,8 +44,6 @@
       mock = isMock;
       startedAt = now();
       lastFrame = lastCapture = lastValid = null;
-      walkingAnnouncedIds.clear();
-      walkingLastDangerAt = null;
       missingAnnounced = false;
       update(mode === "walking" ? "위험 장애물을 확인하고 있습니다." : "안내 대상의 신호를 확인하고 있습니다.");
     }
@@ -71,7 +58,6 @@
     function tick() {
       if (!active) return;
       if (mode === "walking") {
-        if (walkingAnnouncedIds.size && now() - walkingLastDangerAt >= limits.walking_clear_ms) clearWalkingScene();
         return;
       }
       const age = now() - (lastValid ?? startedAt);
@@ -96,15 +82,9 @@
       lastCapture = capturedAt;
       const event = res.event || {};
       if (mode === "walking") {
-        const ids = Array.isArray(event.voice_event_ids)
-          ? event.voice_event_ids.filter(Number.isInteger) : [];
         const danger = event.type === "walking_warning" && event.level === "danger" &&
-          ids.length > 0 && typeof event.voice_text === "string";
-        if (walkingAnnouncedIds.size && capturedAt - walkingLastDangerAt >= limits.walking_clear_ms) clearWalkingScene();
+          typeof event.voice_text === "string";
         if (!danger) return;
-        walkingLastDangerAt = capturedAt;
-        if (ids.every(id => walkingAnnouncedIds.has(id))) return;
-        for (const id of ids) walkingAnnouncedIds.add(id);
         announce(event.voice_text,capturedAt+limits.max_age_ms);
         return;
       }

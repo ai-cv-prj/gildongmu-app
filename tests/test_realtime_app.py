@@ -45,8 +45,9 @@ class FakeModels:
             "level": "danger", "warning_text": "위험! 사람이 있음.",
             "roi": {"corridor_polygon": [[0.2, 0.3], [0.8, 0.3], [0.8, 1], [0.2, 1]],
                     "immediate_polygon": [[0.2, 0.7], [0.8, 0.7], [0.8, 1], [0.2, 1]]},
-            "camera_view": {"status": "clear"}, "voice_event_ids": [3],
-            "voice_text": "왼쪽에 사람.",
+            "camera_view": {"status": "clear"},
+            "last_action": "straight",
+            "voice_text": "직진하세요.",
         }
         signal = {
             "detections": [{"xyxy": [50, 5, 70, 30], "class_name": "pedestrian_signal",
@@ -129,7 +130,8 @@ def test_mobile_session_flow(tmp_path, recording_fps):
                          files={"image": ("frame.jpg", io.BytesIO(jpeg.tobytes()), "image/jpeg")})
     assert result.status_code == 200
     body = result.json()
-    assert body["walking"]["event"]["voice_text"] == "왼쪽에 사람."
+    assert body["walking"]["event"]["voice_text"] == "직진하세요."
+    assert body["walking"]["event"]["last_action"] == "straight"
     assert body["traffic"]["event"]["signal_state"] == "red"
     assert body["crosswalk"]["event"]["status"] == "crossing"
     assert body["walking"]["detections"][0]["xyxy"] == [0.08, 0.125, 0.3, 0.5]

@@ -13,6 +13,24 @@ NEAR_ROI_COLOR = (186, 136, 255)
 DARK_TEXT_COLOR = (31, 19, 8)
 
 
+# 현재 장애물 이동 행동 배지 표시
+def draw_action_status(frame, prediction):
+    """영상 왼쪽 위에 현재 장애물 이동 행동을 검은 배지로 표시한다."""
+    action = prediction.get("last_action") or "none"
+    text = f"ACTION: {action}"
+    height, width = frame.shape[:2]
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale, thickness, padding = max(.45, width / 760), 1, 8
+    (text_width, text_height), baseline = cv2.getTextSize(text, font, scale, thickness)
+    left, top = 8, 8
+    right = min(width - 1, left + text_width + padding * 2)
+    bottom = min(height - 1, top + text_height + baseline + padding * 2)
+    cv2.rectangle(frame, (left, top), (right, bottom), (24, 24, 24), -1)
+    cv2.putText(frame, text, (left + padding, bottom - baseline - padding),
+                font, scale, (255, 255, 255), thickness, cv2.LINE_AA)
+    return frame
+
+
 # 추적과 위험 이벤트 식별자 표시
 def risk_identity(item):
     """표시 가능한 추적 ID와 이벤트 ID를 짧은 문자열로 묶는다."""
@@ -71,7 +89,7 @@ def draw_risk(frame, prediction, config):
         cv2.rectangle(result, (x, y), (min(w-1, x+width), min(h-1, y+height)), color, -1)
         cv2.putText(result, text, (x+6, y+height-baseline-3), cv2.FONT_HERSHEY_SIMPLEX,
                     scale, DARK_TEXT_COLOR, 1, cv2.LINE_AA)
-    return result
+    return draw_action_status(result, prediction)
 
 
 # 검토용 위험 화면 생성
@@ -198,7 +216,7 @@ def draw_review(frame, prediction, config):
     line=f'PATH CHECK: {state}' + (f' | non-walkable {fraction:.0%}' if fraction is not None else "")
     text(line,(16,h-panel_height+round(160*scale)),.65*scale,(0,210,255),max(1,round(scale)))
     draw_scene_status(result,prediction,(16,h-panel_height+round(190*scale)),.62*scale)
-    return result
+    return draw_action_status(result, prediction)
 
 
 # 표면 위험 영역 표시

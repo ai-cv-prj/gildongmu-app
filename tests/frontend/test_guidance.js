@@ -39,7 +39,7 @@ walking.start("test", false, "walking");
 assert.equal(spoken.some(text => text.includes("안내를 시작합니다")), false);
 now = 2400;
 walking.accept({ session_id: "test", frame_id: 1,
-  event: { type: "walking_warning", level: "danger", voice_event_ids: [9],
-    voice_text: "왼쪽에 사람." } }, now);
-assert.ok(spoken.includes("왼쪽에 사람."));
+  event: { type: "walking_warning", level: "danger",
+    voice_text: "오른쪽으로 이동하세요." } }, now);
+assert.ok(spoken.includes("오른쪽으로 이동하세요."));
 console.log("guidance: pass");

@@ -60,7 +60,7 @@ def make_response(session_id, frame_id, captured_at_ms, frame, risk, signal, cro
                 "type": "walking_warning", "level": risk["level"],
                 "warning_text": risk["warning_text"], "roi": risk["roi"],
                 "camera_view": risk["camera_view"],
-                "voice_event_ids": risk.get("voice_event_ids", []),
+                "last_action": risk.get("last_action"),
                 "voice_text": risk.get("voice_text"),
             },
             "mask_png": encode_mask(class_map, label_ids),

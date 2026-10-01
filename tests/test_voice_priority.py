@@ -30,7 +30,7 @@ def test_priority_drops_lower_audio_during_crosswalk_exit():
                  (2.0, None, 1, "crosswalk_stop")]
     with patch("src.voice_priority.clip_duration", return_value=0.8):
         events = prioritize_voice_events(
-            [(1.2, "danger-left-person.mp3")],
+            [(1.2, "walking-move-left.mp3")],
             [(1.3, "red-changed.mp3"), (2.1, "green.mp3")],
             crosswalk,
         )
@@ -42,8 +42,8 @@ def test_red_traffic_preempts_walking_without_queue():
     """장애물 음성 도중 빨간불은 즉시 시작하고 하위 안내를 다시 쌓지 않는다."""
     with patch("src.voice_priority.clip_duration", return_value=1.0):
         events = prioritize_voice_events(
-            [(0.0, "danger-center-vehicle.mp3"), (0.3, "danger-left-person.mp3")],
+            [(0.0, "walking-straight.mp3"), (0.3, "walking-move-left.mp3")],
             [(0.2, "red.mp3")],
             [],
         )
-    assert events == [(0.0, "danger-center-vehicle.mp3"), (0.2, "red.mp3")]
+    assert events == [(0.0, "walking-straight.mp3"), (0.2, "red.mp3")]
