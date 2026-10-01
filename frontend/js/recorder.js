@@ -1,12 +1,12 @@
 /**
  * file_path: frontend/js/recorder.js
  *
- * 휴대폰 카메라와 통합 오버레이, 전역 안내 음성을 WebM으로 녹화한다.
+ * 사용자에게 표시하는 카메라 합성 화면과 전역 안내 음성을 WebM으로 녹화한다.
  */
 window.GRecorder = (() => {
   const video = document.getElementById("video");
   const overlay = document.getElementById("overlay");
-  const canvas = document.createElement("canvas");
+  const canvas = document.getElementById("camera-view");
   const ctx = canvas.getContext("2d");
   let recorder = null;
   let chunks = [];
@@ -16,6 +16,7 @@ window.GRecorder = (() => {
   let recordingError = null;
   let animationId = 0;
   let lastFrameAt = null;
+  let previewing = false;
   let mixContext = null;
   let preparedTrack = null;
 
@@ -96,10 +97,10 @@ window.GRecorder = (() => {
     });
   }
 
-  // 카메라와 현재 탐지 화면 합성
-  /** 화면 갱신마다 호출되더라도 설정된 녹화 FPS 주기로만 합성한다. */
+  // 사용자 표시 화면과 녹화 화면을 같은 캔버스에 합성
+  /** 화면과 저장 영상이 달라지지 않도록 설정된 녹화 FPS로 동일한 프레임을 그린다. */
   function drawFrame(now = performance.now()) {
-    if (!recorder || recorder.state === "inactive") return;
+    if (!previewing) return;
     animationId = requestAnimationFrame(drawFrame);
     const frameIntervalMs = 1000 / window.GConfig.get().recording.fps;
     if (lastFrameAt !== null) {
@@ -124,22 +125,43 @@ window.GRecorder = (() => {
     ctx.drawImage(overlay, 0, 0, overlay.width, overlay.height, 0, 0, width, height);
   }
 
+  // 사용자에게 보여 줄 통합 카메라 화면 시작
+  /** 카메라 원본 비율과 녹화 최대 크기로 표시 및 녹화에 공용인 캔버스를 준비한다. */
+  function startPreview() {
+    if (!video.videoWidth || !video.videoHeight) {
+      throw new Error("카메라 화면을 준비할 수 없습니다.");
+    }
+    const settings = window.GConfig.get().recording;
+    const scale = Math.min(1, settings.max_side / Math.max(video.videoWidth, video.videoHeight));
+    canvas.width = Math.max(2, Math.round(video.videoWidth * scale / 2) * 2);
+    canvas.height = Math.max(2, Math.round(video.videoHeight * scale / 2) * 2);
+    cancelAnimationFrame(animationId);
+    previewing = true;
+    lastFrameAt = null;
+    drawFrame();
+  }
+
+  // 통합 카메라 화면 종료
+  /** 카메라가 꺼질 때 합성 루프와 마지막 표시 프레임을 함께 정리한다. */
+  function stopPreview() {
+    previewing = false;
+    cancelAnimationFrame(animationId);
+    animationId = 0;
+    lastFrameAt = null;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+
   // 실시간 탐지 화면 녹화 시작
   /** 서버에서 받은 해상도와 FPS로 화면과 안내 음성 녹화를 시작한다. */
   function start() {
     if (!window.MediaRecorder || !canvas.captureStream) {
       throw new Error("이 브라우저는 화면 녹화를 지원하지 않습니다.");
     }
-    const displayWidth = overlay.clientWidth || video.videoWidth;
-    const displayHeight = overlay.clientHeight || video.videoHeight;
+    if (!previewing) throw new Error("카메라 표시 화면이 준비되지 않았습니다.");
     const settings = window.GConfig.get().recording;
-    const scale = Math.min(1, settings.max_side / Math.max(displayWidth, displayHeight));
-    canvas.width = Math.max(2, Math.round(displayWidth * scale / 2) * 2);
-    canvas.height = Math.max(2, Math.round(displayHeight * scale / 2) * 2);
 
     chunks = [];
     recordingError = null;
-    lastFrameAt = null;
     const stream = canvas.captureStream(settings.fps);
     const audioTrack = preparedTrack;
     if (audioTrack) stream.addTrack(audioTrack);
@@ -153,7 +175,6 @@ window.GRecorder = (() => {
       recordingError = event.error || new Error("오버레이 녹화 실패");
     };
     recorder.start(settings.chunk_interval_ms);
-    drawFrame();
   }
 
   // 녹화 종료 및 영상 생성
@@ -163,7 +184,6 @@ window.GRecorder = (() => {
     return new Promise((resolve, reject) => {
       const current = recorder;
       current.onstop = () => {
-        cancelAnimationFrame(animationId);
         const blob = new Blob(chunks, { type: current.mimeType || "video/webm" });
         recorder = null;
         chunks = [];
@@ -183,5 +203,6 @@ window.GRecorder = (() => {
     return recorder?.state === "recording";
   }
 
-  return { prepareAudio, cancelPreparedAudio, startRaw, stopRaw, start, stop, active };
+  return { prepareAudio, cancelPreparedAudio, startPreview, stopPreview,
+    startRaw, stopRaw, start, stop, active };
 })();

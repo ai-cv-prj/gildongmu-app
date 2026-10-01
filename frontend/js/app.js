@@ -104,6 +104,7 @@
       return;
     }
     if (GCamera.active()) {
+      GRecorder.stopPreview();
       GCamera.stop();
       GOverlay.clear();
       showStopProximity(null);
@@ -114,6 +115,7 @@
         const info = await GCamera.start();
         $("camera").style.aspectRatio = `${info.width} / ${info.height}`;
         GOverlay.size(info.width, info.height);
+        GRecorder.startPreview();
         $("placeholder").hidden = true;
         setStatus("카메라가 준비되었습니다. 테스트 시작을 누르세요.");
       } catch (error) { setStatus(error.message); }
@@ -227,6 +229,7 @@
       walkingGuide.stop();
       audioCoordinator.stop();
       GRecorder.cancelPreparedAudio();
+      GRecorder.stopPreview();
       GCamera.stop();
       GOverlay.clear();
       showStopProximity(null);
@@ -264,6 +267,7 @@
     } catch (error) { recordingError = error; }
     const rawVideo = await pendingRawVideo;
     GRecorder.cancelPreparedAudio();
+    GRecorder.stopPreview();
     GCamera.stop();
     GOverlay.clear();
     $("placeholder").hidden = false;
@@ -302,6 +306,7 @@
     testButton.addEventListener("click", () => running ? stopTest() : startTest());
     GCamera.setOnEnded(() => {
       stopTest();
+      GRecorder.stopPreview();
       GOverlay.clear();
       setStatus("카메라 연결이 종료되었습니다.");
       updateControls();
@@ -317,6 +322,7 @@
       request?.abort();
       if (sessionId) navigator.sendBeacon("/api/sessions/stop", new Blob(
         [JSON.stringify({ session_id: sessionId })], { type: "application/json" }));
+      GRecorder.stopPreview();
       GCamera.stop();
     });
     updateControls();

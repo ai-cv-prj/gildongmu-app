@@ -8,7 +8,7 @@ const fs = require("node:fs");
 const vm = require("node:vm");
 
 let now = 1000;
-const spoken = [], vibrations = [];
+const spoken = [];
 let onEnd = null, cancelCount = 0;
 const player = {
   speak(text, _validUntil, options) {
@@ -21,8 +21,7 @@ const player = {
 const settings = require("./settings");
 const context = { window: { GConfig: { get: () => settings } }, performance: { now: () => now }, navigator: {} };
 vm.runInNewContext(fs.readFileSync("frontend/js/audio_coordinator.js", "utf8"), context);
-const coordinator = context.window.GAudioCoordinator.create({ player, now: () => now,
-  vibrate: pattern => vibrations.push([...pattern]) });
+const coordinator = context.window.GAudioCoordinator.create({ player, now: () => now });
 coordinator.start();
 
 // 하위 신호 안내를 횡단보도 이탈이 즉시 중단하고 이탈 음성만 반복한다.
@@ -31,7 +30,6 @@ coordinator.acceptCrosswalk({ status: "outside_left", repeat: true,
   voice_text: "횡단보도 이탈! 오른쪽으로 이동하세요!" }, now);
 assert.equal(cancelCount, 2);
 assert.equal(spoken.at(-1), "횡단보도 이탈! 오른쪽으로 이동하세요!");
-assert.deepEqual(vibrations.at(-1), [220, 90, 220]);
 assert.equal(coordinator.request({ source: "walking", priority: 2,
   text: "가운데에 차량.", validUntil: 3000 }), false);
 onEnd();
@@ -54,28 +52,36 @@ assert.equal(spoken.at(-1), "횡단보도 이탈! 왼쪽으로 이동하세요!"
 coordinator.acceptCrosswalk({ status: "crossing", repeat: false }, now + 100);
 assert.equal(cancelCount, 4);
 
+// 장애물 안내 중 빨간불이 확정되면 즉시 중단하고 빨간불을 안내한다.
+coordinator.request({ source: "walking", priority: coordinator.PRIORITY.walking,
+  text: "가운데에 차량.", validUntil: 4000 });
+coordinator.request({ source: "traffic", priority: coordinator.PRIORITY.trafficRed,
+  text: "빨간불입니다.", validUntil: 4000 });
+assert.equal(spoken.at(-1), "빨간불입니다.");
+assert.equal(cancelCount, 5);
+
 // 진입 전 정렬 안내를 반복하고 발이 경계 안에 들어오면 즉시 중단한다.
 coordinator.acceptCrosswalk({ status: "align_right", repeat: true,
   voice_text: "오른쪽으로 이동하세요!" }, now + 150);
 assert.equal(spoken.at(-1), "오른쪽으로 이동하세요!");
 coordinator.acceptCrosswalk({ status: "crossing", repeat: false }, now + 160);
-assert.equal(cancelCount, 5);
+assert.equal(cancelCount, 7);
 
 // 방향 미확정 상태는 이탈 음성을 시작하지 않는다.
 coordinator.acceptCrosswalk({ status: "outside_unknown", repeat: true,
   voice_text: "횡단보도 이탈!" }, now + 180);
 assert.equal(spoken.at(-1), "오른쪽으로 이동하세요!");
 
-// 가장자리 진동은 같은 이벤트 번호에 한 번만 실행한다.
-const edge = { status: "edge", vibration: "edge", event_id: 8 };
+// 가장자리 상태에서는 음성을 시작하지 않는다.
+const edge = { status: "edge", event_id: 8 };
 coordinator.acceptCrosswalk(edge, now + 200);
 coordinator.acceptCrosswalk(edge, now + 300);
-assert.equal(vibrations.filter(pattern => pattern.length === 1).length, 1);
+assert.equal(spoken.at(-1), "오른쪽으로 이동하세요!");
 
 // 오래된 이탈 응답은 틱에서 반복을 중단한다.
 coordinator.acceptCrosswalk({ status: "outside_right", repeat: true,
   voice_text: "횡단보도 이탈! 왼쪽으로 이동하세요!" }, now + 300);
 now = 3000;
 coordinator.tick();
-assert.equal(cancelCount, 6);
+assert.equal(cancelCount, 8);
 console.log("audio coordinator: pass");

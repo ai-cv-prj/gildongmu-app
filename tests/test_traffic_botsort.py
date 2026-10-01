@@ -208,15 +208,14 @@ class BOTSORTTests(unittest.TestCase):
         self.assertEqual(len(result['crosswalks']), 2)
         self.assertEqual([s['track_id'] for s in result['detections']], [1, 2])
 
-    def test_overlay_displays_ids_for_unselected_and_candidate_signals(self):
+    def test_overlay_uses_same_candidate_label_as_realtime_ui(self):
         pipe = fake_pipeline([(NEAR, .8, 0), (FAR, .7, 0), (CROSSWALK, .9, 1)])
         with patch('src.traffic_association.estimate_vanishing_point', return_value=[1020, 280]):
             result = pipe.predict(FRAME)
         with patch('src.visualization.cv2.putText', wraps=cv2.putText) as draw:
             draw_traffic(FRAME, result)
         labels = [call.args[1] for call in draw.call_args_list]
-        self.assertTrue(any('UNSELECTED' in label and '#1' in label for label in labels))
-        self.assertTrue(any('CANDIDATE' in label and '#2' in label for label in labels))
+        self.assertEqual(labels.count('SIGNAL CANDIDATE'), 2)
 
     def test_reset_restarts_ids_for_new_video(self):
         pipe = fake_pipeline([(NEAR, .8, 0)])

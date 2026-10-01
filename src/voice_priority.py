@@ -9,6 +9,7 @@ from src.video_audio import SAMPLE_RATE, decode_clip
 
 
 TRAFFIC_CHANGE_CLIPS = {"red-changed.mp3", "green-changed.mp3"}
+RED_TRAFFIC_CLIPS = {"red.mp3", "red-changed.mp3"}
 
 
 # 음원 길이 계산
@@ -71,9 +72,10 @@ class CrosswalkVoice:
 # 세 안내 종류를 전역 우선순위로 병합
 def prioritize_voice_events(walking_events, traffic_events, crosswalk_events):
     """상위 음성이 재생 중인 시점의 하위 이벤트를 폐기해 단일 재생 시간축을 만든다."""
-    candidates = [(time_s, clip, 2, "walking") for time_s, clip in walking_events]
+    candidates = [(time_s, clip, 3, "walking") for time_s, clip in walking_events]
     candidates += [
-        (time_s, clip, 3 if clip in TRAFFIC_CHANGE_CLIPS else 4, "traffic")
+        (time_s, clip, 2 if clip in RED_TRAFFIC_CLIPS
+         else 4 if clip in TRAFFIC_CHANGE_CLIPS else 5, "traffic")
         for time_s, clip in traffic_events
     ]
     candidates += list(crosswalk_events)

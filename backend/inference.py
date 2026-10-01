@@ -8,7 +8,9 @@ file_path: backend/inference.py
 from time import perf_counter
 
 from backend.stop_proximity import StopProximity
-from src.crosswalk_safety import CrosswalkSafetyEngine, crosswalk_safety_config
+from src.crosswalk_safety import (
+    CrosswalkSafetyEngine, crosswalk_camera_stable, crosswalk_safety_config,
+)
 from src.obstacle import ObstacleDetector, validate_yolo_config
 from src.pipeline import load_config, resolve_path
 from src.risk import RiskEngine
@@ -79,8 +81,7 @@ class RealtimeInference:
             self.crosswalk_settings,
         )
         self.voice.observe(risk, width, captured_at_ms / 1000)
-        camera_stable = (camera_view.get("status", "clear") == "clear"
-                         and risk.get("camera_motion_stable", True))
+        camera_stable = crosswalk_camera_stable(risk)
         crosswalk = self.crosswalk.update(
             class_map, self.segmenter.label_ids, frame.shape, signal,
             captured_at_ms / 1000, camera_stable=camera_stable,

@@ -7,7 +7,9 @@ file_path: tests/test_crosswalk_safety.py
 import cv2
 import numpy as np
 
-from src.crosswalk_safety import CrosswalkSafetyEngine, crosswalk_safety_config
+from src.crosswalk_safety import (
+    CrosswalkSafetyEngine, crosswalk_camera_stable, crosswalk_safety_config,
+)
 from src.video_audio import decode_clip
 
 
@@ -38,6 +40,17 @@ def engine():
                                   "max_boundary_shift": .5})
 
 
+# 순간적인 카메라 움직임 실패 완화 확인
+def test_crosswalk_camera_stability_uses_debounced_view_status():
+    """원시 움직임 한 프레임이 실패해도 촬영 상태가 clear이면 판정을 계속한다."""
+    assert crosswalk_camera_stable({
+        "camera_motion_stable": False,
+        "camera_view": {"status": "clear"},
+    })
+    assert not crosswalk_camera_stable({"camera_view": {"status": "uncertain"}})
+    assert not crosswalk_camera_stable({"camera_view": {"status": "unavailable"}})
+
+
 # ROI 밖 횡단보도 무음 확인
 def test_crosswalk_outside_roi_never_starts_crossing():
     """핑크 마스크가 보여도 하단 ROI에 5% 미만이면 횡단을 시작하지 않는다."""
@@ -59,6 +72,34 @@ def test_crossing_requires_only_sustained_roi_mask_and_inside_foot():
     assert first["status"] == "approach"
     assert result["status"] == "crossing"
     assert result["crossing_active"]
+
+
+# 보라색 ROI 밖의 안정적인 횡단보도 경계 진입 확인
+def test_stable_near_geometry_can_confirm_entry_before_bottom_roi_fills():
+    """보라색 ROI까지 닿지 않아도 가까운 횡단보도 경계가 안정적이면 진입을 확정한다."""
+    item = engine()
+    near = mask(bottom=.85)
+    first = item.update(near, LABELS, SHAPE, SIGNAL, 0)
+    result = item.update(near, LABELS, SHAPE, SIGNAL, .3)
+    assert first["status"] == "search"
+    assert first["crosswalk_roi"]["crosswalk_fraction"] == 0
+    assert result["status"] == "crossing"
+    assert result["reasons"] == ["geometry_entry_confirmed"]
+
+
+# 진입 확인 중 짧은 가림 허용 확인
+def test_short_occlusion_does_not_restart_bottom_roi_entry_timer():
+    """보라색 ROI 확인 중 짧은 객체 가림이 생겨도 진입 확인 시간을 유지한다."""
+    item = engine()
+    item.update(mask(), LABELS, SHAPE, SIGNAL, 0)
+    hidden = np.full(SHAPE[:2], LABELS["non_walkable"], np.uint8)
+    vehicle = [{"class_name": "car", "xyxy": [10, 80, 90, 100], "observed": True}]
+    held = item.update(hidden, LABELS, SHAPE, SIGNAL, .1, detections=vehicle)
+    result = item.update(mask(), LABELS, SHAPE, SIGNAL, .2)
+    assert held["status"] == "search"
+    assert held["crosswalk_roi"]["occlusion_fraction"] >= .08
+    assert result["status"] == "crossing"
+    assert result["reasons"] == ["entry_confirmed"]
 
 
 # 횡단 진입 전 오른쪽 정렬 안내 확인
@@ -88,9 +129,9 @@ def test_pre_entry_right_side_guides_left():
     assert result["voice_clip"] == "crosswalk-align-left.mp3"
 
 
-# 진입 뒤 가장자리 진동 확인
-def test_crossing_entry_and_edge_vibration():
-    """가까운 횡단보도 안에 진입한 뒤 가장자리에서는 음성 없이 진동만 요청한다."""
+# 진입 뒤 가장자리 무음 확인
+def test_crossing_entry_and_edge_is_silent():
+    """가까운 횡단보도 안에 진입한 뒤 가장자리에서는 음성과 진동을 요청하지 않는다."""
     item = engine()
     item.update(mask(), LABELS, SHAPE, SIGNAL, 0)
     result = item.update(mask(), LABELS, SHAPE, SIGNAL, .2)
@@ -98,8 +139,43 @@ def test_crossing_entry_and_edge_vibration():
     item.update(mask(left=.43, right=.90), LABELS, SHAPE, SIGNAL, .3)
     result = item.update(mask(left=.43, right=.90), LABELS, SHAPE, SIGNAL, .41)
     assert result["status"] == "edge"
-    assert result["vibration"] == "edge"
+    assert "vibration" not in result
     assert result["voice_text"] is None
+
+
+# 횡단 중 안정된 새 경계 승격 확인
+def test_stable_boundary_jump_is_held_then_promoted():
+    """크게 이동한 경계가 안정적으로 유지되면 잠시 보류한 뒤 정상 경계로 승격한다."""
+    item = CrosswalkSafetyEngine({"entry_confirm_s": .2, "geometry_entry_confirm_s": .2,
+                                  "max_boundary_shift": .1, "boundary_hold_s": .5,
+                                  "boundary_candidate_confirm_s": .3,
+                                  "boundary_smooth_s": .01})
+    item.update(mask(), LABELS, SHAPE, SIGNAL, 0)
+    item.update(mask(), LABELS, SHAPE, SIGNAL, .2)
+    held = item.update(mask(left=.58, right=.95), LABELS, SHAPE, SIGNAL, .3)
+    promoted = item.update(mask(left=.58, right=.95), LABELS, SHAPE, SIGNAL, .6)
+    assert held["status"] == "crossing"
+    assert held["geometry"]["held"] is True
+    assert held["voice_text"] is None
+    assert promoted["geometry"]["promoted"] is True
+    assert promoted["status"] != "uncertain"
+
+
+# 계속 흔들리는 경계의 판단 보류 확인
+def test_unstable_boundary_candidates_become_uncertain_after_hold():
+    """서로 다른 새 경계가 반복되면 정상 경계로 승격하지 않고 판단을 보류한다."""
+    item = CrosswalkSafetyEngine({"entry_confirm_s": .2, "geometry_entry_confirm_s": .2,
+                                  "max_boundary_shift": .1, "boundary_hold_s": .5,
+                                  "boundary_candidate_confirm_s": .3,
+                                  "boundary_smooth_s": .01})
+    item.update(mask(), LABELS, SHAPE, SIGNAL, 0)
+    item.update(mask(), LABELS, SHAPE, SIGNAL, .2)
+    item.update(mask(left=.58, right=.95), LABELS, SHAPE, SIGNAL, .3)
+    item.update(mask(left=.05, right=.42), LABELS, SHAPE, SIGNAL, .4)
+    item.update(mask(left=.58, right=.95), LABELS, SHAPE, SIGNAL, .5)
+    result = item.update(mask(left=.05, right=.42), LABELS, SHAPE, SIGNAL, .8)
+    assert result["status"] == "uncertain"
+    assert result["reasons"] == ["boundary_jump"]
 
 
 # 왼쪽 이탈과 오른쪽 복귀 안내 확인
@@ -113,6 +189,7 @@ def test_left_exit_repeats_right_guidance_until_return_confirmed():
     assert result["status"] == "outside_left"
     assert result["direction"] == "right"
     assert result["repeat"]
+    assert "vibration" not in result
     assert result["voice_text"] == "횡단보도 이탈! 오른쪽으로 이동하세요!"
     result = item.update(mask(), LABELS, SHAPE, SIGNAL, .6)
     assert result["status"] == "outside_left"

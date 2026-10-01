@@ -62,7 +62,7 @@ class FakeModels:
         crosswalk = {
             "enabled": True, "status": "crossing", "crossing_active": True,
             "direction": None, "voice_text": None, "voice_clip": None,
-            "repeat": False, "vibration": None, "event_id": 4,
+            "repeat": False, "event_id": 4,
             "reasons": ["inside_crosswalk"], "geometry": None,
         }
         return risk, signal, crosswalk, np.ones(frame.shape[:2], dtype=np.uint8), {

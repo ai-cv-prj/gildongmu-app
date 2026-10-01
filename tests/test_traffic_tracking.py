@@ -7,7 +7,7 @@ import numpy as np
 
 from src.traffic_association import FrameContext, TemporalSelector, estimate_vanishing_point
 from src.traffic_motion import estimate_camera_motion, motion_gray, transform_box
-from src.visualization import draw_traffic
+from src.visualization import TRAFFIC_COLORS, draw_traffic
 from test_traffic import fake_pipeline, FRAME, NEAR, FAR, CROSSWALK
 
 
@@ -137,20 +137,18 @@ class TrackingTests(unittest.TestCase):
         self.assertEqual(result['crosswalks'][0]['crosswalk_status'], 'eligible')
         self.assertEqual(result['crosswalk_diagnostics']['connection_confidence'], .3)
 
-    def test_overlay_colors_and_detection_vs_selection_labels(self):
+    def test_overlay_uses_realtime_candidate_design(self):
         pipe = self.start_challenge()
         with patch('src.traffic_association.estimate_vanishing_point', return_value=[1020, 280]):
             result = pipe.predict(FRAME)
         with patch('src.visualization.cv2.putText', wraps=cv2.putText) as text:
             rendered = draw_traffic(FRAME, result)
         labels = [call.args[1] for call in text.call_args_list]
-        self.assertTrue(any('UNSELECTED det' in label for label in labels))
-        self.assertTrue(any('CANDIDATE det' in label for label in labels))
-        self.assertTrue(any('COLOR HELD' in label for label in labels))
+        self.assertEqual(labels.count('SIGNAL CANDIDATE'), 2)
         self.assertFalse(any('CROSSWALK' in label or 'LINK:' in label for label in labels))
         np.testing.assert_array_equal(rendered[200:], FRAME[200:])
-        self.assertEqual(rendered[100, 600].tolist(), [255, 140, 79])
-        self.assertEqual(rendered[100, 1000].tolist(), [32, 176, 255])
+        self.assertEqual(rendered[100, 600].tolist(), list(TRAFFIC_COLORS["candidate"]))
+        self.assertEqual(rendered[100, 1000].tolist(), list(TRAFFIC_COLORS["candidate"]))
         self.assertTrue(np.all(FRAME == 100))
 
     def test_same_provisional_target_requires_three_confirmations_and_keeps_id(self):

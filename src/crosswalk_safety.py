@@ -26,6 +26,8 @@ DEFAULT_CROSSWALK_SAFETY = {
     "roi_crosswalk_threshold": 0.05,
     "roi_occlusion_threshold": 0.08,
     "entry_confirm_s": 0.50,
+    "geometry_entry_confirm_s": 0.30,
+    "entry_occlusion_hold_s": 0.50,
     "edge_confirm_s": 0.20,
     "exit_confirm_s": 0.25,
     "return_confirm_s": 0.40,
@@ -36,6 +38,8 @@ DEFAULT_CROSSWALK_SAFETY = {
     "edge_margin": 0.08,
     "exit_margin": 0.03,
     "max_boundary_shift": 0.12,
+    "boundary_hold_s": 0.50,
+    "boundary_candidate_confirm_s": 0.30,
     "boundary_smooth_s": 0.30,
     "min_mask_area": 0.006,
     "min_row_width": 0.10,
@@ -46,6 +50,13 @@ DEFAULT_CROSSWALK_SAFETY = {
     "non_green_obstacle_crosswalk_threshold": 0.20,
     "non_green_obstacle_contact_half_height": 0.02,
 }
+
+
+# 횡단보도 판정용 촬영 안정 상태 확인
+def crosswalk_camera_stable(prediction):
+    """순간 움직임값 대신 시간 안정화된 촬영 상태가 clear인지 확인한다."""
+    camera_view = (prediction or {}).get("camera_view") or {}
+    return camera_view.get("status", "clear") == "clear"
 
 
 # 횡단보도 안전 설정 검증
@@ -74,7 +85,8 @@ def crosswalk_safety_config(value=None):
     time_keys = (
         "entry_confirm_s", "edge_confirm_s", "exit_confirm_s", "return_confirm_s",
         "finish_confirm_s", "uncertainty_hold_s", "max_gap_s", "boundary_smooth_s",
-        "outside_finish_confirm_s",
+        "outside_finish_confirm_s", "geometry_entry_confirm_s", "entry_occlusion_hold_s",
+        "boundary_hold_s", "boundary_candidate_confirm_s",
     )
     for key in time_keys:
         item = cfg[key]
@@ -232,7 +244,15 @@ class CrosswalkSafetyEngine:
         self.last_timestamp = None
         self.left_x = None
         self.right_x = None
+        self.last_boundary_at = None
+        self.boundary_candidate_since = None
+        self.boundary_candidate_left = None
+        self.boundary_candidate_right = None
         self.roi_crosswalk_since = None
+        self.roi_crosswalk_last_seen = None
+        self.entry_geometry_since = None
+        self.entry_left_x = None
+        self.entry_right_x = None
         self.event_id = 0
 
     # 연속 시간 조건 확인
@@ -250,6 +270,13 @@ class CrosswalkSafetyEngine:
         self.pending_kind = None
         self.pending_since = None
 
+    # 크게 이동한 새 경계 후보 제거
+    def _clear_boundary_candidate(self):
+        """확정되거나 불연속적인 횡단보도 경계 후보를 초기화한다."""
+        self.boundary_candidate_since = None
+        self.boundary_candidate_left = None
+        self.boundary_candidate_right = None
+
     # 상태 전환과 새 이벤트 번호 기록
     def _transition(self, phase):
         """상태가 실제로 바뀔 때만 이벤트 번호를 증가시킨다."""
@@ -266,7 +293,7 @@ class CrosswalkSafetyEngine:
         result = {
             "enabled": self.config["enabled"], "status": "disabled", "crossing_active": False,
             "direction": None, "voice_text": None, "voice_clip": None, "repeat": False,
-            "vibration": None, "event_id": self.event_id, "reasons": [], "geometry": None,
+            "event_id": self.event_id, "reasons": [], "geometry": None,
             "stale_after_ms": round(self.config["uncertainty_hold_s"] * 1000),
         }
         if not self.config["enabled"]:
@@ -287,21 +314,60 @@ class CrosswalkSafetyEngine:
             result.update(status="uncertain", crossing_active=self.crossing_active,
                           reasons=["camera_unstable"])
             self._clear_pending()
+            self._clear_boundary_candidate()
             return result
         if geometry is not None:
+            promoted_boundary = False
             if self.left_x is not None and self.right_x is not None and self.crossing_active:
                 shift = max(abs(geometry["left_x"] - self.left_x),
                             abs(geometry["right_x"] - self.right_x))
                 if shift > self.config["max_boundary_shift"]:
-                    result.update(status="uncertain", crossing_active=True,
-                                  reasons=["boundary_jump"], geometry=geometry)
-                    self._clear_pending()
-                    return result
-                elapsed = max(0.0, timestamp - previous_timestamp) if previous_timestamp is not None else 0.0
-                alpha = min(1.0, elapsed / self.config["boundary_smooth_s"])
-                geometry["left_x"] = self.left_x + alpha * (geometry["left_x"] - self.left_x)
-                geometry["right_x"] = self.right_x + alpha * (geometry["right_x"] - self.right_x)
+                    candidate_stable = bool(
+                        self.boundary_candidate_left is None
+                        or self.boundary_candidate_right is None
+                        or max(abs(geometry["left_x"] - self.boundary_candidate_left),
+                               abs(geometry["right_x"] - self.boundary_candidate_right))
+                        <= self.config["max_boundary_shift"]
+                    )
+                    if self.boundary_candidate_since is None or not candidate_stable:
+                        self.boundary_candidate_since = timestamp
+                    self.boundary_candidate_left = geometry["left_x"]
+                    self.boundary_candidate_right = geometry["right_x"]
+                    candidate_confirmed = bool(
+                        timestamp - self.boundary_candidate_since + 1e-9
+                        >= self.config["boundary_candidate_confirm_s"]
+                    )
+                    boundary_age = (timestamp - self.last_boundary_at
+                                    if self.last_boundary_at is not None else math.inf)
+                    if candidate_confirmed:
+                        self.left_x = geometry["left_x"]
+                        self.right_x = geometry["right_x"]
+                        self.last_boundary_at = timestamp
+                        promoted_boundary = True
+                        geometry["promoted"] = True
+                        self._clear_boundary_candidate()
+                    elif boundary_age <= self.config["boundary_hold_s"]:
+                        geometry = {**geometry, "left_x": self.left_x,
+                                    "right_x": self.right_x, "held": True,
+                                    "observed_left_x": geometry["left_x"],
+                                    "observed_right_x": geometry["right_x"]}
+                    else:
+                        result.update(status="uncertain", crossing_active=True,
+                                      reasons=["boundary_jump"], geometry=geometry)
+                        self._clear_pending()
+                        return result
+                else:
+                    self._clear_boundary_candidate()
+                if not promoted_boundary:
+                    elapsed = max(0.0, timestamp - previous_timestamp) if previous_timestamp is not None else 0.0
+                    alpha = min(1.0, elapsed / self.config["boundary_smooth_s"])
+                    geometry["left_x"] = self.left_x + alpha * (geometry["left_x"] - self.left_x)
+                    geometry["right_x"] = self.right_x + alpha * (geometry["right_x"] - self.right_x)
             self.left_x, self.right_x = geometry["left_x"], geometry["right_x"]
+            if not geometry.get("held"):
+                self.last_boundary_at = timestamp
+        else:
+            self._clear_boundary_candidate()
         result["geometry"] = geometry
 
         roi_fraction = roi["crosswalk_fraction"]
@@ -310,8 +376,18 @@ class CrosswalkSafetyEngine:
         if roi_visible:
             if self.roi_crosswalk_since is None:
                 self.roi_crosswalk_since = timestamp
+            self.roi_crosswalk_last_seen = timestamp
         else:
-            self.roi_crosswalk_since = None
+            occlusion_held = bool(
+                roi["occlusion_fraction"] >= self.config["roi_occlusion_threshold"]
+                and self.roi_crosswalk_since is not None
+                and self.roi_crosswalk_last_seen is not None
+                and timestamp - self.roi_crosswalk_last_seen
+                <= self.config["entry_occlusion_hold_s"]
+            )
+            if not occlusion_held:
+                self.roi_crosswalk_since = None
+                self.roi_crosswalk_last_seen = None
         roi_confirmed = bool(self.roi_crosswalk_since is not None
                              and timestamp - self.roi_crosswalk_since + 1e-9
                              >= self.config["entry_confirm_s"])
@@ -320,12 +396,35 @@ class CrosswalkSafetyEngine:
         if not self.crossing_active:
             foot_x = self.config["foot_x"]
             inside = bool(geometry and geometry["left_x"] <= foot_x <= geometry["right_x"])
-            if roi_confirmed and inside:
+            geometry_candidate = bool(geometry and geometry["near"] and inside)
+            if geometry_candidate:
+                stable = bool(
+                    self.entry_left_x is None or self.entry_right_x is None
+                    or max(abs(geometry["left_x"] - self.entry_left_x),
+                           abs(geometry["right_x"] - self.entry_right_x))
+                    <= self.config["max_boundary_shift"]
+                )
+                if self.entry_geometry_since is None or not stable:
+                    self.entry_geometry_since = timestamp
+                self.entry_left_x = geometry["left_x"]
+                self.entry_right_x = geometry["right_x"]
+            else:
+                self.entry_geometry_since = None
+                self.entry_left_x = None
+                self.entry_right_x = None
+            geometry_confirmed = bool(
+                self.entry_geometry_since is not None
+                and timestamp - self.entry_geometry_since + 1e-9
+                >= self.config["geometry_entry_confirm_s"]
+            )
+            if (roi_confirmed or geometry_confirmed) and inside:
                 self.crossing_active = True
                 self._transition("crossing")
                 self._clear_pending()
                 result.update(status="crossing", crossing_active=True,
-                              event_id=self.event_id, reasons=["entry_confirmed"])
+                              event_id=self.event_id,
+                              reasons=["entry_confirmed" if roi_confirmed
+                                       else "geometry_entry_confirmed"])
                 return result
             if roi_visible and geometry is not None and not inside:
                 move = "right" if foot_x < geometry["left_x"] else "left"
@@ -372,7 +471,7 @@ class CrosswalkSafetyEngine:
                 korean = "오른쪽" if move == "right" else "왼쪽" if move == "left" else None
                 text = (f"횡단보도 이탈! {korean}으로 이동하세요!"
                         if korean else "횡단보도 이탈!")
-                result.update(direction=move, repeat=True, vibration="danger",
+                result.update(direction=move, repeat=True,
                               voice_text=text,
                               voice_clip=f"crosswalk-exit-{move}.mp3")
             return result
@@ -409,7 +508,7 @@ class CrosswalkSafetyEngine:
             if self.phase in ("outside_left", "outside_right"):
                 move = "right" if self.phase == "outside_left" else "left"
                 korean = "오른쪽" if move == "right" else "왼쪽"
-                result.update(direction=move, repeat=True, vibration="danger",
+                result.update(direction=move, repeat=True,
                               voice_text=f"횡단보도 이탈! {korean}으로 이동하세요!",
                               voice_clip=f"crosswalk-exit-{move}.mp3")
             return result
@@ -422,7 +521,7 @@ class CrosswalkSafetyEngine:
                 result.update(status=self.phase, crossing_active=True, direction=move,
                               voice_text=f"횡단보도 이탈! {korean}으로 이동하세요!",
                               voice_clip=f"crosswalk-exit-{move}.mp3", repeat=True,
-                              vibration="danger", event_id=self.event_id,
+                              event_id=self.event_id,
                               reasons=["return_confirming"])
                 return result
             self._transition("crossing")
@@ -433,9 +532,8 @@ class CrosswalkSafetyEngine:
         if edge_direction is not None:
             edge_kind = f"edge_{edge_direction}"
             if self.phase == "edge" or self._confirmed(edge_kind, timestamp, self.config["edge_confirm_s"]):
-                changed = self._transition("edge")
+                self._transition("edge")
                 self._clear_pending()
-                result["vibration"] = "edge" if changed else None
             result.update(status=self.phase, crossing_active=True, direction=edge_direction,
                           event_id=self.event_id, reasons=["lateral_edge_near"])
             return result

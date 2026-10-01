@@ -37,13 +37,13 @@ def test_priority_drops_lower_audio_during_crosswalk_exit():
     assert events == [(1.0, "crosswalk-exit-right.mp3"), (2.0, None), (2.1, "green.mp3")]
 
 
-# 장애물과 신호 우선순위 확인
-def test_walking_preempts_traffic_without_queue():
-    """신호 음성 도중 장애물 위험은 즉시 시작하고 그 뒤 신호를 다시 쌓지 않는다."""
+# 장애물과 빨간불 우선순위 확인
+def test_red_traffic_preempts_walking_without_queue():
+    """장애물 음성 도중 빨간불은 즉시 시작하고 하위 안내를 다시 쌓지 않는다."""
     with patch("src.voice_priority.clip_duration", return_value=1.0):
         events = prioritize_voice_events(
-            [(0.2, "danger-center-vehicle.mp3")],
-            [(0.0, "red.mp3"), (0.3, "green-changed.mp3")],
+            [(0.0, "danger-center-vehicle.mp3"), (0.3, "danger-left-person.mp3")],
+            [(0.2, "red.mp3")],
             [],
         )
-    assert events == [(0.0, "red.mp3"), (0.2, "danger-center-vehicle.mp3")]
+    assert events == [(0.0, "danger-center-vehicle.mp3"), (0.2, "red.mp3")]
