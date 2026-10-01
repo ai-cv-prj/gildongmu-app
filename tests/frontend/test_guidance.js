@@ -13,7 +13,7 @@ vm.runInNewContext(fs.readFileSync("frontend/js/guidance.js", "utf8"), context);
 const spoken = [];
 let now = 0;
 const coordinator = {
-  PRIORITY: { walking: 2, trafficChange: 3, traffic: 4 },
+  PRIORITY: { trafficRed: 2, walking: 3, trafficChange: 4, traffic: 5 },
   request({ text }) {
     spoken.push(text);
     return true;

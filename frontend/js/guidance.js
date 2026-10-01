@@ -22,9 +22,11 @@
       const message = mock && mode === "traffic" ? `모의 신호. ${text}` : text;
       update(message);
       const changed = mode === "traffic" && text.includes("바뀌었습니다");
-      coordinator.request({ source: mode, priority: changed
-        ? coordinator.PRIORITY.trafficChange
-        : coordinator.PRIORITY[mode], text: message, validUntil });
+      const red = mode === "traffic" && text.startsWith("빨간불");
+      coordinator.request({ source: mode, priority: red
+        ? coordinator.PRIORITY.trafficRed
+        : changed ? coordinator.PRIORITY.trafficChange
+          : coordinator.PRIORITY[mode], text: message, validUntil });
     }
     // 새 위험 장면을 받을 수 있도록 이전 장면과 남은 위험 음성을 정리한다.
     /** 마지막 위험 관측이 오래되면 지난 위험 음성을 취소한다. */

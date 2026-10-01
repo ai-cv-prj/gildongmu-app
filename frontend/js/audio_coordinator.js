@@ -5,7 +5,8 @@
  * 지난 장면의 음성은 대기열에 쌓지 않고 유효한 현재 안내만 재생한다.
  */
 (() => {
-  const PRIORITY = Object.freeze({ crosswalk: 1, walking: 2, trafficChange: 3, traffic: 4 });
+  const PRIORITY = Object.freeze({ crosswalk: 1, trafficRed: 2, walking: 3,
+    trafficChange: 4, traffic: 5 });
 
   // 전체 안내에서 하나뿐인 음성 재생 관리자 생성
   /** 단일 플레이어의 취소와 반복을 안내 우선순위에 맞춰 제어한다. */
