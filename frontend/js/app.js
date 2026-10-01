@@ -22,6 +22,36 @@
   /** 화면의 단일 상태 문장을 바꾼다. */
   function setStatus(message) { status.textContent = message; }
 
+  // 세션 폴더에 영상 누락 사유를 남기고 화면에도 같은 오류를 표시한다.
+  async function reportVideoFailure(id, kind, state, error) {
+    console.error(`${kind} 영상 저장 실패:`, error);
+    try {
+      await GApi.recordingEvent(id, kind, state, String(error.message || error).slice(0, 500));
+    } catch (logError) {
+      console.error(`${kind} 영상 실패 기록 전송 실패:`, logError);
+    }
+  }
+
+  /** 빈 녹화물과 전송 실패를 구분해 기록한다. */
+  async function saveVideo(id, kind, blob, upload, recordingError = null) {
+    if (recordingError) {
+      await reportVideoFailure(id, kind, "failed", recordingError);
+      return recordingError;
+    }
+    if (!blob || blob.size === 0) {
+      const error = new Error("녹화 파일이 비어 있습니다.");
+      await reportVideoFailure(id, kind, "empty", error);
+      return error;
+    }
+    try {
+      await upload(id, blob);
+      return null;
+    } catch (error) {
+      await reportVideoFailure(id, kind, "failed", error);
+      return error;
+    }
+  }
+
   // 개발 중 근접 추정 결과를 음성이나 단계 전환 없이 표시한다.
   function showStopProximity(event) {
     const state = event?.status || "not_detected";
@@ -147,15 +177,17 @@
       walkingGuide.start("pending", false, "walking");
       const session = await GApi.start(deviceName(), $("note").value.trim());
       if (!running || version !== generation) {
-        let error = null;
+        let rawVideo = null, recordingError = null;
         try {
-          const rawVideo = await pendingRawVideo;
-          if (rawVideo) await GApi.camera(session.session_id, rawVideo);
-          else error = new Error("원본 카메라 녹화 파일이 없습니다.");
-        } catch (cause) { error = cause; }
-        await GApi.stop(session.session_id).catch((cause) => { error = cause; });
+          rawVideo = await pendingRawVideo;
+        } catch (error) { recordingError = error; }
+        const error = await saveVideo(session.session_id, "camera", rawVideo,
+          GApi.camera, recordingError);
+        let stopError = null;
+        await GApi.stop(session.session_id).catch((cause) => { stopError = cause; });
         pendingRawVideo = null;
-        setStatus(error ? `원본 영상 저장 실패: ${error.message}` : "원본 카메라 영상 저장 완료.");
+        setStatus(stopError ? `세션 종료 오류: ${stopError.message}`
+          : error ? `원본 영상 저장 실패: ${error.message}` : "원본 카메라 영상 저장 완료.");
         return;
       }
       sessionId = session.session_id;
@@ -166,10 +198,17 @@
       nextFrame(version);
     } catch (error) {
       setStatus(`테스트 시작 실패: ${error.message}`);
-      await GRecorder.stop().catch(() => {});
-      await GRecorder.stopRaw().catch(() => {});
+      let video = null, rawVideo = null, overlayError = null, rawError = null;
+      try { video = await GRecorder.stop(); } catch (cause) { overlayError = cause; }
+      try { rawVideo = await GRecorder.stopRaw(); } catch (cause) { rawError = cause; }
       pendingRawVideo = null;
-      if (sessionId) await GApi.stop(sessionId).catch(() => {});
+      if (sessionId) {
+        const id = sessionId;
+        await saveVideo(id, "camera", rawVideo, GApi.camera, rawError);
+        if ($("record").checked) await saveVideo(id, "overlay", video,
+          GApi.recording, overlayError || error);
+        await GApi.stop(id).catch((cause) => console.error("세션 종료 실패:", cause));
+      }
       sessionId = null;
       running = false;
       trafficGuide.stop();
@@ -220,13 +259,10 @@
       setStatus("테스트 시작을 취소했습니다.");
       return;
     }
-    try {
-      if (rawVideo) await GApi.camera(id, rawVideo);
-      else rawRecordingError ||= new Error("원본 카메라 녹화 파일이 없습니다.");
-    } catch (error) { rawRecordingError = error; }
-    try {
-      if (video) await GApi.recording(id, video);
-    } catch (error) { recordingError = error; }
+    rawRecordingError = await saveVideo(id, "camera", rawVideo,
+      GApi.camera, rawRecordingError);
+    if ($("record").checked) recordingError = await saveVideo(id, "overlay", video,
+      GApi.recording, recordingError);
     try {
       const summary = await GApi.stop(id);
       const errors = [rawRecordingError && `원본 영상: ${rawRecordingError.message}`,

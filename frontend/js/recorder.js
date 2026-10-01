@@ -16,6 +16,7 @@ window.GRecorder = (() => {
   let rawRecorder = null;
   let rawChunks = [];
   let rawError = null;
+  let recordingError = null;
   let animationId = 0;
   let lastFrameAt = null;
   let mixContext = null;
@@ -150,6 +151,7 @@ window.GRecorder = (() => {
     canvas.height = Math.max(2, Math.round(displayHeight * scale / 2) * 2);
 
     chunks = [];
+    recordingError = null;
     lastFrameAt = null;
     const stream = canvas.captureStream(RECORDING_FPS);
     const audioTrack = preparedTrack;
@@ -160,6 +162,9 @@ window.GRecorder = (() => {
       videoBitsPerSecond: 2500000,
     });
     recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
+    recorder.onerror = (event) => {
+      recordingError = event.error || new Error("오버레이 녹화 실패");
+    };
     recorder.start(1000);
     drawFrame();
   }
@@ -167,8 +172,8 @@ window.GRecorder = (() => {
   // 녹화 종료 및 영상 생성
   /** 녹화를 끝내고 서버로 보낼 WebM Blob을 반환한다. */
   function stop() {
-    if (!recorder || recorder.state === "inactive") return Promise.resolve(null);
-    return new Promise((resolve) => {
+    if (!recorder) return Promise.resolve(null);
+    return new Promise((resolve, reject) => {
       const current = recorder;
       current.onstop = () => {
         cancelAnimationFrame(animationId);
@@ -176,9 +181,12 @@ window.GRecorder = (() => {
         recorder = null;
         chunks = [];
         cancelPreparedAudio();
-        resolve(blob.size ? blob : null);
+        if (recordingError) reject(recordingError);
+        else resolve(blob.size ? blob : null);
+        recordingError = null;
       };
-      current.stop();
+      if (current.state === "inactive") current.onstop();
+      else current.stop();
     });
   }
 

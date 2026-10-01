@@ -133,3 +133,17 @@ class SessionManager:
             if self.session is None or self.session["id"] != session_id:
                 raise SessionError("진행 중인 세션이 없습니다.")
             return self.session["folder"] / "camera_overlay.mp4"
+
+    def record_video_event(self, session_id, kind, status, detail="", source="server"):
+        """녹화·업로드 결과를 세션별 로그에 즉시 남긴다."""
+        with self.lock:
+            if self.session is None or self.session["id"] != session_id:
+                raise SessionError("진행 중인 세션이 없습니다.")
+            event = {
+                "at": datetime.now(timezone.utc).isoformat(),
+                "kind": kind, "status": status, "source": source, "detail": detail,
+            }
+            with (self.session["folder"] / "recording_events.jsonl").open(
+                "a", encoding="utf-8"
+            ) as file:
+                file.write(json.dumps(event, ensure_ascii=False) + "\n")

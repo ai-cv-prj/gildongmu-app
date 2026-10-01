@@ -6,6 +6,7 @@ file_path: backend/app.py
 
 from pathlib import Path
 import subprocess
+from typing import Literal
 
 import cv2
 import numpy as np
@@ -35,6 +36,14 @@ class StopRequest(BaseModel):
     """종료할 세션 번호를 받는다."""
 
     session_id: str
+
+
+class RecordingEventRequest(BaseModel):
+    """브라우저에서 감지한 녹화·업로드 실패를 받는다."""
+
+    kind: Literal["camera", "overlay"]
+    status: Literal["empty", "failed"]
+    detail: str = Field(max_length=500)
 
 
 # FastAPI 앱과 테스트용 세션 저장소 생성
@@ -88,7 +97,7 @@ def create_app(manager=None):
             raise HTTPException(409, str(error)) from error
 
     # 브라우저 녹화물을 MP4로 변환해 저장
-    def save_video(video, path, include_audio):
+    def save_video(session_id, kind, video, path, include_audio):
         """용량을 확인하고 임시 업로드를 영상별 MP4로 변환한다."""
         source = path.with_suffix(".upload.webm")
         partial = path.with_suffix(".partial.mp4")
@@ -111,12 +120,36 @@ def create_app(manager=None):
                         "-movflags", "+faststart", str(partial)]
             subprocess.run(command, check=True, capture_output=True)
             partial.replace(path)
-        except subprocess.CalledProcessError as error:
-            raise HTTPException(422, "녹화 영상을 MP4로 변환할 수 없습니다.") from error
+        except HTTPException as error:
+            status = "empty" if total == 0 else "failed"
+            sessions.record_video_event(session_id, kind, status, str(error.detail))
+            raise
+        except (subprocess.CalledProcessError, OSError) as error:
+            if isinstance(error, subprocess.CalledProcessError):
+                failure = HTTPException(422, "녹화 영상을 MP4로 변환할 수 없습니다.")
+                cause = (error.stderr or b"").decode("utf-8", errors="replace").strip()
+            else:
+                failure = HTTPException(500, "녹화 파일을 저장할 수 없습니다.")
+                cause = str(error)
+            detail = f"{failure.detail} {cause[-500:]}".strip()
+            sessions.record_video_event(session_id, kind, "failed", detail)
+            raise failure from error
         finally:
             source.unlink(missing_ok=True)
             partial.unlink(missing_ok=True)
+        sessions.record_video_event(session_id, kind, "saved", f"{path.stat().st_size} bytes")
         return {"saved": True, "bytes": path.stat().st_size}
+
+    @app.post("/api/sessions/{session_id}/recording-events")
+    def recording_event(session_id: str, event: RecordingEventRequest):
+        """브라우저에서 발생한 빈 녹화물과 전송 실패를 기록한다."""
+        try:
+            sessions.record_video_event(
+                session_id, event.kind, event.status, event.detail, source="browser"
+            )
+        except SessionError as error:
+            raise HTTPException(409, str(error)) from error
+        return {"recorded": True}
 
     # 오버레이와 안내 음성이 포함된 선택형 영상 업로드
     @app.post("/api/sessions/{session_id}/recording")
@@ -126,7 +159,7 @@ def create_app(manager=None):
             path = sessions.recording_path(session_id)
         except SessionError as error:
             raise HTTPException(409, str(error)) from error
-        return save_video(video, path, include_audio=True)
+        return save_video(session_id, "overlay", video, path, include_audio=True)
 
     # 오버레이와 현장 소리가 없는 원본 카메라 영상 업로드
     @app.post("/api/sessions/{session_id}/camera")
@@ -136,7 +169,7 @@ def create_app(manager=None):
             path = sessions.camera_path(session_id)
         except SessionError as error:
             raise HTTPException(409, str(error)) from error
-        return save_video(video, path, include_audio=False)
+        return save_video(session_id, "camera", video, path, include_audio=False)
 
     # 테스트 종료
     @app.post("/api/sessions/stop")
