@@ -25,7 +25,10 @@ from src.risk_log import RiskLog
 from src.walking_voice import WalkingVoice, suppress_non_green_crosswalk_voice
 from src.traffic_voice import TrafficVoice
 from src.video_audio import render_voice_track, mux_voice
-from src.crosswalk_safety import CrosswalkSafetyEngine, crosswalk_safety_config as normalize_crosswalk
+from src.crosswalk_safety import (
+    CrosswalkSafetyEngine, crosswalk_camera_stable,
+    crosswalk_safety_config as normalize_crosswalk,
+)
 from src.crosswalk_visualization import draw_crosswalk_safety
 from src.voice_priority import CrosswalkVoice, prioritize_voice_events
 
@@ -236,9 +239,7 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
                 signal_voice.observe(traffic_result, processed_frames + 1, processed_frames / fps)
             crosswalk_result = None
             if crosswalk_engine is not None:
-                camera_view = (risk_result or {}).get("camera_view") or {}
-                camera_stable = (camera_view.get("status", "clear") == "clear"
-                                 and (risk_result or {}).get("camera_motion_stable", True))
+                camera_stable = crosswalk_camera_stable(risk_result)
                 crosswalk_result = crosswalk_engine.update(
                     class_map, segmenter.label_ids, frame.shape, traffic_result,
                     processed_frames / fps, camera_stable=camera_stable,
