@@ -1,7 +1,7 @@
 """
 file_path: tests/test_walking_voice.py
 
-보행 위험 음성의 방향·다중 객체 선택과 결과 MP4 합성을 검증한다.
+보행 위험 분포의 이동 행동 선택과 결과 MP4 음성 합성을 검증한다.
 """
 
 import io
@@ -23,9 +23,9 @@ from src.video_audio import SAMPLE_RATE, ffmpeg_executable, render_voice_track
 from src.risk_visualization import risk_identity
 from src.walking_voice import (
     WalkingVoice,
-    danger_voice_message,
-    danger_voice_targets,
     suppress_non_green_crosswalk_voice,
+    walking_action,
+    warning_directions,
 )
 
 
@@ -35,7 +35,15 @@ def danger_item(event_id, box, name="person", **extra):
     return {"event_id": event_id, "detection_index": event_id - 1,
             "xyxy": box, "alert_level": "danger", "risk_level": "danger",
             "label_status": "reliable", "display_label": name,
-            "warning_primary": True, **extra}
+            "warning_primary": True, "geometry": {"immediate_overlap": 1.0}, **extra}
+
+
+# 테스트용 주의 객체 만들기
+def caution_item(event_id, box, **extra):
+    """좌우 안전도 비교에 사용하는 주의 객체를 반환한다."""
+    return danger_item(event_id, box, **extra) | {
+        "alert_level": "caution", "risk_level": "caution",
+    }
 
 
 # 테스트용 프레임 위험 결과 만들기
@@ -47,64 +55,107 @@ def prediction(*items, level="danger", source="object", epoch=0):
 
 
 class WalkingVoiceTests(unittest.TestCase):
-    """test-app의 위험 음성 선택 및 영상 저장 규칙을 확인한다."""
+    """보행 위험의 행동 음성 선택 및 영상 저장 규칙을 확인한다."""
 
-    # 한 객체의 방향과 물체 종류 확인
-    def test_single_danger_direction_and_category(self):
-        """왼쪽·가운데·오른쪽과 사람·차량·일반 장애물을 구분한다."""
+    # 하단 발자국의 35·30·35 구역 침범 확인
+    def test_direction_uses_footprint_overlap_with_intrusion_thresholds(self):
+        """최대 겹침 구역과 기준 이상 침범한 인접 구역을 모두 반환한다."""
+        self.assertEqual(warning_directions(danger_item(1, [10, 0, 20, 20]), 100), {"left"})
+        self.assertEqual(warning_directions(danger_item(1, [45, 0, 55, 20]), 100), {"center"})
+        self.assertEqual(warning_directions(danger_item(1, [80, 0, 90, 20]), 100), {"right"})
+        self.assertEqual(warning_directions(danger_item(1, [50, 0, 90, 20]), 100),
+                         {"center", "right"})
+
+    # 경계의 작은 겹침 무시 확인
+    def test_direction_ignores_small_adjacent_zone_overlap(self):
+        """가장 많이 겹친 구역은 유지하고 임계값 미만의 경계 침범은 무시한다."""
+        self.assertEqual(warning_directions(danger_item(1, [20, 0, 36, 20]), 100), {"left"})
+        self.assertEqual(warning_directions(danger_item(1, [64, 0, 80, 20]), 100), {"right"})
+
+    # 긴 장애물의 복수 위험 방향 확인
+    def test_wide_right_obstacle_blocks_center_and_guides_left(self):
+        """오른쪽 중심의 긴 장애물이 가운데를 침범하면 왼쪽 이동을 안내한다."""
+        result = prediction(danger_item(1, [50, 0, 90, 20]))
+        self.assertEqual(walking_action(result, 100), "left")
+
+    # 핑크 ROI 내부 위험만 음성 행동에 포함
+    def test_only_danger_inside_pink_roi_triggers_guidance(self):
+        """위험이어도 핑크 ROI 겹침이 20% 미만이면 음성 행동을 만들지 않는다."""
+        outside = danger_item(1, [5, 0, 15, 20], geometry={"immediate_overlap": .19})
+        inside = danger_item(2, [5, 0, 15, 20], geometry={"immediate_overlap": .20})
+        self.assertIsNone(walking_action(prediction(outside), 100))
+        self.assertEqual(walking_action(prediction(inside), 100), "straight")
+
+    # 기본 위험 분포의 네 행동 확인
+    def test_danger_distribution_selects_basic_action(self):
+        """세 방향의 모든 위험 조합을 직진·좌우 이동·정지로 바꾼다."""
+        left = danger_item(1, [5, 0, 15, 20])
+        center = danger_item(2, [45, 0, 55, 20])
+        right = danger_item(3, [85, 0, 95, 20])
         cases = [
-            ([5, 0, 15, 20], "person", "danger-left-person.mp3", "왼쪽에 사람."),
-            ([45, 0, 55, 20], "car", "danger-center-vehicle.mp3", "가운데에 차량."),
-            ([85, 0, 95, 20], "bollard", "danger-right-obstacle.mp3", "오른쪽에 장애물."),
+            (prediction(level="monitor"), None),
+            (prediction(left), "straight"),
+            (prediction(right), "straight"),
+            (prediction(left, center), "right"),
+            (prediction(center, right), "left"),
+            (prediction(left, right), "straight"),
+            (prediction(left, center, right), "stop"),
+            (prediction(center), "stop"),
         ]
-        for box, name, filename, spoken in cases:
-            with self.subTest(name=name):
-                targets = danger_voice_targets(prediction(danger_item(1, box, name)), 100)
-                self.assertEqual(danger_voice_message(targets), (spoken, filename))
+        for result, expected in cases:
+            with self.subTest(expected=expected):
+                self.assertEqual(walking_action(result, 100), expected)
 
-    # 여러 위험 객체의 방향 묶기
-    def test_multiple_dangers_in_same_and_different_directions(self):
-        """같은 방향과 여러 방향의 복수 위험을 다른 음원으로 안내한다."""
-        left = danger_item(1, [4, 0, 12, 20])
-        second_left = danger_item(2, [20, 0, 30, 20], "car")
-        right = danger_item(3, [80, 0, 90, 20])
-        self.assertEqual(danger_voice_message(danger_voice_targets(
-            prediction(left, second_left), 100)),
-            ("왼쪽에 여러 장애물.", "danger-left-multiple.mp3"))
-        self.assertEqual(danger_voice_message(danger_voice_targets(
-            prediction(left, right), 100)),
-            ("여러 방향에 장애물.", "danger-multiple-directions.mp3"))
+    # 가운데 위험의 거리 우선 비교
+    def test_center_danger_chooses_farther_side_after_five_percent_tie(self):
+        """가운데 위험이 치우치면 5% 동률 범위를 넘어서 먼 방향을 선택한다."""
+        self.assertEqual(walking_action(prediction(danger_item(1, [35, 0, 45, 20])), 100),
+                         "right")
+        self.assertEqual(walking_action(prediction(danger_item(1, [55, 0, 65, 20])), 100),
+                         "left")
+        self.assertEqual(walking_action(prediction(danger_item(1, [47, 0, 53, 20])), 100),
+                         "stop")
 
-    # 위험 수준과 음성 반복 억제
-    def test_only_new_primary_danger_is_announced(self):
-        """주의·촬영 상태는 침묵하고 새 객체 및 1.5초 뒤의 위험은 안내한다."""
+    # 동률에서 주의 객체로 좌우 비교
+    def test_center_danger_uses_caution_count_then_distance(self):
+        """위험 거리가 같으면 주의 개수와 가장 가까운 주의 거리를 차례로 비교한다."""
+        center = danger_item(1, [45, 0, 55, 20])
+        left_caution = caution_item(2, [5, 0, 15, 20])
+        right_near = caution_item(3, [70, 0, 80, 20])
+        right_far = caution_item(4, [88, 0, 98, 20])
+        self.assertEqual(walking_action(
+            prediction(center, left_caution, right_near, right_far), 100), "left")
+        self.assertEqual(walking_action(
+            prediction(center, caution_item(5, [15, 0, 25, 20]), right_far), 100), "right")
+
+    # 최종 행동 변경에만 음성 생성
+    def test_only_changed_action_is_announced(self):
+        """객체 ID가 달라도 행동이 같으면 침묵하고 행동 변경과 해제 뒤에만 안내한다."""
         voice = WalkingVoice()
-        person = danger_item(1, [5, 0, 15, 20])
-        car = danger_item(2, [45, 0, 55, 20], "car")
-        self.assertIsNone(voice.observe(prediction(person, level="caution"), 100, 0))
-        camera = prediction(person, source="camera_view")
-        camera["warning"]["detection_index"] = None
-        self.assertIsNone(voice.observe(camera, 100, .1))
-        self.assertEqual(voice.observe(prediction(person), 100, .2),
-                         ("왼쪽에 사람.", "danger-left-person.mp3"))
-        self.assertIsNone(voice.observe(prediction(person), 100, .3))
-        self.assertEqual(voice.observe(prediction(person, car), 100, .4),
-                         ("여러 방향에 장애물.", "danger-multiple-directions.mp3"))
-        self.assertIsNone(voice.observe(prediction(person, car), 100, .5))
-        self.assertEqual(voice.observe(prediction(person), 100, 2.1),
-                         ("왼쪽에 사람.", "danger-left-person.mp3"))
+        left = danger_item(1, [5, 0, 15, 20])
+        center = danger_item(2, [45, 0, 55, 20])
+        self.assertEqual(voice.observe(prediction(left), 100, .2),
+                         ("직진하세요.", "walking-straight.mp3"))
+        same = prediction(danger_item(3, [10, 0, 20, 20]))
+        self.assertIsNone(voice.observe(same, 100, .3))
+        self.assertEqual(same["last_action"], "straight")
+        self.assertEqual(voice.observe(prediction(left, center), 100, .4),
+                         ("오른쪽으로 이동하세요.", "walking-move-right.mp3"))
+        self.assertIsNone(voice.observe(prediction(left, center), 100, .5))
+        cleared = prediction(left, level="caution")
+        self.assertIsNone(voice.observe(cleared, 100, .6))
+        self.assertIsNone(cleared["last_action"])
+        self.assertEqual(voice.observe(prediction(left), 100, .7),
+                         ("직진하세요.", "walking-straight.mp3"))
         self.assertEqual(len(voice.events), 3)
 
-    # 대상 없는 위험 및 의미 영역 처리
-    def test_non_object_warning_and_semantic_object(self):
-        """객체 없는 경고는 무음이고 보행불가 객체는 일반 장애물로 안내한다."""
-        item = danger_item(1, [45, 0, 55, 20], "person")
-        no_object = prediction(item)
-        no_object["warning"]["detection_index"] = None
-        self.assertEqual(danger_voice_targets(no_object, 100), [])
-        targets = danger_voice_targets(prediction(item, source="surface_object"), 100)
-        self.assertEqual(danger_voice_message(targets),
-                         ("가운데에 장애물.", "danger-center-obstacle.mp3"))
+    # 객체 없는 위험 처리
+    def test_non_object_warning_is_silent(self):
+        """대표 객체가 없는 촬영 상태 위험에는 이동 행동을 안내하지 않는다."""
+        item = danger_item(1, [45, 0, 55, 20])
+        result = prediction(item, source="camera_view")
+        result["warning"]["detection_index"] = None
+        self.assertIsNone(walking_action(result, 100))
 
     # 비초록 신호의 횡단보도 장애물 음성 제외 확인
     def test_non_green_signal_suppresses_only_crosswalk_obstacle_voice(self):
@@ -128,8 +179,7 @@ class WalkingVoiceTests(unittest.TestCase):
             self.assertEqual(on_crosswalk["voice_suppressed_reason"],
                              "non_green_signal_crosswalk_obstacle")
         self.assertNotIn("voice_suppressed_reason", outside)
-        self.assertEqual(danger_voice_message(danger_voice_targets(result, 100)),
-                         ("오른쪽에 차량.", "danger-right-vehicle.mp3"))
+        self.assertEqual(walking_action(result, 100), "straight")
 
     # 초록불·신호 미선택·마스크 미확인 시 음성 유지 확인
     def test_voice_is_not_suppressed_without_selected_non_green_evidence(self):
@@ -151,8 +201,7 @@ class WalkingVoiceTests(unittest.TestCase):
                 suppress_non_green_crosswalk_voice(
                     result, signal, class_map, {"crosswalk": 2}, (100, 100, 3), config)
                 self.assertNotIn("voice_suppressed_reason", item)
-                self.assertEqual(danger_voice_message(danger_voice_targets(result, 100)),
-                                 ("가운데에 사람.", "danger-center-person.mp3"))
+                self.assertEqual(walking_action(result, 100), "stop")
 
     # 저장 영상 식별자 문자열 확인
     def test_overlay_identity_contains_track_and_event_ids(self):
@@ -164,8 +213,8 @@ class WalkingVoiceTests(unittest.TestCase):
         """새 안내 시점에 이전 음성을 끊고 영상 끝에서 정확히 종료한다."""
         with tempfile.TemporaryDirectory() as folder:
             output = Path(folder) / "voice.wav"
-            events = [(0.5, "danger-left-person.mp3"),
-                      (0.6, "danger-right-obstacle.mp3")]
+            events = [(0.5, "walking-move-left.mp3"),
+                      (0.6, "walking-move-right.mp3")]
             render_voice_track(events, 1.0, output)
             with wave.open(str(output), "rb") as sound:
                 self.assertEqual(sound.getframerate(), SAMPLE_RATE)
@@ -206,8 +255,9 @@ class WalkingVoiceTests(unittest.TestCase):
             capture.release()
             lines = output.with_suffix(".risk.jsonl").read_text(encoding="utf-8").splitlines()
             self.assertEqual(len(lines), 20)
-            self.assertEqual(json.loads(lines[0])["voice_text"], "왼쪽에 사람.")
-            self.assertEqual(json.loads(lines[0])["voice_clip"], "danger-left-person.mp3")
+            self.assertEqual(json.loads(lines[0])["voice_text"], "직진하세요.")
+            self.assertEqual(json.loads(lines[0])["voice_clip"], "walking-straight.mp3")
+            self.assertEqual(json.loads(lines[0])["last_action"], "straight")
             self.assertNotIn("voice_clip", json.loads(lines[1]))
             self.assertEqual(list(Path(folder).glob("*.partial.*")), [])
 

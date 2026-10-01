@@ -15,19 +15,14 @@
     ["횡단보도 이탈! 왼쪽으로 이동하세요!", "crosswalk-exit-left"],
     ["오른쪽으로 이동하세요!", "crosswalk-align-right"],
     ["왼쪽으로 이동하세요!", "crosswalk-align-left"],
+    ["왼쪽으로 이동하세요.", "walking-move-left"],
+    ["직진하세요.", "walking-straight"],
+    ["오른쪽으로 이동하세요.", "walking-move-right"],
+    ["멈추세요.", "walking-stop"],
   ]);
   for (const [text, name] of [...CLIPS]) CLIPS.set(`모의 신호. ${text}`, `mock-${name}`);
-  const directions = [["left", "왼쪽"], ["center", "가운데"], ["right", "오른쪽"]];
-  const categories = [["person", "사람"], ["vehicle", "차량"], ["obstacle", "장애물"]];
-  for (const [key, direction] of directions) {
-    for (const [category, name] of categories) {
-      CLIPS.set(`${direction}에 ${name}.`, `danger-${key}-${category}`);
-    }
-    CLIPS.set(`${direction}에 여러 장애물.`, `danger-${key}-multiple`);
-  }
-  CLIPS.set("여러 방향에 장애물.", "danger-multiple-directions");
-  const source = name => `/audio/${name}.mp3${name.startsWith("danger-")
-    ? "?v=walking-direction-v1" : name.startsWith("crosswalk-")
+  const source = name => `/audio/${name}.mp3${name.startsWith("walking-")
+    ? "?v=walking-action-v1" : name.startsWith("crosswalk-")
       ? "?v=crosswalk-ava-v1" : "?v=signal-sunhi-v1"}`;
 
   function create({ onError = () => {}, onStatus = () => {}, now = () => performance.now() } = {}) {
@@ -145,7 +140,7 @@
         if (audioContext?.state === "suspended") {
           audioContext.resume().catch(() => onError("브라우저가 안내 음성 재생을 차단했습니다. 사이트 소리 허용을 확인하고 테스트를 다시 시작해 주세요."));
         }
-        // 위험 안내 음원은 파일 자체에 2배속을 적용했으므로 모두 기본 속도로 재생한다.
+        // 모든 안내 음원은 파일에 저장된 원래 속도로 재생한다.
         audio.playbackRate = 1;
         audio.src = source(clip);
         audio.load();

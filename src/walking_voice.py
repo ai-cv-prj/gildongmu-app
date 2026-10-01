@@ -1,8 +1,8 @@
 """
 file_path: src/walking_voice.py
 
-보행 장애물 위험을 test-app과 같은 방향별 음성 안내로 바꾼다.
-같은 위험은 한 번만 안내하고 새 위험이 확인되면 안내를 갱신한다.
+보행 위험 객체의 분포를 왼쪽·가운데·오른쪽으로 나눠 안전 행동을 안내한다.
+객체 위치가 아니라 최종 이동 행동이 변경될 때만 새 음성을 기록한다.
 """
 
 from math import isfinite
@@ -11,10 +11,19 @@ import numpy as np
 from src.settings import load_audio_settings
 
 
-VEHICLE_CLASSES = {"car", "bus", "truck", "motorcycle"}
-DIRECTION_NAMES = {"left": "왼쪽", "center": "가운데", "right": "오른쪽"}
-WARNING_NAMES = {"person": "사람", "vehicle": "차량", "obstacle": "장애물"}
-WALKING_CLEAR_SECONDS = load_audio_settings()["guidance"]["walking_clear_ms"] / 1000
+GUIDANCE = load_audio_settings()["guidance"]
+LEFT_MAX_RATIO = GUIDANCE["walking_left_max_ratio"]
+RIGHT_MIN_RATIO = GUIDANCE["walking_right_min_ratio"]
+CENTER_INTRUSION_RATIO = GUIDANCE["walking_center_intrusion_ratio"]
+SIDE_INTRUSION_RATIO = GUIDANCE["walking_side_intrusion_ratio"]
+VOICE_IMMEDIATE_OVERLAP_RATIO = GUIDANCE["walking_voice_immediate_overlap_ratio"]
+DISTANCE_TIE_RATIO = GUIDANCE["walking_distance_tie_ratio"]
+ACTION_MESSAGES = {
+    "left": ("왼쪽으로 이동하세요.", "walking-move-left.mp3"),
+    "straight": ("직진하세요.", "walking-straight.mp3"),
+    "right": ("오른쪽으로 이동하세요.", "walking-move-right.mp3"),
+    "stop": ("멈추세요.", "walking-stop.mp3"),
+}
 
 
 # 객체 바닥에서 횡단보도 픽셀 비율 계산
@@ -73,129 +82,145 @@ def suppress_non_green_crosswalk_voice(prediction, signal, class_map, label_ids,
     return prediction
 
 
-# 신뢰할 수 있는 물체 이름을 음성용 범주로 묶기
-def warning_category(item):
-    """확정된 이름만 사람·차량으로 사용하고 나머지는 장애물로 안내한다."""
-    name = item.get("display_label") if item.get("label_status") == "reliable" else None
-    return "person" if name == "person" else "vehicle" if name in VEHICLE_CLASSES else "obstacle"
-
-
-# 객체 중심의 화면 방향 판정
-def warning_direction(item, image_width):
-    """화면 가로의 왼쪽 40%, 가운데 20%, 오른쪽 40%를 구분한다."""
+# 객체 하단 발자국의 화면 방향 판정
+def warning_directions(item, image_width):
+    """bbox 하단 발자국이 유효하게 침범한 왼쪽·가운데·오른쪽 구역을 반환한다."""
     try:
         box = item["xyxy"]
-        ratio = (float(box[0]) + float(box[2])) / (2 * image_width)
+        left = max(0.0, min(float(image_width), float(box[0])))
+        right = max(0.0, min(float(image_width), float(box[2])))
     except (KeyError, TypeError, ValueError, IndexError, ZeroDivisionError):
-        return None
-    if not isfinite(ratio):
-        return None
-    return "left" if ratio < .4 else "center" if ratio < .6 else "right"
+        return set()
+    if image_width <= 0 or not all(isfinite(value) for value in (left, right)) or right <= left:
+        return set()
+    boundaries = {
+        "left": (0.0, image_width * LEFT_MAX_RATIO),
+        "center": (image_width * LEFT_MAX_RATIO, image_width * RIGHT_MIN_RATIO),
+        "right": (image_width * RIGHT_MIN_RATIO, float(image_width)),
+    }
+    overlaps = {direction: max(0.0, min(right, end) - max(left, start))
+                for direction, (start, end) in boundaries.items()}
+    largest = max(overlaps.values())
+    directions = {direction for direction, overlap in overlaps.items()
+                  if overlap > 0 and overlap == largest}
+    for direction, overlap in overlaps.items():
+        start, end = boundaries[direction]
+        threshold = CENTER_INTRUSION_RATIO if direction == "center" else SIDE_INTRUSION_RATIO
+        if overlap >= (end - start) * threshold:
+            directions.add(direction)
+    return directions
 
 
-# 위험 객체의 안정적인 식별자 선택
-def voice_event_id(item):
-    """위험 이벤트 ID, 추적 ID, 검출 순서 중 사용 가능한 값을 고른다."""
-    for key in ("event_id", "track_id", "detection_index"):
-        value = item.get(key)
-        if isinstance(value, int) and not isinstance(value, bool):
-            return value
-    return None
+# 핑크 근거리 ROI 음성 대상 확인
+def inside_voice_roi(item):
+    """객체 하단 발자국이 핑크 ROI와 음성 기준 이상 겹치는지 확인한다."""
+    try:
+        overlap = float(item["geometry"]["immediate_overlap"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    return isfinite(overlap) and overlap >= VOICE_IMMEDIATE_OVERLAP_RATIO
 
 
-# 대표 위험의 안내 범주 확인
-def danger_voice_target(prediction):
-    """화면의 대표 경고가 가리키는 위험 객체와 음성 범주를 반환한다."""
-    selected = prediction.get("warning") or {}
-    if selected.get("level") != "danger":
-        return None
-    index = selected.get("detection_index")
-    if not isinstance(index, int) or isinstance(index, bool):
-        return None
-    item = next((d for d in prediction.get("detections", [])
-                 if d.get("detection_index") == index), None)
-    if (item is None or item.get("alert_level", item.get("risk_level")) != "danger"
-            or item.get("voice_suppressed_reason")):
-        return None
-    category = ("obstacle" if selected.get("source") in ("surface", "surface_object", "advisory")
-                or item.get("semantic_path_overlap") else warning_category(item))
-    return {"category": category, "event_id": voice_event_id(item)}
-
-
-# 한 프레임의 안내 대상 수집
-def danger_voice_targets(prediction, image_width):
-    """대표 위험과 같은 장면의 기본 위험 객체를 방향과 ID로 정리한다."""
+# 행동 안내에 사용할 위험·주의 객체 선별
+def guidance_items(prediction, level):
+    """대표 위험이 유효할 때 핑크 ROI 음성 조건을 만족하는 객체를 반환한다."""
     warning = prediction.get("warning") or {}
-    if warning.get("level") != "danger":
+    index = warning.get("detection_index")
+    if (warning.get("level") != "danger" or not isinstance(index, int) or isinstance(index, bool)):
         return []
-    selected = danger_voice_target(prediction)
-    selected_index = warning.get("detection_index")
-    if not isinstance(selected_index, int) or isinstance(selected_index, bool):
-        return []
-    targets, seen = [], set()
-    for item in prediction.get("detections", []):
-        if (item.get("alert_level", item.get("risk_level")) != "danger"
-                or not item.get("warning_primary", True)
-                or item.get("voice_suppressed_reason")):
-            continue
-        event_id = voice_event_id(item)
-        direction = warning_direction(item, image_width)
-        if event_id is None or direction is None or event_id in seen:
-            continue
-        seen.add(event_id)
-        category = (selected["category"] if selected is not None
-                    and event_id == selected["event_id"] else warning_category(item))
-        targets.append({"event_id": event_id, "direction": direction, "category": category})
-    return targets
+    return [item for item in prediction.get("detections", [])
+            if item.get("alert_level", item.get("risk_level")) == level
+            and item.get("warning_primary", True)
+            and not item.get("voice_suppressed_reason")
+            and (level != "danger" or inside_voice_roi(item))]
 
 
-# 위험 수와 방향에 맞는 음원 선택
-def danger_voice_message(targets):
-    """test-app의 문장과 대응하는 MP3 파일명을 반환한다."""
-    if not targets:
+# 후보 방향과 객체 박스 사이의 가로 거리 계산
+def horizontal_distance(item, point_x):
+    """후보 방향의 중심점과 객체 박스 사이의 가장 짧은 가로 거리를 반환한다."""
+    try:
+        left, right = float(item["xyxy"][0]), float(item["xyxy"][2])
+    except (KeyError, TypeError, ValueError, IndexError):
         return None
-    directions = {target["direction"] for target in targets}
-    if len(targets) > 1:
-        if len(directions) > 1:
-            return "여러 방향에 장애물.", "danger-multiple-directions.mp3"
-        direction = targets[0]["direction"]
-        return f"{DIRECTION_NAMES[direction]}에 여러 장애물.", f"danger-{direction}-multiple.mp3"
-    target = targets[0]
-    direction, category = target["direction"], target["category"]
-    return (f"{DIRECTION_NAMES[direction]}에 {WARNING_NAMES[category]}.",
-            f"danger-{direction}-{category}.mp3")
+    if not all(isfinite(value) for value in (left, right, point_x)):
+        return None
+    return left - point_x if point_x < left else point_x - right if point_x > right else 0.0
+
+
+# 한 방향에서 가장 가까운 객체 거리 계산
+def nearest_distance(items, direction, image_width):
+    """왼쪽 또는 오른쪽 후보 구역의 중심에서 가장 가까운 객체 거리를 반환한다."""
+    ratio = LEFT_MAX_RATIO / 2 if direction == "left" else (1 + RIGHT_MIN_RATIO) / 2
+    distances = [horizontal_distance(item, image_width * ratio) for item in items]
+    valid = [distance for distance in distances if distance is not None]
+    return min(valid) if valid else float("inf")
+
+
+# 가운데가 막혔을 때 좌우 후보 비교
+def safer_side(dangers, cautions, image_width):
+    """위험 거리, 주의 개수, 주의 거리 순서로 왼쪽과 오른쪽을 비교한다."""
+    tie = image_width * DISTANCE_TIE_RATIO
+    left_distance = nearest_distance(dangers, "left", image_width)
+    right_distance = nearest_distance(dangers, "right", image_width)
+    if abs(left_distance - right_distance) > tie:
+        return "left" if left_distance > right_distance else "right"
+    by_direction = {direction: [item for item in cautions
+                                if direction in warning_directions(item, image_width)]
+                    for direction in ("left", "right")}
+    if len(by_direction["left"]) != len(by_direction["right"]):
+        return "left" if len(by_direction["left"]) < len(by_direction["right"]) else "right"
+    left_caution = nearest_distance(by_direction["left"], "left", image_width)
+    right_caution = nearest_distance(by_direction["right"], "right", image_width)
+    if left_caution == right_caution or abs(left_caution - right_caution) <= tie:
+        return None
+    return "left" if left_caution > right_caution else "right"
+
+
+# 위험 분포를 최종 이동 행동으로 변환
+def walking_action(prediction, image_width):
+    """왼쪽·가운데·오른쪽 위험 분포와 좌우 안전도를 하나의 행동으로 바꾼다."""
+    dangers = guidance_items(prediction, "danger")
+    directions = {direction for item in dangers
+                  for direction in warning_directions(item, image_width)}
+    if not directions:
+        return None
+    if directions in ({"left"}, {"right"}, {"left", "right"}):
+        return "straight"
+    if directions == {"left", "center"}:
+        return "right"
+    if directions == {"center", "right"}:
+        return "left"
+    if directions == {"left", "center", "right"}:
+        return "stop"
+    if directions == {"center"}:
+        return safer_side(dangers, guidance_items(prediction, "caution"), image_width) or "stop"
+    return "stop"
 
 
 class WalkingVoice:
-    """영상 프레임마다 새 위험만 골라 재생 시점과 음원을 기록한다."""
+    """영상 프레임마다 최종 이동 행동이 달라질 때만 음성을 기록한다."""
 
     # 영상별 안내 상태 초기화
     def __init__(self):
-        """이미 알린 객체와 오디오 이벤트를 빈 상태로 시작한다."""
-        self.announced_ids = set()
-        self.last_danger_at = None
-        self.state_epoch = None
+        """마지막 안내 행동과 저장 영상용 오디오 이벤트를 빈 상태로 시작한다."""
+        self.last_action = None
         self.events = []
 
     # 현재 프레임의 신규 위험 안내 기록
     def observe(self, prediction, image_width, output_time_s):
-        """대표 경고가 위험일 때 새 객체가 있으면 안내 음원을 예약한다."""
-        epoch = prediction.get("state_epoch")
-        if epoch != self.state_epoch or (self.announced_ids and self.last_danger_at is not None
-                                         and output_time_s - self.last_danger_at >= WALKING_CLEAR_SECONDS):
-            self.announced_ids.clear()
-        self.state_epoch = epoch
-        targets = danger_voice_targets(prediction, image_width)
-        message = danger_voice_message(targets)
-        if message is None:
+        """현재 행동을 계산하고 이전 행동과 달라졌을 때만 음원을 예약한다."""
+        prediction.pop("voice_text", None)
+        prediction.pop("voice_clip", None)
+        action = walking_action(prediction, image_width)
+        prediction["last_action"] = action
+        if action is None:
+            self.last_action = None
             return None
-        self.last_danger_at = output_time_s
-        ids = {target["event_id"] for target in targets}
-        prediction["voice_event_ids"] = sorted(ids)
+        if action == self.last_action:
+            return None
+        self.last_action = action
+        message = ACTION_MESSAGES[action]
         prediction["voice_text"] = message[0]
-        if ids.issubset(self.announced_ids):
-            return None
-        self.announced_ids.update(ids)
         self.events.append((output_time_s, message[1]))
         prediction["voice_clip"] = message[1]
         return message

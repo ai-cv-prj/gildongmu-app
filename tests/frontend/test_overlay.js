@@ -30,12 +30,13 @@ context.window.GOverlay.render({
       xyxy: [.1, .2, .3, .6], display_label: "person", alert_level: "danger",
       track_id: 12, event_id: 34,
     }],
-    event: { roi: {} },
+    event: { roi: {}, last_action: "left" },
   },
   traffic: { detections: [] },
   crosswalk: { event: { status: "crossing" } },
 });
 
 assert.ok(labels.includes("person · T12 · E34"));
+assert.ok(labels.includes("ACTION: left"));
 assert.ok(labels.includes("CROSSWALK: crossing"));
 console.log("overlay ids: pass");
