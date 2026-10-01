@@ -6,7 +6,11 @@ Additional risk overlay; existing class colors and traffic drawing are untouched
 import cv2
 import numpy as np
 
-COLORS = {"monitor": (180,180,180), "caution": (0,200,255), "danger": (0,0,255)}
+# 실시간 UI의 RGB 색상을 OpenCV BGR 순서로 변환한 값
+COLORS = {"monitor": (180,180,180), "caution": (102,183,255), "danger": (113,101,255)}
+PATH_ROI_COLOR = (250, 227, 76)
+NEAR_ROI_COLOR = (186, 136, 255)
+DARK_TEXT_COLOR = (31, 19, 8)
 
 
 # 추적과 위험 이벤트 식별자 표시
@@ -31,10 +35,15 @@ def draw_risk(frame, prediction, config):
     result = draw_scene_regions(frame, prediction)
     h, w = frame.shape[:2]
     if config["draw_roi"] and (prediction.get("camera_view") or {}).get("status") != "unavailable":
-        for key, color in (("corridor_polygon",(255,190,0)), ("immediate_polygon",(0,120,255))):
+        for key, color, alpha in (("corridor_polygon", PATH_ROI_COLOR, 0.125),
+                                  ("immediate_polygon", NEAR_ROI_COLOR, 0.14)):
             points = np.rint(np.asarray(config[key])*[w-1,h-1]).astype(np.int32)
-            cv2.polylines(result, [points], True, color, 2, cv2.LINE_AA)
+            tint = result.copy()
+            cv2.fillPoly(tint, [points], color)
+            result = cv2.addWeighted(tint, alpha, result, 1-alpha, 0)
+            cv2.polylines(result, [points], True, color, max(2, round(w/320)), cv2.LINE_AA)
     counts = {"monitor":0,"caution":0,"danger":0}
+    labels = []
     for item in prediction["detections"]:
         level = item.get("alert_level", item["risk_level"])
         if level is None:
@@ -44,20 +53,24 @@ def draw_risk(frame, prediction, config):
         x1,y1,x2,y2 = item["xyxy"]
         if not np.isfinite([x1,y1,x2,y2]).all():
             continue
-        if level != "monitor" and not item.get("warning_primary", True):
+        color = COLORS.get(level, COLORS["monitor"])
+        x1, y1 = max(0, min(w-1, round(x1))), max(0, min(h-1, round(y1)))
+        x2, y2 = max(0, min(w-1, round(x2))), max(0, min(h-1, round(y2)))
+        if x2 <= x1 or y2 <= y1:
             continue
+        cv2.rectangle(result, (x1, y1), (x2, y2), color,
+                      4 if level in ("caution", "danger") else 2)
         identity = risk_identity(item)
-        grouped = f' x{item.get("warning_group_size",1)}' if item.get("warning_group_size",1)>1 else ""
-        text = f"{identity} {level.upper()}{grouped}"
-        if item["motion"] and item["motion"]["time_to_corridor_s"] is not None:
-            text += " entering"
-        px, py = max(0,min(w-1,round(x1))), max(15,min(h-40,round(y2)+16))
-        cv2.putText(result,text,(px,py),cv2.FONT_HERSHEY_SIMPLEX,.5,(0,0,0),3,cv2.LINE_AA)
-        cv2.putText(result,text,(px,py),cv2.FONT_HERSHEY_SIMPLEX,.5,COLORS[level],1,cv2.LINE_AA)
-    status = f'Risk: danger={counts["danger"]} caution={counts["caution"]} | tracker={prediction["tracker_status"]} | EXPERIMENTAL ROI'
-    cv2.putText(result,status,(8,max(16,h-12)),cv2.FONT_HERSHEY_SIMPLEX,.5,(0,0,0),3,cv2.LINE_AA)
-    cv2.putText(result,status,(8,max(16,h-12)),cv2.FONT_HERSHEY_SIMPLEX,.5,(255,255,255),1,cv2.LINE_AA)
-    draw_scene_status(result,prediction,(8,max(20,h-34)),.48)
+        name = item.get("display_label") or item.get("class_name") or "obstacle"
+        text = f"{name} | {identity}" if identity != "no-ID" else name
+        scale = max(.45, w/1440)
+        (tw, th), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, 1)
+        label_y = max(0, y1-th-baseline-10)
+        labels.append((text, color, x1, label_y, tw+12, th+baseline+8, scale, baseline))
+    for text, color, x, y, width, height, scale, baseline in labels:
+        cv2.rectangle(result, (x, y), (min(w-1, x+width), min(h-1, y+height)), color, -1)
+        cv2.putText(result, text, (x+6, y+height-baseline-3), cv2.FONT_HERSHEY_SIMPLEX,
+                    scale, DARK_TEXT_COLOR, 1, cv2.LINE_AA)
     return result
 
 

@@ -8,6 +8,11 @@ file_path: src/crosswalk_visualization.py
 import cv2
 
 
+BOTTOM_ROI_COLOR = (229, 93, 155)
+SAFE_BOUNDARY_COLOR = (224, 107, 241)
+EXIT_BOUNDARY_COLOR = (91, 67, 255)
+
+
 # 횡단보도 안전 판정 오버레이
 def draw_crosswalk_safety(frame, event):
     """정규화된 발 위치와 좌우 경계 및 현재 상태를 원본 크기에 맞춰 그린다."""
@@ -18,15 +23,19 @@ def draw_crosswalk_safety(frame, event):
     roi_values = (roi.get("left"), roi.get("top"), roi.get("right"), roi.get("bottom"))
     if all(isinstance(value, (int, float)) for value in roi_values):
         left, top, right, bottom = roi_values
-        cv2.rectangle(result, (round(left * width), round(top * height)),
-                      (round(right * width), round(bottom * height)), (229, 93, 155), 3)
+        first = (round(left * width), round(top * height))
+        second = (round(right * width), round(bottom * height))
+        tint = result.copy()
+        cv2.rectangle(tint, first, second, BOTTOM_ROI_COLOR, -1)
+        result = cv2.addWeighted(tint, 0.05, result, 0.95, 0)
+        cv2.rectangle(result, first, second, BOTTOM_ROI_COLOR, max(2, round(width / 320)))
     foot_y = geometry.get("foot_y")
     values = (geometry.get("left_x"), geometry.get("right_x"), geometry.get("foot_x"), foot_y)
     if all(isinstance(value, (int, float)) for value in values):
         left, right, foot, y = values
         y_px = round(y * height)
-        color = ((91, 67, 255) if str(event.get("status", "")).startswith("outside")
-                 else (224, 107, 241))
+        color = (EXIT_BOUNDARY_COLOR if str(event.get("status", "")).startswith("outside")
+                 else SAFE_BOUNDARY_COLOR)
         cv2.line(result, (round(left * width), y_px), (round(right * width), y_px), color, 4)
         cv2.circle(result, (round(foot * width), y_px), 7, (255, 255, 255), -1)
     status = (event or {}).get("status")

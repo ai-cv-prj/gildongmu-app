@@ -8,10 +8,17 @@ file_path: src/visualization.py
 import cv2
 
 
-# OpenCV BGR 색상
+# 실시간 응답 PNG와 동일한 OpenCV BGR 색상
 LABEL_COLORS = {
-    "walkable": (0, 255, 0),
-    "crosswalk": (180, 105, 255),
+    "walkable": (50, 185, 85),
+    "crosswalk": (208, 80, 205),
+}
+
+TRAFFIC_COLORS = {
+    "red": (114, 97, 255),
+    "green": (119, 219, 56),
+    "unknown": (109, 214, 245),
+    "candidate": (255, 176, 105),
 }
 
 
@@ -74,8 +81,6 @@ def draw_traffic(frame, prediction):
     """신호등 검출·확인 중 후보·안내 대상만 표시하고 횡단보도 진단은 숨긴다."""
     result = frame.copy()
     height, width = frame.shape[:2]
-    colors = {"red": (0, 0, 255), "green": (0, 255, 0), "unknown": (160, 160, 160)}
-    blue, yellow = (255, 140, 79), (32, 176, 255)
     font = cv2.FONT_HERSHEY_SIMPLEX
     labels, occupied = [], []
 
@@ -107,15 +112,12 @@ def draw_traffic(frame, prediction):
     for signal in prediction["detections"]:
         selection = signal["selection_status"]
         if selection == "selected":
-            color = colors[signal["signal_state"]]
-            label = f"TARGET {signal['signal_state'].upper()}"
-            if signal.get("color_confidence") is not None:
-                label += f" color {signal['color_confidence'] * 100:.1f}%"
+            state = signal["signal_state"]
+            color = TRAFFIC_COLORS[state]
+            label = f"SIGNAL {state.upper()}"
         else:
-            color = yellow if selection == "candidate" else blue
-            label = f"{'CANDIDATE' if selection == 'candidate' else 'UNSELECTED'} det {signal['confidence'] * 100:.1f}%"
-        if signal.get("track_id") is not None:
-            label += f" #{signal['track_id']}"
+            color = TRAFFIC_COLORS["candidate"]
+            label = "SIGNAL CANDIDATE"
         add_box(signal["xyxy"], label, color, 4 if selection == "selected" else 2)
 
     # 라벨은 모든 박스 뒤에 그려 다른 테두리에 가려지지 않게 한다.
@@ -124,15 +126,6 @@ def draw_traffic(frame, prediction):
         cv2.putText(result, label, point(x + 4, y + h - baseline - 3), font,
                     scale, (15, 15, 15), 1, cv2.LINE_AA)
 
-    state = prediction["signal_state"]
-    count = prediction["detected_signal_count"]
-    selected = prediction.get("selected_detection_index")
-    candidate = prediction.get("candidate_detection_index")
-    detail = ("NO DETECTION" if not count else f"TARGET {state.upper()}" if selected is not None
-              else "CONFIRMING / COLOR HELD" if candidate is not None else "NO TARGET / COLOR HELD")
-    text = f"SIGNALS {count} | {detail}"
-    cv2.rectangle(result, (0, 0), (width - 1, 28), (24, 24, 24), -1)
-    cv2.putText(result, text, (8, 20), font, fit_text(text), colors[state], 1, cv2.LINE_AA)
     return result
 
 

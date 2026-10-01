@@ -13,7 +13,7 @@ import torch
 
 from src.traffic import DEFAULTS, TrafficSignalPipeline, validate_traffic_config
 from src.traffic_association import TemporalSelector, associate
-from src.visualization import draw_traffic
+from src.visualization import TRAFFIC_COLORS, draw_traffic
 from src.pipeline import process_video, run_video_inference
 from scripts.run_video_inference import main
 
@@ -147,7 +147,7 @@ class TrafficTests(unittest.TestCase):
         frame = FRAME.copy()
         rendered = draw_traffic(frame, result)
         np.testing.assert_array_equal(frame, FRAME)
-        self.assertEqual(rendered[100, 600].tolist(), [0, 255, 0])
+        self.assertEqual(rendered[100, 600].tolist(), list(TRAFFIC_COLORS["green"]))
         np.testing.assert_array_equal(rendered[350:], frame[350:])
 
     def test_invalid_settings(self):
