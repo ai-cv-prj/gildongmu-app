@@ -1,24 +1,29 @@
 # file_path: configs/inference.yaml
-# 보도·장애물·신호등 통합 추론 설정. 명령어 옵션이 이 설정보다 우선한다.
-# 모든 상대 경로는 통합 레포 루트 기준. 폴더는 자동 생성하지 않는다.
+# 보도·장애물·신호등 통합 추론 설정. 
 
-sample_dir: data/samples   # 입력 영상
-output_dir: outputs/result_samples # sample1, sample2 등 입력 폴더별 결과의 상위 경로
+paths_config: configs/paths.yaml
+
+# 공통 실행 설정
 device: auto
-overlay_alpha: 0.55 # 오버레이 투명도 
-mode: all # all: 도보+장애물+신호등, both: 도보+장애물, 나머지: 단독
+mode: all # all: 전체, both: 도보+장애물, 나머지: 단독
+overlay_alpha: 0.55 # 마스크 투명도
 
-mask2former:
-  weights: weights/walking/mask2former # 가중치·모델·전처리 설정 폴더
-
+# 장애물 YOLO
 yolo:
-  weights: weights/walking/yolo/finetune_v2_exp02_stage2_best.pt
   conf: 0.25
   imgsz: 640
-  head: nms # Ultralytics nms=None, NMS 후처리 사용
+  head: nms # NMS 후처리 사용
   iou: 0.7
   max_det: 300
   rect: true
+
+# 신호등·횡단보도 추론
+traffic:
+  conf: 0.25
+  imgsz: 960
+  crosswalk_min_confidence: 0.50
+  classifier_min_confidence: 0.60
+  association_stable_frames: 3
 
 # 화면 속 정류장 크기·위치와 연속 관측으로만 근접을 추정한다. 실제 거리가 아니다.
 stop_proximity:
@@ -29,41 +34,75 @@ stop_proximity:
   match_iou: 0.10
   max_gap_s: 2.0
 
-traffic:
-  weights: weights/traffic/best_YOLO.pt
-  classifier_weights: weights/traffic/best_MobileNet.pt
-  conf: 0.25
-  imgsz: 960
-  crosswalk_min_confidence: 0.50
-  classifier_min_confidence: 0.60
-  association_stable_frames: 3
+# 횡단보도 안전 안내
+# 좌표와 여유값은 영상 너비·높이 기준 비율이다.
+crosswalk_safety:
+  enabled: true
 
-# Experimental forward-camera profile: normalized image coordinates, NOT metres.
-# Detection always uses the full frame. These thresholds require scene calibration.
+  # 사용자 위치
+  near_zone_top: 0.72
+  foot_x: 0.50
+  foot_y: 0.92
+  foot_half_width: 0.04
+  foot_half_height: 0.04
+
+  # 화면 하단 확인 영역
+  roi_left: 0.10
+  roi_right: 0.90
+  roi_top: 0.90
+  roi_bottom: 1.00
+  roi_crosswalk_threshold: 0.05
+  roi_occlusion_threshold: 0.08
+
+  # 상태 확정 시간(초)
+  entry_confirm_s: 0.50
+  edge_confirm_s: 0.20
+  exit_confirm_s: 0.25
+  return_confirm_s: 0.40
+  finish_confirm_s: 0.40
+  outside_finish_confirm_s: 0.80
+  uncertainty_hold_s: 1.50
+  max_gap_s: 2.00
+
+  # 경계 판정과 안정화
+  edge_margin: 0.08
+  exit_margin: 0.03
+  max_boundary_shift: 0.12
+  boundary_smooth_s: 0.30
+
+  # 마스크 유효 기준
+  min_mask_area: 0.006
+  min_row_width: 0.10
+  min_valid_rows: 8
+  finish_walkable_fraction: 0.60
+  outside_finish_walkable_fraction: 0.80
+
+  # 빨간불·신호 미확인 중 장애물 음성 억제
+  non_green_obstacle_voice_suppression: true
+  non_green_obstacle_crosswalk_threshold: 0.20
+  non_green_obstacle_contact_half_height: 0.02
+
+# 장애물 위험 판단
+# 좌표는 정규화된 영상 좌표이며 실제 거리 단위가 아니다.
+# 객체 검출은 전체 화면을 사용한다.
 risk:
   enabled: true
+
+  # 기본 예상보행경로(ROI)
   corridor_polygon:
-  - - 0.38
-    - 0.30
-  - - 0.62
-    - 0.30
-  - - 0.98
-    - 0.70
-  - - 0.98
-    - 1.0
-  - - 0.02
-    - 1.0
-  - - 0.02
-    - 0.70
+    - [0.38, 0.30]
+    - [0.62, 0.30]
+    - [0.98, 0.70]
+    - [0.98, 1.00]
+    - [0.02, 1.00]
+    - [0.02, 0.70]
   immediate_polygon:
-  - - 0.02
-    - 0.70
-  - - 0.98
-    - 0.70
-  - - 0.98
-    - 1.0
-  - - 0.02
-    - 1.0
+    - [0.02, 0.70]
+    - [0.98, 0.70]
+    - [0.98, 1.00]
+    - [0.02, 1.00]
+
+  # 객체 바닥과 정적 장애물 근접 기준
   footprint_height_ratio: 0.15
   footprint_max_height: 0.02
   exit_overlap_threshold: 0.1
@@ -71,17 +110,19 @@ risk:
   static_caution_y: 0.55
   static_danger_y: 0.78
   static_ground_classes:
-  - pole
-  - bollard
-  - tree_trunk
-  - potted_plant
-  - fire_hydrant
-  - utility_box
-  - parking_meter
-  - kiosk
-  - bench
-  - barricade
-  - trash_bin
+    - pole
+    - bollard
+    - tree_trunk
+    - potted_plant
+    - fire_hydrant
+    - utility_box
+    - parking_meter
+    - kiosk
+    - bench
+    - barricade
+    - trash_bin
+
+  # 보행가능영역 기반 ROI 보정
   sidewalk_roi_enabled: true
   roi_max_shift: 0.15
   roi_fit_residual: 0.04
@@ -92,6 +133,8 @@ risk:
   roi_return_s: 0.5
   clear_confirm_s: 0.5
   uncertainty_hold_s: 0.8
+
+  # 객체 ID 연결과 경로 진입 예측
   id_bridge_s: 0.3
   id_bridge_iou: 0.5
   overlap_threshold: 0.2
@@ -101,6 +144,8 @@ risk:
   prediction_horizon_s: 0.8
   min_lateral_speed: 0.05
   lateral_near_y: 0.42
+
+  # 프레임 공백과 TTC
   reset_gap_s: 0.5
   hard_reset_gap_s: 2.0
   ttc_alerts: true
@@ -108,23 +153,29 @@ risk:
   ttc_caution_s: 3.0
   min_expansion_rate: 0.05
   max_motion_residual: 0.03
+
+  # 카메라 움직임 허용 범위
   camera_max_rotation_deg: 4.0
   camera_max_translation: 0.12
   camera_max_scale_change: 0.1
+
+  # 경고 유지와 출력
   release_hold_s: 0.5
   repeat_cooldown_s: 2.0
   event_match_iou: 0.3
   draw_roi: true
-  # 큰 검토용 오버레이(채운 ROI·카드 라벨·하단 요약 패널)로 표시한다. false면 간략 표시.
-  review_overlay: true
+  review_overlay: false # 검토용 상세 오버레이
   log_jsonl: true
-  # Shared image profile: no individual body dimensions, depth or ground-height model.
+
+  # 측면 근접과 상대 진입
   side_proximity_enabled: true
   side_near_y: 0.50
   side_min_height: 0.18
   side_min_width: 0.12
   full_static_footprint: true
   relative_entry_enabled: true
+
+  # ROI 재보정과 지면 범위 적응
   roi_recalibration_enabled: true
   roi_ground_adapt_enabled: true
   roi_top_max_y: 0.60
@@ -135,6 +186,8 @@ risk:
   label_confirm_frames: 3
   label_confidence: 0.60
   label_conflict_hold_s: 0.80
+
+  # 넓은 ROI의 중앙·측면 위험 기준
   wide_roi_priority_enabled: true
   central_danger_left: 0.20
   central_danger_right: 0.80
@@ -144,6 +197,8 @@ risk:
   roi_change_confirm_s: 0.30
   roi_small_confirm_s: 0.50
   roi_candidate_spread: 0.03
+
+  # 보행불가 노면 위험
   surface_risk_enabled: true
   surface_confirm_s: 0.20
   surface_clear_s: 0.50
@@ -153,12 +208,14 @@ risk:
   class_bridge_enabled: true
   visibility_advisory_s: 1.0
   camera_view_guard_enabled: true
-  # Keep all detections; combine only strongly overlapping warning labels/counts.
+
+  # 겹치는 경고 표시 묶음
   warning_grouping_enabled: true
   warning_group_iou: 0.65
   warning_group_containment: 0.85
   warning_group_max_area_ratio: 1.60
-  # 장애물 주변이 모두 보행불가이면 위험을 주의로 완화한다.
+
+  # 장애물 주변 보행가능영역 확인
   walkable_surroundings_filter_enabled: true
   surrounding_side_width_ratio: 0.15
   surrounding_side_height_ratio: 0.40
@@ -167,6 +224,8 @@ risk:
   surrounding_max_bottom_height_ratio: 0.02
   surrounding_min_region_pixels: 4
   surrounding_walkable_threshold: 0.05
+
+# 객체 추적
 tracking:
   enabled: true
   backend: botsort

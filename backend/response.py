@@ -21,6 +21,7 @@ def normalize_detections(items, width, height):
         converted = {key: item.get(key) for key in (
             "class_name", "display_label", "confidence", "track_id", "signal_state",
             "selection_status", "alert_level", "risk_level", "detection_index",
+            "event_id", "hazard_id", "voice_suppressed_reason",
         ) if key in item}
         converted["xyxy"] = [max(0, min(1, float(value) / scale))
                              for value, scale in zip(box, (width, height, width, height))]
@@ -46,9 +47,9 @@ def encode_mask(class_map, label_ids, width=320):
 
 
 # 브라우저 안내 정책이 읽을 단일 프레임 응답 작성
-def make_response(session_id, frame_id, captured_at_ms, frame, risk, signal,
+def make_response(session_id, frame_id, captured_at_ms, frame, risk, signal, crosswalk,
                   class_map, label_ids, inference_ms):
-    """보행과 신호 결과를 분리하고 같은 프레임의 마스크를 포함한다."""
+    """보행·신호·횡단보도 안전 결과와 같은 프레임의 마스크를 포함한다."""
     height, width = frame.shape[:2]
     return {
         "session_id": session_id, "frame_id": frame_id,
@@ -73,6 +74,7 @@ def make_response(session_id, frame_id, captured_at_ms, frame, risk, signal,
                 "candidate_detection_index": signal["candidate_detection_index"],
             },
         },
+        "crosswalk": {"event": crosswalk},
         "stop_proximity": risk.get("stop_proximity"),
         "inference_ms": inference_ms,
     }

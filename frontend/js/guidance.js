@@ -4,11 +4,9 @@
  * 테스트앱과 같은 신호 상태 및 보행 위험 장애물 음성 안내 정책.
  */
 (() => {
-  // 세 모델을 순차 실행하는 앱 서버에서는 프레임 간격이 길 수 있어 연속성 허용 간격을 넓힌다.
-  const LIMITS = Object.freeze({ stableMs: 400, stableFrames: 3, maxGapMs: 2000, maxAgeMs: 1500,
-    missingMs: 2000, walkingClearMs: 1500 });
-
-  function create({ player, onChange = () => {}, now = () => performance.now() }) {
+  function create({ coordinator, onChange = () => {}, now = () => performance.now() }) {
+    const audio = window.GConfig.get().audio;
+    const limits = audio.guidance;
     let active = false, sessionId = null, mock = false;
     let startedAt = 0, lastFrame = null, lastCapture = null, lastValid = null;
     let target = null, color = null, candidate = null, missingAnnounced = false;
@@ -23,7 +21,10 @@
     function announce(text, validUntil) {
       const message = mock && mode === "traffic" ? `모의 신호. ${text}` : text;
       update(message);
-      player.speak(message, validUntil);
+      const changed = mode === "traffic" && text.includes("바뀌었습니다");
+      coordinator.request({ source: mode, priority: changed
+        ? coordinator.PRIORITY.trafficChange
+        : coordinator.PRIORITY[mode], text: message, validUntil });
     }
     // 새 위험 장면을 받을 수 있도록 이전 장면과 남은 위험 음성을 정리한다.
     /** 마지막 위험 관측이 오래되면 지난 위험 음성을 취소한다. */
@@ -31,7 +32,7 @@
       if (!walkingAnnouncedIds.size) return;
       walkingAnnouncedIds.clear();
       walkingLastDangerAt = null;
-      player.cancel();
+      coordinator.clear("walking");
     }
     function stop(text = "음성 안내가 꺼져 있습니다.") {
       active = false;
@@ -41,7 +42,7 @@
       walkingAnnouncedIds.clear();
       walkingLastDangerAt = null;
       resetEvidence();
-      player.cancel();
+      coordinator.clear(mode);
       update(text);
     }
     function start(id, isMock = false, nextMode = "traffic") {
@@ -68,26 +69,26 @@
     function tick() {
       if (!active) return;
       if (mode === "walking") {
-        if (walkingAnnouncedIds.size && now() - walkingLastDangerAt >= LIMITS.walkingClearMs) clearWalkingScene();
+        if (walkingAnnouncedIds.size && now() - walkingLastDangerAt >= limits.walking_clear_ms) clearWalkingScene();
         return;
       }
       const age = now() - (lastValid ?? startedAt);
-      if (age > LIMITS.maxGapMs) interrupt();
-      if (hasConfirmedSignal && age >= LIMITS.missingMs && !missingAnnounced) {
+      if (age > audio.realtime_max_gap_ms) interrupt();
+      if (hasConfirmedSignal && age >= limits.missing_ms && !missingAnnounced) {
         missingAnnounced = true;
-        announce("신호를 확인할 수 없습니다.", now() + LIMITS.maxAgeMs);
+        announce("신호를 확인할 수 없습니다.", now() + limits.max_age_ms);
       }
     }
     function accept(res, capturedAt) {
       if (!active || res.session_id !== sessionId || capturedAt < startedAt) return;
       const time = now();
-      if (!Number.isFinite(capturedAt) || time < capturedAt || time - capturedAt >= LIMITS.maxAgeMs) {
+      if (!Number.isFinite(capturedAt) || time < capturedAt || time - capturedAt >= limits.max_age_ms) {
         interrupt();
         return;
       }
       if (!Number.isInteger(res.frame_id) || (lastFrame !== null && res.frame_id <= lastFrame)) return;
       const continuous = lastFrame === null || (res.frame_id === lastFrame + 1 &&
-        capturedAt > lastCapture && capturedAt - lastCapture <= LIMITS.maxGapMs);
+        capturedAt > lastCapture && capturedAt - lastCapture <= audio.realtime_max_gap_ms);
       if (!continuous) interrupt();
       lastFrame = res.frame_id;
       lastCapture = capturedAt;
@@ -97,12 +98,12 @@
           ? event.voice_event_ids.filter(Number.isInteger) : [];
         const danger = event.type === "walking_warning" && event.level === "danger" &&
           ids.length > 0 && typeof event.voice_text === "string";
-        if (walkingAnnouncedIds.size && capturedAt - walkingLastDangerAt >= LIMITS.walkingClearMs) clearWalkingScene();
+        if (walkingAnnouncedIds.size && capturedAt - walkingLastDangerAt >= limits.walking_clear_ms) clearWalkingScene();
         if (!danger) return;
         walkingLastDangerAt = capturedAt;
         if (ids.every(id => walkingAnnouncedIds.has(id))) return;
         for (const id of ids) walkingAnnouncedIds.add(id);
-        announce(event.voice_text,capturedAt+LIMITS.maxAgeMs);
+        announce(event.voice_text,capturedAt+limits.max_age_ms);
         return;
       }
       const index = event.selected_detection_index;
@@ -122,7 +123,7 @@
       if (!candidate || candidate.color !== next) {
         candidate = { color: next, since: capturedAt, count: 1 };
       } else candidate.count++;
-      if (candidate.count < LIMITS.stableFrames || capturedAt - candidate.since < LIMITS.stableMs) return;
+      if (candidate.count < limits.stable_frames || capturedAt - candidate.since < limits.stable_ms) return;
       if (color === next) return;
       const previous = color;
       color = next;
@@ -145,11 +146,11 @@
       }
       lastAnnouncedColor = next;
       lastAnnouncedTarget = target;
-      announce(text, capturedAt + LIMITS.maxAgeMs);
+      announce(text, capturedAt + limits.max_age_ms);
     }
     // 서버 세션 생성 후 결과를 연결한다.
     function bindSession(id) { if (active) sessionId = id; }
     return { start, bindSession, stop, accept, interrupt, tick };
   }
-  window.GGuidance = { create, LIMITS };
+  window.GGuidance = { create };
 })();

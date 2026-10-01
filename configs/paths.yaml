@@ -1,0 +1,29 @@
+# file_path: configs/paths.yaml
+# 프로젝트 루트 기준 경로.  
+
+# 샘플 입력 영상
+sample_dir: data/samples/input
+
+# 샘플 추론 결과
+output_dir: data/samples/output
+
+# 날짜별 촬영·추론 기록
+session_dir: data/sessions
+
+# 웹 화면 파일
+frontend_dir: frontend
+
+# 안내 음원
+voice_dir: frontend/audio/voice
+
+# 보행 영역 분할 모델
+mask2former_weights: weights/walking/mask2former
+
+# 장애물 검출 가중치
+yolo_weights: weights/walking/yolo/finetune_v2_exp02_stage2_best.pt
+
+# 신호등·횡단보도 검출 가중치
+traffic_weights: weights/traffic/best_YOLO.pt
+
+# 신호등 색상 분류 가중치
+traffic_classifier_weights: weights/traffic/best_MobileNet.pt

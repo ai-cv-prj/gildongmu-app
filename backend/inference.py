@@ -7,14 +7,15 @@ file_path: backend/inference.py
 
 from time import perf_counter
 
+from backend.stop_proximity import StopProximity
+from src.crosswalk_safety import CrosswalkSafetyEngine, crosswalk_safety_config
 from src.obstacle import ObstacleDetector, validate_yolo_config
 from src.pipeline import load_config, resolve_path
 from src.risk import RiskEngine
 from src.risk_config import risk_config, tracking_config
 from src.sidewalk import SidewalkSegmenter
 from src.traffic import TrafficSignalPipeline, validate_traffic_config
-from src.walking_voice import WalkingVoice
-from backend.stop_proximity import StopProximity
+from src.walking_voice import WalkingVoice, suppress_non_green_crosswalk_voice
 
 
 class RealtimeInference:
@@ -43,6 +44,7 @@ class RealtimeInference:
         self.risk_settings = risk_config(config["risk"])
         self.tracking_settings = tracking_config(config["tracking"])
         self.stop_proximity_settings = config.get("stop_proximity", {})
+        self.crosswalk_settings = crosswalk_safety_config(config.get("crosswalk_safety"))
         self.reset()
 
     # 새 휴대폰 세션의 이전 추적 상태 제거
@@ -51,6 +53,7 @@ class RealtimeInference:
         self.risk = RiskEngine(self.risk_settings, self.tracking_settings)
         self.voice = WalkingVoice()
         self.stop_proximity = StopProximity(self.stop_proximity_settings)
+        self.crosswalk = CrosswalkSafetyEngine(self.crosswalk_settings)
         self.traffic.reset()
 
     # 같은 원본 프레임의 세 모델 추론
@@ -62,15 +65,29 @@ class RealtimeInference:
         height, width = frame.shape[:2]
         risk = self.risk.update(frame, detections, captured_at_ms / 1000,
                                 True, class_map, self.segmenter.label_ids)
+        camera_view = risk.get("camera_view") or {}
         risk["stop_proximity"] = self.stop_proximity.update(
             risk["detections"], frame.shape, captured_at_ms / 1000,
-            camera_view=risk["camera_view"]["status"], state_reset=risk["state_reset"],
+            camera_view=camera_view.get("status", "clear"),
+            state_reset=risk.get("state_reset", False),
         )
         self.risk.add_sidewalk_context(risk, class_map, self.segmenter.label_ids, frame.shape)
-        self.voice.observe(risk, width, captured_at_ms / 1000)
         signal = self.traffic.predict(frame, frame_id=frame_id,
                                       captured_at_ms=captured_at_ms)
+        suppress_non_green_crosswalk_voice(
+            risk, signal, class_map, self.segmenter.label_ids, frame.shape,
+            self.crosswalk_settings,
+        )
+        self.voice.observe(risk, width, captured_at_ms / 1000)
+        camera_stable = (camera_view.get("status", "clear") == "clear"
+                         and risk.get("camera_motion_stable", True))
+        crosswalk = self.crosswalk.update(
+            class_map, self.segmenter.label_ids, frame.shape, signal,
+            captured_at_ms / 1000, camera_stable=camera_stable,
+            detections=risk["detections"],
+        )
         # 영상 출력과 마찬가지로 일반 장애물 모델의 신호등 박스는 중복 표시하지 않는다.
         risk["detections"] = [item for item in risk["detections"]
                               if item.get("class_name") != "traffic_light"]
-        return risk, signal, class_map, self.segmenter.label_ids, round((perf_counter() - started) * 1000)
+        return (risk, signal, crosswalk, class_map, self.segmenter.label_ids,
+                round((perf_counter() - started) * 1000))

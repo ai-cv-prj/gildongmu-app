@@ -7,21 +7,22 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
 
-const context = { window: {}, performance: { now: () => 0 } };
+const settings = require("./settings");
+const context = { window: { GConfig: { get: () => settings } }, performance: { now: () => 0 } };
 vm.runInNewContext(fs.readFileSync("frontend/js/guidance.js", "utf8"), context);
 const spoken = [];
 let now = 0;
-const player = {
-  speak(text, _until, options) {
+const coordinator = {
+  PRIORITY: { walking: 2, trafficChange: 3, traffic: 4 },
+  request({ text }) {
     spoken.push(text);
-    options?.onEnd?.();
     return true;
   },
-  cancel() {},
+  clear() {},
 };
 
 // 1초가 넘는 간격에서도 세 프레임 확인 후 한 번 안내
-const traffic = context.window.GGuidance.create({ player, now: () => now });
+const traffic = context.window.GGuidance.create({ coordinator, now: () => now });
 traffic.start("test", false, "traffic");
 assert.deepEqual(spoken, []);
 for (const [index, time] of [100, 1200, 2300].entries()) {
@@ -33,7 +34,7 @@ for (const [index, time] of [100, 1200, 2300].entries()) {
 assert.equal(spoken.filter(text => text === "빨간불입니다.").length, 1);
 
 // 새 위험 이벤트는 신호 안내와 독립적으로 수신
-const walking = context.window.GGuidance.create({ player, now: () => now });
+const walking = context.window.GGuidance.create({ coordinator, now: () => now });
 walking.start("test", false, "walking");
 assert.equal(spoken.some(text => text.includes("안내를 시작합니다")), false);
 now = 2400;

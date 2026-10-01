@@ -12,21 +12,36 @@ from pathlib import Path
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+import cv2
+
 from backend.inference import RealtimeInference
 from backend.response import make_response
+from src.settings import load_app_config
 
 
 class SessionError(Exception):
     """세션 상태나 프레임 순서가 올바르지 않을 때 발생한다."""
 
 
+# 폴더명에 사용할 사용자 입력 정리
+def safe_folder_part(value, fallback="", max_length=None):
+    """
+    파일명에 사용할 수 없는 문자를 바꾸고 선택한 길이만 남기는 함수이다.
+    """
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", value).strip(" .")
+    if max_length is not None:
+        cleaned = cleaned[:max_length].rstrip(" .")
+    return cleaned or fallback
+
+
 class SessionManager:
     """한 서버에서 한 휴대폰 테스트를 순서대로 처리한다."""
 
     # 모델 저장소와 출력 폴더 준비
-    def __init__(self, output_dir, model_factory=RealtimeInference):
+    def __init__(self, output_dir, model_factory=RealtimeInference, session_settings=None):
         """모델은 첫 세션 시작 시에만 로딩하고 이후 세션에서 재사용한다."""
         self.output_dir = Path(output_dir)
+        self.settings = session_settings if session_settings is not None else load_app_config()["session"]
         self.model_factory = model_factory
         self.models = None
         self.session = None
@@ -43,10 +58,13 @@ class SessionManager:
             else:
                 self.models.reset()
             session_id = uuid4().hex
-            safe_device = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", device_name).strip(" .") or "기종미상"
-            started_at = datetime.now(ZoneInfo("Asia/Seoul"))
+            safe_device = safe_folder_part(device_name, "기종미상")
+            safe_note = safe_folder_part(note, max_length=self.settings["folder_note_max_length"])
+            started_at = datetime.now(ZoneInfo(self.settings["timezone"]))
             date = started_at.strftime("%Y%m%d")
             base_name = f"{safe_device}_{started_at.strftime('%Y%m%d_%H%M%S')}"
+            if safe_note:
+                base_name = f"{base_name}_{safe_note}"
             index = 1
             while True:
                 folder_name = base_name if index == 1 else f"{base_name}_{index}"
@@ -56,6 +74,7 @@ class SessionManager:
                     break
                 except FileExistsError:
                     index += 1
+            (folder / "frames").mkdir()
             self.session = {
                 "id": session_id, "device_name": device_name, "note": note,
                 "date": date, "folder_name": folder_name,
@@ -80,11 +99,18 @@ class SessionManager:
                 raise SessionError("프레임 번호가 연속적이지 않습니다.")
             if session["last_capture_ms"] is not None and captured_at_ms <= session["last_capture_ms"]:
                 raise SessionError("촬영 시간이 이전 프레임보다 늦지 않습니다.")
-            risk, signal, class_map, label_ids, elapsed = self.models.predict(
+            risk, signal, crosswalk, class_map, label_ids, elapsed = self.models.predict(
                 frame, frame_id, captured_at_ms,
             )
             result = make_response(session_id, frame_id, captured_at_ms, frame,
-                                   risk, signal, class_map, label_ids, elapsed)
+                                   risk, signal, crosswalk, class_map, label_ids, elapsed)
+            frame_name = f"{frame_id:06d}.jpg"
+            frame_file = Path("frames") / frame_name
+            encoded, jpeg = cv2.imencode(".jpg", frame)
+            if not encoded:
+                raise SessionError("추론 프레임 이미지를 저장할 수 없습니다.")
+            (session["folder"] / frame_file).write_bytes(jpeg.tobytes())
+            result["frame_file"] = frame_file.as_posix()
             # 응답의 큰 PNG는 로그에서 제외하고 판단 결과와 선택 대상만 기록한다.
             record = {
                 **{key: value for key, value in result.items() if key not in ("walking", "traffic")},

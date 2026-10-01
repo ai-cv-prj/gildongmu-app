@@ -11,6 +11,10 @@
     ["초록불로 바뀌었습니다.", "green-changed"],
     ["빨간불로 바뀌었습니다.", "red-changed"],
     ["신호를 확인할 수 없습니다.", "missing"],
+    ["횡단보도 이탈! 오른쪽으로 이동하세요!", "crosswalk-exit-right"],
+    ["횡단보도 이탈! 왼쪽으로 이동하세요!", "crosswalk-exit-left"],
+    ["오른쪽으로 이동하세요!", "crosswalk-align-right"],
+    ["왼쪽으로 이동하세요!", "crosswalk-align-left"],
   ]);
   for (const [text, name] of [...CLIPS]) CLIPS.set(`모의 신호. ${text}`, `mock-${name}`);
   const directions = [["left", "왼쪽"], ["center", "가운데"], ["right", "오른쪽"]];
@@ -22,9 +26,12 @@
     CLIPS.set(`${direction}에 여러 장애물.`, `danger-${key}-multiple`);
   }
   CLIPS.set("여러 방향에 장애물.", "danger-multiple-directions");
-  const source = name => `/static/audio/ko-v1/${name}.mp3${name.startsWith("danger-") ? "?v=walking-direction-v1" : ""}`;
+  const source = name => `/audio/${name}.mp3${name.startsWith("danger-")
+    ? "?v=walking-direction-v1" : name.startsWith("crosswalk-")
+      ? "?v=crosswalk-ava-v1" : "?v=signal-sunhi-v1"}`;
 
   function create({ onError = () => {}, onStatus = () => {}, now = () => performance.now() } = {}) {
+    const settings = window.GConfig.get().audio;
     // 클릭으로 시작한 재생기를 이후 신호 안내에도 재사용한다.
     const audio = window.Audio ? new window.Audio() : null;
     let audioContext = null, recordingDestination = null;
@@ -32,7 +39,7 @@
     const queue = [];
     if (audio) {
       audio.preload = "auto";
-      audio.volume = 1;
+      audio.volume = settings.volume;
       audio.muted = false;
     }
 
@@ -70,7 +77,7 @@
       }
     }
 
-    function speak(text, validUntil = now() + 8000, { onEnd = () => {} } = {}) {
+    function speak(text, validUntil = now() + settings.default_validity_ms, { onEnd = () => {} } = {}) {
       if (!audio || !CLIPS.has(text)) {
         const message = !audio ? "이 브라우저는 음성 재생을 지원하지 않습니다." : "안내 음원이 없습니다. 페이지를 새로고침해 주세요.";
         onStatus(message);
@@ -78,9 +85,7 @@
         return false;
       }
       if (now() >= validUntil) return false;
-      // 위험 경고는 이전 음성의 종료를 기다리지 않고 최신 장면만 재생한다.
-      if (CLIPS.get(text).startsWith("danger-") && (current || queue.length)) cancel();
-      // 신호 안내는 대기열에서 순서대로 재생하고 위험 안내는 바로 시작한다.
+      // 안내 간 우선순위와 취소는 전역 음성 관리자가 결정한다.
       // 음원 로딩 제한 시간은 앞선 안내가 끝난 뒤 재생을 시도할 때부터 센다.
       queue.push({ text, onEnd, startTimeoutMs: validUntil - now(), started: false });
       return current ? true : playNext();
@@ -107,7 +112,7 @@
         request.started = true;
         clearTimeout(timer);
         onStatus("음성 재생 중입니다. 들리지 않으면 미디어 음량과 연결된 이어폰을 확인해 주세요.");
-        timer = setTimeout(() => fail("음성 재생이 끝나지 않아 중단했습니다. 다시 시작해 주세요."), 15000);
+        timer = setTimeout(() => fail("음성 재생이 끝나지 않아 중단했습니다. 다시 시작해 주세요."), settings.playback_timeout_ms);
       };
       const rejected = error => {
         const messages = {

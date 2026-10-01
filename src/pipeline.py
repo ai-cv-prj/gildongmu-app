@@ -12,8 +12,8 @@ import warnings
 from pathlib import Path
 
 import cv2
-import yaml
 
+from src.settings import DEFAULT_PATHS_CONFIG, load_paths, read_yaml
 from src.sidewalk import SidewalkSegmenter
 from src.obstacle import ObstacleDetector, validate_yolo_config
 from src.visualization import draw_detections, overlay_segmentation, draw_traffic
@@ -22,9 +22,12 @@ from src.risk import RiskEngine, VideoClock
 from src.risk_config import risk_config as normalize_risk, tracking_config as normalize_tracking
 from src.risk_visualization import draw_risk
 from src.risk_log import RiskLog
-from src.walking_voice import WalkingVoice
+from src.walking_voice import WalkingVoice, suppress_non_green_crosswalk_voice
 from src.traffic_voice import TrafficVoice
 from src.video_audio import render_voice_track, mux_voice
+from src.crosswalk_safety import CrosswalkSafetyEngine, crosswalk_safety_config as normalize_crosswalk
+from src.crosswalk_visualization import draw_crosswalk_safety
+from src.voice_priority import CrosswalkVoice, prioritize_voice_events
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -41,8 +44,17 @@ def resolve_path(value):
 # YAML 설정 읽기
 def load_config(config_path):
     """모델별 가중치 경로와 공통 추론 설정을 확인한다."""
-    with resolve_path(config_path).open(encoding="utf-8") as file:
-        config = yaml.safe_load(file)
+    config = read_yaml(config_path)
+    paths = load_paths(config.get("paths_config", DEFAULT_PATHS_CONFIG))
+    for key in ("sample_dir", "output_dir", "session_dir"):
+        config.setdefault(key, paths[key])
+    config.setdefault("mask2former", {"weights": paths["mask2former_weights"]})
+    for name in ("yolo", "traffic"):
+        settings = config.setdefault(name, {})
+        if isinstance(settings, dict):
+            settings.setdefault("weights", paths[f"{name}_weights"])
+    if isinstance(config["traffic"], dict):
+        config["traffic"].setdefault("classifier_weights", paths["traffic_classifier_weights"])
     required = {"mask2former", "sample_dir", "output_dir", "device", "overlay_alpha"}
     if not isinstance(config, dict) or not required.issubset(config):
         raise ValueError(f"설정에 필요한 항목: {', '.join(sorted(required))}")
@@ -112,7 +124,7 @@ def publish_video_result(video_source, output_path, risk_log=None):
 
 # 영상 한 개 처리
 def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=None, traffic=None,
-                  risk_config=None, tracking_config=None):
+                  risk_config=None, tracking_config=None, crosswalk_config=None):
     """임시 MP4로 처리한 뒤 프레임 수 확인에 성공하면 이전 결과를 교체한다."""
     if segmenter is None and detector is None and traffic is None:
         raise ValueError("도보, 장애물 또는 신호등 모델이 하나 이상 필요합니다.")
@@ -133,11 +145,12 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
     risk_log = None
     voice = None
     signal_voice = None
+    crosswalk_voice = None
     temporary_wav = None
-    temporary_signal_wav = None
     temporary_mux = None
     committed = False
     engine = None
+    crosswalk_engine = None
     try:
         if not capture.isOpened():
             raise RuntimeError(f"영상을 열 수 없습니다: {video_path}")
@@ -176,6 +189,11 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
             traffic.reset()
             signal_voice = TrafficVoice()
 
+        crosswalk_settings = normalize_crosswalk(crosswalk_config)
+        if crosswalk_settings["enabled"] and segmenter is not None and traffic is not None:
+            crosswalk_engine = CrosswalkSafetyEngine(crosswalk_settings)
+            crosswalk_voice = CrosswalkVoice()
+
         if risk_enabled:
             engine = RiskEngine(risk_settings, tracking_config)
             clock = VideoClock(fps)
@@ -203,13 +221,32 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
             if risk_result is not None:
                 engine.add_sidewalk_context(risk_result, class_map,
                     segmenter.label_ids if segmenter is not None else None, frame.shape)
-                voice.observe(risk_result, width, processed_frames / fps)
             traffic_result = traffic.predict(
                 frame, frame_id=processed_frames + 1,
                 captured_at_ms=processed_frames * 1000 / fps,
             ) if traffic is not None else None
+            if risk_result is not None:
+                suppress_non_green_crosswalk_voice(
+                    risk_result, traffic_result, class_map,
+                    segmenter.label_ids if segmenter is not None else None,
+                    frame.shape, crosswalk_settings,
+                )
+                voice.observe(risk_result, width, processed_frames / fps)
             if traffic_result is not None:
                 signal_voice.observe(traffic_result, processed_frames + 1, processed_frames / fps)
+            crosswalk_result = None
+            if crosswalk_engine is not None:
+                camera_view = (risk_result or {}).get("camera_view") or {}
+                camera_stable = (camera_view.get("status", "clear") == "clear"
+                                 and (risk_result or {}).get("camera_motion_stable", True))
+                crosswalk_result = crosswalk_engine.update(
+                    class_map, segmenter.label_ids, frame.shape, traffic_result,
+                    processed_frames / fps, camera_stable=camera_stable,
+                    detections=(risk_result or {}).get("detections", []),
+                )
+                crosswalk_voice.observe(crosswalk_result, processed_frames / fps, 1 / fps)
+                if risk_result is not None:
+                    risk_result["crosswalk_safety"] = crosswalk_result
             if traffic_result is not None:
                 # 일반 장애물 모델의 traffic_light 박스와 대상 신호등 표시가 겹치지 않게 한다.
                 detections = [item for item in detections if item["class_name"] != "traffic_light"]
@@ -225,6 +262,8 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
                     risk_log.write(risk_result)
             if traffic_result is not None:
                 result = draw_traffic(result, traffic_result)
+            if crosswalk_result is not None:
+                result = draw_crosswalk_safety(result, crosswalk_result)
             writer.write(result)
             processed_frames += 1
             print(
@@ -247,29 +286,22 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
         video_to_publish = temporary_path
         walking_events = voice.events if voice is not None else []
         signal_events = signal_voice.events if signal_voice is not None else []
-        if walking_events or signal_events:
+        crosswalk_events = (crosswalk_voice.events(processed_frames / fps)
+                            if crosswalk_voice is not None else [])
+        voice_events = prioritize_voice_events(walking_events, signal_events, crosswalk_events)
+        if voice_events:
             with tempfile.NamedTemporaryFile(
                 dir=output_path.parent, prefix=f".{output_path.stem}.",
                 suffix=".partial.wav", delete=False,
             ) as temporary_file:
                 temporary_wav = Path(temporary_file.name)
-            render_voice_track(walking_events or signal_events, processed_frames / fps, temporary_wav)
-            if walking_events and signal_events:
-                with tempfile.NamedTemporaryFile(
-                    dir=output_path.parent, prefix=f".{output_path.stem}.",
-                    suffix=".signal.partial.wav", delete=False,
-                ) as temporary_file:
-                    temporary_signal_wav = Path(temporary_file.name)
-                render_voice_track(signal_events, processed_frames / fps, temporary_signal_wav)
+            render_voice_track(voice_events, processed_frames / fps, temporary_wav)
             with tempfile.NamedTemporaryFile(
                 dir=output_path.parent, prefix=f".{output_path.stem}.",
                 suffix=".voice.partial.mp4", delete=False,
             ) as temporary_file:
                 temporary_mux = Path(temporary_file.name)
-            if temporary_signal_wav is None:
-                mux_voice(temporary_path, temporary_wav, temporary_mux)
-            else:
-                mux_voice(temporary_path, temporary_wav, temporary_mux, temporary_signal_wav)
+            mux_voice(temporary_path, temporary_wav, temporary_mux)
             video_to_publish = temporary_mux
 
         if risk_log is not None:
@@ -287,8 +319,6 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
                 temporary_path.unlink(missing_ok=True)
             if temporary_wav is not None:
                 temporary_wav.unlink(missing_ok=True)
-            if temporary_signal_wav is not None:
-                temporary_signal_wav.unlink(missing_ok=True)
             if temporary_mux is not None:
                 temporary_mux.unlink(missing_ok=True)
             if risk_log is not None:
@@ -431,5 +461,6 @@ def run_video_inference(
         print(f"입력 영상 [{index}/{len(videos)}]: {video}")
         output.parent.mkdir(parents=True, exist_ok=True)
         process_video(video, output, segmenter, config["overlay_alpha"], detector=detector,
-                      traffic=traffic, risk_config=risk_settings, tracking_config=tracking_settings)
+                      traffic=traffic, risk_config=risk_settings, tracking_config=tracking_settings,
+                      crosswalk_config=config.get("crosswalk_safety"))
     return outputs

@@ -48,9 +48,14 @@ window.GOverlay = (() => {
       const x = x1 * canvas.width, y = y1 * canvas.height;
       const w = (x2 - x1) * canvas.width, h = (y2 - y1) * canvas.height;
       ctx.strokeRect(x, y, w, h);
-      const name = kind === "crosswalk" ? "횡단보도" : kind === "traffic"
+      const baseName = kind === "crosswalk" ? "횡단보도" : kind === "traffic"
         ? selected ? `신호 ${item.signal_state || "확인 중"}` : "신호 후보"
         : item.display_label || item.class_name || "장애물";
+      const identifiers = kind === "walking" ? [
+        Number.isInteger(item.track_id) ? `T${item.track_id}` : null,
+        Number.isInteger(item.event_id) ? `E${item.event_id}` : null,
+      ].filter(Boolean) : [];
+      const name = identifiers.length ? `${baseName} · ${identifiers.join(" · ")}` : baseName;
       ctx.font = `bold ${Math.max(13, canvas.width / 38)}px system-ui`;
       const textWidth = ctx.measureText(name).width + 12;
       const labelY = Math.max(2, y - 26);
@@ -61,7 +66,7 @@ window.GOverlay = (() => {
     }
   }
 
-  // 현장 테스트용 정류장 판정. 캔버스에 그리므로 선택적 오버레이 영상에도 남는다.
+  // 현장 테스트용 정류장 판정. 캔버스에 그리므로 오버레이 영상에도 남는다.
   function stopDiagnostic(event) {
     const state = event?.status || "unavailable";
     const color = state === "nearby" ? "#57d7ab"
@@ -81,14 +86,64 @@ window.GOverlay = (() => {
     ctx.font = `bold ${Math.max(14, Math.min(20, canvas.width / 32))}px system-ui`;
     const bannerWidth = Math.min(canvas.width - 16, ctx.measureText(label).width + 22);
     const x = canvas.width - bannerWidth - 8;
+    const y = 52;
     ctx.fillStyle = "#08131feb";
-    ctx.fillRect(x, 8, bannerWidth, 36);
+    ctx.fillRect(x, y, bannerWidth, 36);
     ctx.strokeStyle = color;
     ctx.lineWidth = 2;
-    ctx.strokeRect(x, 8, bannerWidth, 36);
+    ctx.strokeRect(x, y, bannerWidth, 36);
     ctx.fillStyle = color;
-    ctx.fillText(label, x + 11, 32);
+    ctx.fillText(label, x + 11, y + 24);
     ctx.restore();
+  }
+
+  // 횡단보도 안전 경계 표시
+  /** 가상 사용자 위치 높이에서 추정한 좌우 경계와 현재 발 위치를 그린다. */
+  function crosswalkSafety(event) {
+    const geometry = event?.geometry;
+    const values = [geometry?.left_x, geometry?.right_x, geometry?.foot_x, geometry?.foot_y];
+    if (!values.every(Number.isFinite)) return;
+    const [left, right, foot, y] = values;
+    const color = String(event.status).startsWith("outside") ? "#ff435b" : "#f16be0";
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(left * canvas.width, y * canvas.height);
+    ctx.lineTo(right * canvas.width, y * canvas.height);
+    ctx.stroke();
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.arc(foot * canvas.width, y * canvas.height, 7, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 현재 횡단보도 상태 표시
+  /** 모바일 화면 오른쪽 위에 현재 횡단 상태를 짧은 배지로 표시한다. */
+  function crosswalkStatus(event) {
+    const status = event?.status;
+    if (!status || status === "disabled") return;
+    const text = `CROSSWALK: ${status}`;
+    ctx.font = `bold ${Math.max(13, canvas.width / 38)}px system-ui`;
+    const padding = 8;
+    const height = Math.max(26, canvas.height / 24);
+    const width = ctx.measureText(text).width + padding * 2;
+    const x = Math.max(0, canvas.width - width - 8);
+    const y = 8;
+    ctx.fillStyle = "rgba(24, 24, 24, 0.88)";
+    ctx.fillRect(x, y, width, height);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(text, x + padding, y + height - 8);
+  }
+
+  // 하단 횡단보도 판단 ROI 표시
+  /** 서버 판정에 사용한 고정 ROI를 보라색 테두리로 표시한다. */
+  function crosswalkRoi(event) {
+    const roi = event?.crosswalk_roi;
+    const values = [roi?.left, roi?.right, roi?.top, roi?.bottom];
+    if (!values.every(Number.isFinite)) return;
+    const [left, right, top, bottom] = values;
+    polygon([[left, top], [right, top], [right, bottom], [left, bottom]],
+      "#9b5de5", "#9b5de50d");
   }
 
   // 서버 응답의 PNG 마스크와 위험·신호 결과 합성
@@ -104,9 +159,11 @@ window.GOverlay = (() => {
       for (const points of roi.corridor_polygons || [roi.corridor_polygon])
         polygon(points, "#4ce3fa", "#4ce3fa20");
       polygon(roi.immediate_polygon, "#ff88ba", "#ff88ba24");
+      crosswalkRoi(result.crosswalk?.event);
       boxes(result.walking?.detections, "walking");
-      boxes(result.traffic?.crosswalks, "crosswalk");
       boxes(result.traffic?.detections, "traffic");
+      crosswalkSafety(result.crosswalk?.event);
+      crosswalkStatus(result.crosswalk?.event);
       stopDiagnostic(result.stop_proximity);
     };
     if (!result.walking?.mask_png) return draw(null);

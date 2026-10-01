@@ -89,7 +89,7 @@ OpenCV 결과 영상은 영문 라벨을 사용합니다. TARGET·CANDIDATE·UNS
 
 ## 모델·의존성·실행
 
-`configs/inference.yaml`의 기본 경로 `weights/traffic/best_YOLO.pt`는 **v2 내용**입니다.
+`configs/paths.yaml`의 기본 경로 `weights/traffic/best_YOLO.pt`는 **v2 내용**입니다.
 테스트 앱의 `best_YOLO_v2.pt`와 SHA-256이 같으며 색상 분류기도 동일합니다.
 가중치는 Git 제외 대상이므로 다른 환경에는 별도로 배치해야 합니다.
 보행 모델은 `weights/walking/mask2former/`와
@@ -103,15 +103,15 @@ OpenCV 결과 영상은 영문 라벨을 사용합니다. TARGET·CANDIDATE·UNS
 
 ```bash
 python -m pip install lap==0.5.13
-python -m scripts.run_video_inference --sample-dir data/samples/sample3
-python -m scripts.run_video_inference --mode traffic --sample-dir data/samples/sample3 \
-  --output-dir outputs/traffic_samples
+python -m scripts.run_video_inference --sample-dir data/samples/input/sample3
+python -m scripts.run_video_inference --mode traffic --sample-dir data/samples/input/sample3 \
+  --output-dir data/samples/output/traffic
 python -m pytest -q
 ```
 
 기본 모드는 `all`입니다. `both`는 도보·장애물, `traffic`은 신호등 단독 추론입니다.
-예시 입력의 출력은 `outputs/result_samples/sample3/result_원본파일명.mp4`이며,
-신호등 단독 비교 영상은 `outputs/traffic_samples/sample3/`에 따로 저장합니다.
+예시 입력의 출력은 `data/samples/output/sample3/result_원본파일명.mp4`이며,
+신호등 단독 비교 영상은 `data/samples/output/traffic/sample3/`에 따로 저장합니다.
 위험 로그를 켜면 같은 폴더에 `.risk.jsonl`도 저장합니다. 폴더가 없으면 생성하고,
 같은 이름의 결과가 있으면 추론 완료 후 교체합니다. 공용 `--conf`, `--imgsz`는
 장애물 검출용이며 신호등 설정은 YAML의 `traffic` 항목을 사용합니다.
@@ -199,20 +199,21 @@ PYTHONPATH=/tmp/gildongmu-port-deps PYTHONDONTWRITEBYTECODE=1 \
 ## 저장 영상의 신호등 음성 안내 (SESAC-104)
 
 `src/traffic_voice.py`가 프레임 시각에 따라 안내 대상을 확인합니다. 테스트 앱에서 가져온
-한국어 MP3 7개는 `assets/audio/ko-v1/`에 있으며, `src/video_audio.py`가 결과 MP4에 합성합니다.
-영상 시작에는 “신호 안내를 시작합니다.”가 들어가고, 이 음원이 끝나기 전 프레임은 색상 안내의
-근거로 사용하지 않습니다. 선택된 신호등의 정수 `track_id`와 빨강·초록 색상이 필요합니다.
+한국어 신호 안내 MP3는 `configs/paths.yaml`의 `voice_dir`에 있으며,
+`src/video_audio.py`가 이 설정을 읽어 결과 MP4에 합성합니다.
+시작 안내 없이 첫 프레임부터 신호를 확인합니다. 선택된 신호등의 정수 `track_id`와
+빨강·초록 색상이 필요합니다.
 
 - 같은 대상·같은 색을 3프레임·400ms 이상 확인 후 안내.
 - 최초 초록불은 “초록불입니다. 다음 초록 신호를 기다려 주세요.”.
 - 같은 대상의 연속 빨강↔초록 전환 시 변경 안내, 같은 색 반복 억제.
 - 신호색 확인 이력이 있을 때만 2초 이상 확인 불가 구간에서 한 번 안내.
 - 확인 불가 안내 후 재확인한 색은 같은 색이어도 한 번 안내.
-- 재확인 초록불은 “초록불입니다.”. 신호등 음성끼리는 앞 문장이 끝난 뒤 순서대로 재생.
+- 재확인 초록불은 “초록불입니다.”. 상위 경고가 재생 중이면 지난 신호 안내는 대기시키지 않고 폐기.
 
-신호등과 도보 장애물 음성은 별도 트랙을 합쳐 겹치는 구간도 그대로 저장합니다.
-두 안내의 우선순위나 겹침 조정은 아직 적용하지 않았습니다. 입력이 영상 파일이므로 테스트 앱의
-브라우저 재생 제어·네트워크 응답 지연 검사는 적용 대상이 아닙니다. 음성은 영상 길이에서 끝납니다.
+후속 횡단보도 이탈 안내에서 신호등과 도보 장애물 음성을 단일 트랙으로 통합했습니다.
+우선순위는 횡단보도 이탈 → 장애물 위험 → 신호 변경 → 일반 신호이며, 상위 안내와 겹친 하위 안내는
+폐기합니다. 브라우저도 같은 우선순위를 전역 음성 관리자 한 개로 적용하고, 음성은 영상 길이에서 끝납니다.
 
 자동 테스트는 전체 191개가 통과했고, 실제 가중치를 사용한 `all` 모드 2프레임 영상에서
 MP4 오디오 트랙 생성을 확인했습니다. 이 짧은 확인으로 sample3의 신호색 안내 정확도를
