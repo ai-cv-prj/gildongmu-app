@@ -80,12 +80,15 @@ class RealtimeInference:
             risk, signal, class_map, self.segmenter.label_ids, frame.shape,
             self.crosswalk_settings,
         )
-        self.voice.observe(risk, width, captured_at_ms / 1000)
         camera_stable = crosswalk_camera_stable(risk)
         crosswalk = self.crosswalk.update(
             class_map, self.segmenter.label_ids, frame.shape, signal,
             captured_at_ms / 1000, camera_stable=camera_stable,
             detections=risk["detections"],
+        )
+        self.voice.observe(
+            risk, width, captured_at_ms / 1000,
+            crossing_active=crosswalk["crossing_active"],
         )
         # 영상 출력과 마찬가지로 일반 장애물 모델의 신호등 박스는 중복 표시하지 않는다.
         risk["detections"] = [item for item in risk["detections"]

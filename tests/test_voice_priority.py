@@ -11,7 +11,7 @@ from src.voice_priority import CrosswalkVoice, prioritize_voice_events
 
 # 횡단보도 이탈 구간 반복 확인
 def test_crosswalk_voice_repeats_until_return():
-    """이탈 구간에는 음원을 연달아 배치하고 복귀 시각에 중단 표식을 둔다."""
+    """이탈 구간에는 음원을 연달아 배치하고 복귀 후 새 반복만 중단한다."""
     voice = CrosswalkVoice()
     outside = {"repeat": True, "voice_clip": "crosswalk-exit-right.mp3"}
     voice.observe(outside, 1.0, 0.1)
@@ -19,8 +19,39 @@ def test_crosswalk_voice_repeats_until_return():
     voice.observe({"repeat": False}, 2.0, 0.1)
     with patch("src.voice_priority.clip_duration", return_value=0.4):
         events = voice.events(3.0)
-    assert [round(item[0], 1) for item in events] == [1.0, 1.4, 1.8, 2.0]
-    assert events[-1][1] is None
+    assert [round(item[0], 1) for item in events] == [1.0, 1.4, 1.8]
+    assert all(item[1] == "crosswalk-exit-right.mp3" for item in events)
+
+
+# 짧은 복귀 뒤 같은 방향 이탈의 연속 재생 확인
+def test_same_direction_reexit_continues_current_crosswalk_clip():
+    """현재 문장이 끝나기 전 같은 방향으로 재이탈하면 원래 반복 박자를 유지한다."""
+    voice = CrosswalkVoice()
+    outside = {"repeat": True, "voice_clip": "crosswalk-exit-right.mp3"}
+    voice.observe(outside, 1.0, 0.1)
+    voice.observe(outside, 1.5, 0.1)
+    voice.observe({"repeat": False}, 2.0, 0.1)
+    voice.observe(outside, 2.1, 0.1)
+    voice.observe(outside, 2.5, 0.1)
+    voice.observe({"repeat": False}, 2.6, 0.1)
+    with patch("src.voice_priority.clip_duration", return_value=0.4):
+        events = voice.events(3.0)
+    assert [round(item[0], 1) for item in events] == [1.0, 1.4, 1.8, 2.2]
+
+
+
+
+# 반대 방향 재이탈의 즉시 교체 확인
+def test_opposite_crosswalk_exit_interrupts_current_direction():
+    """반대 방향 이탈 음성은 이전 방향 문장이 재생 중이어도 즉시 교체한다."""
+    crosswalk = [
+        (1.0, "crosswalk-exit-right.mp3", 1, "crosswalk"),
+        (1.2, "crosswalk-exit-left.mp3", 1, "crosswalk"),
+    ]
+    with patch("src.voice_priority.clip_duration", return_value=0.8):
+        events = prioritize_voice_events([], [], crosswalk)
+    assert events == [(1.0, "crosswalk-exit-right.mp3"),
+                      (1.2, "crosswalk-exit-left.mp3")]
 
 
 # 전역 음성 우선순위 확인
@@ -47,3 +78,29 @@ def test_red_traffic_preempts_walking_without_queue():
             [],
         )
     assert events == [(0.0, "walking-straight.mp3"), (0.2, "red.mp3")]
+
+
+# 장애물 행동 전환 즉시 반영 확인
+def test_changed_walking_action_interrupts_previous_walking_clip():
+    """새 장애물 행동은 재생 중인 이전 행동과 겹쳐도 폐기하지 않는다."""
+    with patch("src.voice_priority.clip_duration", return_value=1.0):
+        events = prioritize_voice_events(
+            [(0.0, "walking-straight.mp3"),
+             (0.3, "walking-move-left.mp3"),
+             (0.6, "walking-move-right.mp3")],
+            [],
+            [],
+        )
+    assert events == [
+        (0.0, "walking-straight.mp3"),
+        (0.3, "walking-move-left.mp3"),
+        (0.6, "walking-move-right.mp3"),
+    ]
+
+
+def test_crossing_suppression_stops_active_walking_clip():
+    """횡단 진입의 보행 중단 이벤트는 재생 중인 장애물 음성만 자른다."""
+    with patch("src.voice_priority.clip_duration", return_value=1.0):
+        events = prioritize_voice_events(
+            [(0.0, "walking-straight.mp3"), (0.2, None)], [], [])
+    assert events == [(0.0, "walking-straight.mp3"), (0.2, None)]

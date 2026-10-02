@@ -216,6 +216,17 @@ class RiskTests(unittest.TestCase):
         self.assertFalse(np.array_equal(rendered[:40],FRAME[:40]))
         np.testing.assert_array_equal(rendered[40:],FRAME[40:])
 
+    # 처음 핑크 ROI에서 포착된 객체의 경고 복원 확인
+    def test_first_obstacle_inside_immediate_roi_can_warn(self):
+        """처음 보인 위치만으로 장애물의 위험 경고를 제외하지 않는다."""
+        result = engine().update(FRAME, [detection((40, 80, 60, 99))], 0)
+        item = result["detections"][0]
+        self.assertEqual(item["risk_level"], "danger")
+        self.assertEqual(item["alert_level"], "danger")
+        self.assertNotIn("rear_origin", item)
+        self.assertNotIn("warning_suppressed", item)
+        self.assertEqual(result["warning"]["level"], "danger")
+
     def test_alert_cooldown_escalation_tentative_identity_and_release(self):
         e=engine(None)
         result=e.update(FRAME,[detection((40,30,60,65))],0)

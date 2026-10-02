@@ -61,6 +61,7 @@ def make_response(session_id, frame_id, captured_at_ms, frame, risk, signal, cro
                 "warning_text": risk["warning_text"], "roi": risk["roi"],
                 "camera_view": risk["camera_view"],
                 "last_action": risk.get("last_action"),
+                "voice_action": risk.get("voice_action"),
                 "voice_text": risk.get("voice_text"),
             },
             "mask_png": encode_mask(class_map, label_ids),

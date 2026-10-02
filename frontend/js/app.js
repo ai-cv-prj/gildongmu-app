@@ -165,7 +165,8 @@
     audioCoordinator.acceptCrosswalk(result.crosswalk?.event, capturedAt);
     walkingGuide.accept({ session_id: result.session_id, frame_id: result.frame_id,
       captured_at_ms: result.captured_at_ms,
-      detections: result.walking.detections, event: result.walking.event }, capturedAt);
+      detections: result.walking.detections, event: result.walking.event,
+      crossing_active: result.crosswalk?.event?.crossing_active === true }, capturedAt);
     trafficGuide.accept({ session_id: result.session_id, frame_id: result.frame_id,
       detections: result.traffic.detections, event: result.traffic.event }, capturedAt);
   }

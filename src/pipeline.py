@@ -234,7 +234,6 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
                     segmenter.label_ids if segmenter is not None else None,
                     frame.shape, crosswalk_settings,
                 )
-                voice.observe(risk_result, width, processed_frames / fps)
             if traffic_result is not None:
                 signal_voice.observe(traffic_result, processed_frames + 1, processed_frames / fps)
             crosswalk_result = None
@@ -248,6 +247,12 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
                 crosswalk_voice.observe(crosswalk_result, processed_frames / fps, 1 / fps)
                 if risk_result is not None:
                     risk_result["crosswalk_safety"] = crosswalk_result
+            if risk_result is not None:
+                voice.observe(
+                    risk_result, width, processed_frames / fps,
+                    crossing_active=bool(
+                        crosswalk_result and crosswalk_result["crossing_active"]),
+                )
             if traffic_result is not None:
                 # 일반 장애물 모델의 traffic_light 박스와 대상 신호등 표시가 겹치지 않게 한다.
                 detections = [item for item in detections if item["class_name"] != "traffic_light"]
