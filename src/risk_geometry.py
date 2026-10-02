@@ -21,6 +21,44 @@ def overlap(box, polygon):
     intersection, _ = cv2.intersectConvexConvex(rectangle(box), np.asarray(polygon, np.float32))
     return float(np.clip(intersection / area, 0, 1))
 
+
+# 수평 선분과 다각형 내부의 실제 겹침 확인
+def horizontal_segment_intersects_polygon(segment, polygon):
+    """
+    수평 선분의 일부가 볼록 다각형 내부에 실제로 들어가는지 확인한다.
+    경계의 한 점에 닿기만 하는 경우는 겹침으로 판단하지 않는다.
+    """
+    x1, y, x2 = map(float, segment)
+    if not np.isfinite([x1, y, x2]).all() or x2 <= x1:
+        return False
+    intersections = []
+    points = list(polygon)
+    for first, second in zip(points, points[1:] + points[:1]):
+        ax, ay = map(float, first)
+        bx, by = map(float, second)
+        if abs(ay - by) < 1e-9:
+            if abs(y - ay) < 1e-9:
+                intersections.extend((ax, bx))
+            continue
+        if min(ay, by) <= y <= max(ay, by):
+            intersections.append(ax + (y - ay) * (bx - ax) / (by - ay))
+    if len(intersections) < 2:
+        return False
+    polygon_left, polygon_right = min(intersections), max(intersections)
+    return min(x2, polygon_right) - max(x1, polygon_left) > 1e-9
+
+
+# 수직 선분과 다각형 내부의 실제 겹침 확인
+def vertical_segment_intersects_polygon(segment, polygon):
+    """
+    수직 선분의 일부가 볼록 다각형 내부에 실제로 들어가는지 확인한다.
+    좌표축을 바꿔 수평 선분과 같은 기준으로 판정한다.
+    """
+    x, y1, y2 = map(float, segment)
+    swapped_polygon = [[point[1], point[0]] for point in polygon]
+    return horizontal_segment_intersects_polygon(
+        [y1, x, y2], swapped_polygon)
+
 # 위험 판정용 화면 기하 계산
 def geometry(detection, shape, cfg, roi=None):
     """객체 발자국과 복도·즉시 위험 ROI의 관계를 계산한다."""
@@ -68,6 +106,12 @@ def geometry(detection, shape, cfg, roi=None):
     edges = [name for name, yes in (
         ("left", x1 <= margin), ("right", x2 >= 1-margin),
         ("top", y1 <= margin), ("bottom", y2 >= 1-margin)) if yes]
+    bbox_edges_in_immediate_roi = [name for name, intersects in (
+        ("top", horizontal_segment_intersects_polygon([x1, y1, x2], immediate)),
+        ("bottom", horizontal_segment_intersects_polygon([x1, y2, x2], immediate)),
+        ("left", vertical_segment_intersects_polygon([x1, y1, y2], immediate)),
+        ("right", vertical_segment_intersects_polygon([x2, y1, y2], immediate)),
+    ) if intersects]
     return {
         "box_norm": list(map(float, box)), "footprint": strip,
         "point": [(x1+x2)/2, y2], "height": y2-y1, "width": x2-x1,
@@ -80,6 +124,8 @@ def geometry(detection, shape, cfg, roi=None):
         "corridor_overlap": max(overlap(strip, poly) for poly in corridors),
         "immediate_overlap": overlap(strip, immediate),
         "central_immediate_overlap": overlap(strip, central_immediate),
+        "bbox_top_in_immediate_roi": "top" in bbox_edges_in_immediate_roi,
+        "bbox_edges_in_immediate_roi": bbox_edges_in_immediate_roi,
         "edge_contact": edges,
         "horizontal_path_gap": min([gap(poly) for poly in corridors]+[gap(immediate)]),
         "bottom_clipped": y2 >= 1-1/height,

@@ -9,7 +9,7 @@ from src.risk_config import risk_config
 from src.risk_geometry import geometry, sidewalk_context, surrounding_walkability
 from src.risk_motion import CameraMotionGuard, MotionHistory
 from src.tracking import DetectionTracker
-from src.alert_policy import AlertPolicy
+from src.alert_policy import AlertPolicy, iou
 from src.path_roi import SidewalkGuidedROI
 from src.risk_proximity import proximity
 from src.surface_risk import SurfaceRisk
@@ -63,10 +63,46 @@ class RiskEngine:
         self.labels.reset()
         self.warning_selector.reset()
         self.camera_view.reset()
+        self.track_last_seen = {}
+        self.rear_origin_track_ids = set()
+        self.recent_rear_boxes = []
         self.last_trusted_danger_time = None
         self.previous_time, self.previous_shape = None, None
         self.previous_tracker_status = self.tracker.status
         self.epoch = getattr(self, "epoch", -1) + 1
+
+    # 현재 검출의 후방 진입 상태 판정
+    def _rear_origin(self, detection, geometry_info, timestamp):
+        """
+        ID가 없거나 새로 등장한 객체를 판정하고 최근 후방 bbox의 상태를 승계한다.
+        오래 끊긴 추적 ID는 같은 번호여도 신규 객체로 다시 판정한다.
+        """
+        if not self.config["rear_origin_exclusion_enabled"]:
+            return False
+        bridge_seconds = self.config["id_bridge_s"]
+        self.recent_rear_boxes = [state for state in self.recent_rear_boxes
+                                  if timestamp - state["last_seen"] <= bridge_seconds]
+        track_id = detection.get("track_id")
+        last_seen = self.track_last_seen.get(track_id) if track_id is not None else None
+        new_identity = (track_id is None or last_seen is None
+                        or timestamp - last_seen > bridge_seconds)
+        if track_id is not None:
+            if last_seen is not None and timestamp - last_seen > bridge_seconds:
+                self.rear_origin_track_ids.discard(track_id)
+            self.track_last_seen[track_id] = timestamp
+        rear_origin = track_id in self.rear_origin_track_ids if track_id is not None else False
+        if new_identity:
+            direct_entry = bool(geometry_info["bbox_edges_in_immediate_roi"])
+            inherited = any(iou(geometry_info["box_norm"], state["box_norm"])
+                            >= self.config["id_bridge_iou"]
+                            for state in self.recent_rear_boxes)
+            rear_origin = direct_entry or inherited
+        if rear_origin:
+            if track_id is not None:
+                self.rear_origin_track_ids.add(track_id)
+            self.recent_rear_boxes.append({"box_norm": geometry_info["box_norm"],
+                                           "last_seen": timestamp})
+        return rear_origin
 
     # 프레임 위험도 판정
     def update(self, frame, detections, timestamp_s, timestamp_valid=True, class_map=None, label_ids=None):
@@ -101,6 +137,9 @@ class RiskEngine:
             self.surface.reset()
             self.labels.reset()
             self.warning_selector.reset()
+            self.track_last_seen.clear()
+            self.rear_origin_track_ids.clear()
+            self.recent_rear_boxes.clear()
             self.previous_tracker_status = self.tracker.status
             self.last_trusted_danger_time = None
             self.epoch += 1
@@ -132,6 +171,8 @@ class RiskEngine:
                 item.update(assessment_quality="unknown", reasons=["invalid_box"])
                 results.append(item)
                 continue
+            track_id = detection.get("track_id")
+            rear_origin = self._rear_origin(detection, g, timestamp_s)
             m = self.motion.update(detection, g, timestamp_s, timestamp_valid and camera_stable
                                    and not motion_gap and not view_unavailable,
                                    roi.get("corridor_polygons",roi["corridor_polygon"]))
@@ -217,6 +258,11 @@ class RiskEngine:
                 item["release_evidence"] = "lower_proximity_or_urgency"
             if m["quality"] == "valid" and not g["clipped"]:
                 item["assessment_quality"] = "valid"
+            if rear_origin:
+                item.update(risk_level="caution", rear_origin=True,
+                            warning_suppressed=True,
+                            voice_suppressed_reason="rear_origin")
+                item["reasons"] = ["rear_origin"]
             results.append(item)
         if view_unavailable:
             # Preserve detector output and raw geometric assessment for audit.

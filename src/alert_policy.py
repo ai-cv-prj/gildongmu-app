@@ -42,6 +42,11 @@ class AlertPolicy:
         for item in assessments:
             if item["risk_level"] is None:
                 continue
+            if item.get("warning_suppressed"):
+                item.update(alert_level=item["risk_level"], event_id=None,
+                            alert_status="suppressed", hold_reason=None,
+                            release_reason=None, event_identity_bridged=False)
+                continue
             matches=[(key,s) for key,s in self.states.items() if key not in used
                      and item["track_id"] is not None and s["track_id"]==item["track_id"]
                      and s["class_id"]==item["class_id"]]

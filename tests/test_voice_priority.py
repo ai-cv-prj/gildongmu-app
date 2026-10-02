@@ -47,3 +47,21 @@ def test_red_traffic_preempts_walking_without_queue():
             [],
         )
     assert events == [(0.0, "walking-straight.mp3"), (0.2, "red.mp3")]
+
+
+# 장애물 행동 전환 즉시 반영 확인
+def test_changed_walking_action_interrupts_previous_walking_clip():
+    """새 장애물 행동은 재생 중인 이전 행동과 겹쳐도 폐기하지 않는다."""
+    with patch("src.voice_priority.clip_duration", return_value=1.0):
+        events = prioritize_voice_events(
+            [(0.0, "walking-straight.mp3"),
+             (0.3, "walking-move-left.mp3"),
+             (0.6, "walking-move-right.mp3")],
+            [],
+            [],
+        )
+    assert events == [
+        (0.0, "walking-straight.mp3"),
+        (0.3, "walking-move-left.mp3"),
+        (0.6, "walking-move-right.mp3"),
+    ]
