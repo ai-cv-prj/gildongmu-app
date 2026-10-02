@@ -45,6 +45,7 @@
     const delay = performance.timeOrigin + event.at_ms - event.captured_at_ms;
     queueTiming({ kind: "audio", frame_id: event.frame_id,
       captured_at_ms: event.captured_at_ms, status: event.status, source: event.source,
+      occurred_at_ms: Math.round(performance.timeOrigin + event.at_ms),
       action: event.action ?? null,
       audio_delay_ms: event.status === "started" ? Math.max(0, Math.round(delay)) : null });
   }
@@ -53,6 +54,37 @@
     onDiagnostic: recordAudioTiming });
   const trafficGuide = GGuidance.create({ coordinator: audioCoordinator });
   const walkingGuide = GGuidance.create({ coordinator: audioCoordinator });
+  let boardingView = null;
+  const boardingGuide = GBoarding.create({ api: GApi, coordinator: audioCoordinator,
+    onError: message => { $("boarding-error").textContent = message; },
+    onChange: state => {
+      const previous = boardingView;
+      boardingView = state;
+      const visible = state && state.status !== "searching";
+      $("boarding-panel").hidden = !visible;
+      if (!visible) { $("boarding-error").textContent = ""; $("bus-number").value = ""; return; }
+      const pending = state.status === "pending";
+      const messages = {
+        awaiting_stop: "정류장 근처입니다. 멈춤 안내 후 버스 번호를 입력해 주세요.",
+        pending: "정류장 근처입니다. 탑승할 버스 번호를 입력하거나 취소를 눌러 주세요.",
+        submitted: `탑승할 버스: ${state.bus_number}`,
+        cancelled: "버스 탑승 입력을 취소했습니다. 보행 안내는 계속됩니다.",
+      };
+      const message = messages[state.status] || "";
+      if ($("boarding-message").textContent !== message) $("boarding-message").textContent = message;
+      $("boarding-form").hidden = !pending;
+      $("boarding-cancel").hidden = !["pending", "awaiting_stop"].includes(state.status);
+      $("boarding-reopen").hidden = !["submitted", "cancelled"].includes(state.status);
+      for (const id of ["boarding-submit", "boarding-cancel", "boarding-reopen", "bus-number"])
+        $(id).disabled = state.busy;
+      if (state.status !== previous?.status) {
+        $("boarding-error").textContent = "";
+      }
+      if (!state.busy && (state.status !== previous?.status || previous?.busy)) {
+        if (pending) $("bus-number").focus({ preventScroll: false });
+        else if (["submitted", "cancelled"].includes(state.status)) $("boarding-reopen").focus();
+      }
+    } });
 
   // 사용자에게 현재 작업 상태 알림
   /** 화면의 단일 상태 문장을 바꾼다. */
@@ -95,9 +127,16 @@
     const position = basis ? ` · ${basis}` : "";
     stopStatus.dataset.state = state;
     if (state === "nearby") {
-      stopStatus.textContent = "정류장 근접 추정" + position + " · " + event.observations + "회 연속 관측 · 검출 신뢰도 " + event.confidence.toFixed(2) + " (화면 기준)";
+      stopStatus.textContent = event.held
+        ? "정류장 근접 상태 유지" + position + " · 현재 재확인 중 (화면 기준)"
+        : "정류장 근접 추정" + position + " · 최근 구간 " + event.observations + "회 관측 · 검출 신뢰도 " + event.confidence.toFixed(2) + " (화면 기준)";
+    } else if (event?.arrival_recorded) {
+      stopStatus.textContent = "정류장 근접 확인 기록 · " + (state === "unavailable"
+        ? "현재 카메라 시야 확인 필요" : "현재 근접 재확인 중");
     } else if (state === "candidate") {
-      stopStatus.textContent = "정류장 후보 확인 중" + position + " · " + event.observations + "/" + event.required_observations + "회 관측 (화면 기준)";
+      stopStatus.textContent = event.held
+        ? "정류장 후보 유지" + position + " · 현재 재확인 중 (화면 기준)"
+        : "정류장 후보 확인 중" + position + " · " + event.observations + "/" + event.required_observations + "회 관측 (화면 기준)";
     } else {
       stopStatus.textContent = state === "unavailable"
         ? "정류장 근접 판단 보류 · 카메라 시야 확인 필요"
@@ -169,6 +208,7 @@
       crossing_active: result.crosswalk?.event?.crossing_active === true }, capturedAt);
     trafficGuide.accept({ session_id: result.session_id, frame_id: result.frame_id,
       detections: result.traffic.detections, event: result.traffic.event }, capturedAt);
+    boardingGuide.accept(result, capturedAt);
   }
 
   // 이전 응답을 기다린 다음 프레임 캡처
@@ -247,11 +287,13 @@
       sessionId = session.session_id;
       trafficGuide.bindSession(sessionId);
       walkingGuide.bindSession(sessionId);
+      boardingGuide.start(sessionId);
       GRecorder.start();
       voiceTick = setInterval(() => {
         trafficGuide.tick();
         walkingGuide.tick();
         audioCoordinator.tick();
+        boardingGuide.tick();
       }, settings.audio.tick_ms);
       nextFrame(version);
     } catch (error) {
@@ -271,6 +313,7 @@
       running = false;
       trafficGuide.stop();
       walkingGuide.stop();
+      boardingGuide.stop();
       audioCoordinator.stop();
       GRecorder.cancelPreparedAudio();
       GRecorder.stopPreview();
@@ -294,6 +337,7 @@
     request?.abort();
     trafficGuide.stop();
     walkingGuide.stop();
+    boardingGuide.stop();
     audioCoordinator.stop();
     showStopProximity(null);
     const id = sessionId;
@@ -347,6 +391,14 @@
   // 선택 사항과 브라우저 수명 이벤트 연결
   /** 화면이 숨겨지면 카메라 전송을 멈추고 다시 보이면 재개한다. */
   function bind() {
+    $("boarding-form").addEventListener("submit", event => {
+      event.preventDefault();
+      const number = $("bus-number").value.trim();
+      if (!number) { $("boarding-error").textContent = "탑승할 버스 번호를 입력해 주세요."; return; }
+      void boardingGuide.submit(number);
+    });
+    $("boarding-cancel").addEventListener("click", () => { void boardingGuide.cancel(); });
+    $("boarding-reopen").addEventListener("click", () => { void boardingGuide.reopen(); });
     device.addEventListener("change", () => { customDevice.hidden = device.value !== "custom"; });
     cameraButton.addEventListener("click", toggleCamera);
     testButton.addEventListener("click", () => running ? stopTest() : startTest());

@@ -73,12 +73,14 @@ window.GOverlay = (() => {
     const position = basis ? `${basis} ` : "";
     const color = state === "nearby" ? "#57d7ab"
       : state === "candidate" ? "#ffce73" : "#c2ceda";
-    const label = state === "nearby" ? `${position}정류장 근접 추정`
-      : state === "candidate" ? `${position}정류장 후보 ${event.observations}/${event.required_observations}`
+    const label = state === "nearby" ? `${position}정류장 ${event.held ? "근접 유지 · 재확인 중" : "근접 추정"}`
+      : event?.arrival_recorded ? "정류장 확인 기록 · 재확인 중"
+      : state === "candidate" ? event.held ? `${position}정류장 후보 유지`
+        : `${position}정류장 후보 ${event.observations}/${event.required_observations}`
       : state === "not_detected" ? "정류장 미검출" : "정류장 판정 보류";
     const box = event?.xyxy;
     ctx.save();
-    if (["nearby", "candidate"].includes(state) && Array.isArray(box)
+    if (!event?.held && ["nearby", "candidate"].includes(state) && Array.isArray(box)
         && box.length === 4 && box.every(Number.isFinite)) {
       ctx.strokeStyle = color;
       ctx.lineWidth = Math.max(4, canvas.width / 120);
@@ -173,6 +175,11 @@ window.GOverlay = (() => {
     const draw = mask => {
       if (current !== version) return onDrawn("superseded");
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (Number.isFinite(result.captured_at_ms) && typeof performance !== "undefined"
+          && Number.isFinite(performance.timeOrigin)
+          && performance.timeOrigin + performance.now() - result.captured_at_ms > 400) {
+        return onDrawn("stale");
+      }
       if (mask) ctx.drawImage(mask, 0, 0, canvas.width, canvas.height);
       const roi = result.walking?.event?.roi || {};
       for (const points of roi.corridor_polygons || [roi.corridor_polygon])

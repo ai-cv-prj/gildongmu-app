@@ -22,6 +22,7 @@ def normalize_detections(items, width, height):
             "class_name", "display_label", "confidence", "track_id", "signal_state",
             "selection_status", "alert_level", "risk_level", "detection_index",
             "event_id", "hazard_id", "voice_suppressed_reason",
+            "risk_suppressed_reason",
         ) if key in item}
         converted["xyxy"] = [max(0, min(1, float(value) / scale))
                              for value, scale in zip(box, (width, height, width, height))]
@@ -77,5 +78,6 @@ def make_response(session_id, frame_id, captured_at_ms, frame, risk, signal, cro
         },
         "crosswalk": {"event": crosswalk},
         "stop_proximity": risk.get("stop_proximity"),
+        "boarding": risk.get("boarding"),
         "inference_ms": inference_ms,
     }

@@ -7,6 +7,7 @@ file_path: backend/inference.py
 
 from time import perf_counter
 
+from backend.boarding import Boarding
 from backend.stop_proximity import StopProximity
 from src.crosswalk_safety import (
     CrosswalkSafetyEngine, crosswalk_camera_stable, crosswalk_safety_config,
@@ -55,6 +56,7 @@ class RealtimeInference:
         self.risk = RiskEngine(self.risk_settings, self.tracking_settings)
         self.voice = WalkingVoice()
         self.stop_proximity = StopProximity(self.stop_proximity_settings)
+        self.boarding = Boarding()
         self.crosswalk = CrosswalkSafetyEngine(self.crosswalk_settings)
         self.traffic.reset()
 
@@ -66,7 +68,8 @@ class RealtimeInference:
         class_map = self.segmenter.predict(frame)
         height, width = frame.shape[:2]
         risk = self.risk.update(frame, detections, captured_at_ms / 1000,
-                                True, class_map, self.segmenter.label_ids)
+                                True, class_map, self.segmenter.label_ids,
+                                suppress_stop_hazard=self.boarding.stationary)
         camera_view = risk.get("camera_view") or {}
         risk["stop_proximity"] = self.stop_proximity.update(
             risk["detections"], frame.shape, captured_at_ms / 1000,
@@ -86,6 +89,8 @@ class RealtimeInference:
             captured_at_ms / 1000, camera_stable=camera_stable,
             detections=risk["detections"],
         )
+        risk["boarding"] = self.boarding.observe(
+            risk["stop_proximity"], crossing_active=crosswalk["crossing_active"])
         self.voice.observe(
             risk, width, captured_at_ms / 1000,
             crossing_active=crosswalk["crossing_active"],

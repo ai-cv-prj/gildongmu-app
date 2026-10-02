@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 import cv2
 
 from backend.inference import RealtimeInference
+from backend.boarding import Boarding
 from backend.response import make_response
 from src.settings import load_app_config
 
@@ -58,6 +59,7 @@ class SessionManager:
                 self.models = self.model_factory()
             else:
                 self.models.reset()
+            self.models.boarding = Boarding()
             session_id = uuid4().hex
             safe_device = safe_folder_part(device_name, "기종미상")
             safe_note = safe_folder_part(note, max_length=self.settings["folder_note_max_length"])
@@ -105,6 +107,8 @@ class SessionManager:
             risk, signal, crosswalk, class_map, label_ids, elapsed = self.models.predict(
                 frame, frame_id, captured_at_ms,
             )
+            risk["boarding"] = self.models.boarding.observe(
+                risk.get("stop_proximity"), crossing_active=crosswalk.get("crossing_active", False))
             result = make_response(session_id, frame_id, captured_at_ms, frame,
                                    risk, signal, crosswalk, class_map, label_ids, elapsed)
             frame_name = f"{frame_id:06d}.jpg"
@@ -125,6 +129,10 @@ class SessionManager:
                 **{key: value for key, value in result.items() if key not in ("walking", "traffic")},
                 "walking": {key: value for key, value in result["walking"].items() if key != "mask_png"},
                 "traffic": result["traffic"],
+                "surface_diagnostics": risk.get("surface"),
+                "path_safety": risk.get("path_safety"),
+                "voice_diagnostics": risk.get("voice_diagnostics"),
+                "warning_diagnostics": risk.get("warning"),
                 "risk_diagnostics": [{
                     "detection_index": item.get("detection_index"),
                     "track_id": item.get("track_id"),
@@ -136,6 +144,7 @@ class SessionManager:
                     "time_to_near_s": (item.get("motion") or {}).get("time_to_near_s"),
                     "ttc_scale_s": (item.get("motion") or {}).get("ttc_scale_s"),
                     "motion_quality": (item.get("motion") or {}).get("quality"),
+                    "risk_suppressed_reason": item.get("risk_suppressed_reason"),
                 } for item in risk["detections"]],
             }
             with (session["folder"] / "results.jsonl").open("a", encoding="utf-8") as file:
@@ -143,6 +152,25 @@ class SessionManager:
             session["frame_count"] += 1
             session["last_frame_id"] = frame_id
             session["last_capture_ms"] = captured_at_ms
+            return result
+
+    def boarding_state(self, session_id):
+        with self.lock:
+            if self.session is None or self.session["id"] != session_id:
+                raise SessionError("진행 중인 세션이 없습니다.")
+            return self.models.boarding.snapshot()
+
+    def update_boarding(self, session_id, action, arrival_event_id, bus_number=None):
+        with self.lock:
+            if self.session is None or self.session["id"] != session_id:
+                raise SessionError("진행 중인 세션이 없습니다.")
+            previous = self.models.boarding.snapshot()
+            result = self.models.boarding.act(action, arrival_event_id, bus_number)
+            if result != previous:
+                record = {"at": datetime.now(timezone.utc).isoformat(),
+                          "action": action, **result}
+                with (self.session["folder"] / "boarding_events.jsonl").open("a", encoding="utf-8") as file:
+                    file.write(json.dumps(record, ensure_ascii=False) + "\n")
             return result
 
     def record_client_timings(self, session_id, records):

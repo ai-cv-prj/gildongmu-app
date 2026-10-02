@@ -57,4 +57,11 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .stop-proximity-status[data-state="candidate"] { border-color: #b88742; color: #80551c; }
 .stop-proximity-status[data-state="nearby"] { border-color: #2a9d75; color: #1f7558; font-weight: 700; }
 .footnote { color: #647489; font-size: .78rem; line-height: 1.5; }
+.boarding-panel { margin-bottom: 16px; }
+.boarding-panel[hidden], .boarding-panel [hidden] { display: none; }
+.boarding-panel h2 { margin-top: 0; font-size: 1.15rem; }
+.boarding-panel p { line-height: 1.6; }
+.boarding-panel form { display: grid; gap: 10px; margin-bottom: 12px; }
+.boarding-panel button { width: 100%; }
+#boarding-error { color: #a52534; }
 @media (max-width: 390px) { .page { padding: 18px 12px 28px; } .controls { gap: 7px; } button { font-size: .9rem; } }

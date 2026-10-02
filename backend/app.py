@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from backend.session import SessionError, SessionManager
+from backend.boarding import BoardingError
 from src.audio_config import audio_directory
 from src.settings import (
     DEFAULT_APP_CONFIG, DEFAULT_AUDIO_CONFIG, DEFAULT_PATHS_CONFIG,
@@ -41,6 +42,12 @@ class StopRequest(BaseModel):
     session_id: str
 
 
+class BoardingRequest(BaseModel):
+    action: Literal["stop_announced", "submit", "cancel", "reopen"]
+    arrival_event_id: int = Field(ge=1)
+    bus_number: str | None = Field(default=None, max_length=30)
+
+
 class RecordingEventRequest(BaseModel):
     """브라우저에서 감지한 녹화·업로드 실패를 받는다."""
 
@@ -53,6 +60,7 @@ class ClientTimingRecord(BaseModel):
     frame_id: int = Field(ge=1)
     kind: Literal["frame", "overlay", "audio"]
     captured_at_ms: int = Field(gt=0)
+    occurred_at_ms: int | None = Field(default=None, gt=0)
     capture_ms: float | None = Field(default=None, ge=0)
     round_trip_ms: float | None = Field(default=None, ge=0)
     result_ms: float | None = Field(default=None, ge=0)
@@ -155,6 +163,23 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
         except SessionError as error:
             raise HTTPException(409, str(error)) from error
         return {"saved": len(request.records)}
+
+    @app.get("/api/sessions/{session_id}/boarding")
+    def boarding_state(session_id: str):
+        try:
+            return sessions.boarding_state(session_id)
+        except SessionError as error:
+            raise HTTPException(409, str(error)) from error
+
+    @app.put("/api/sessions/{session_id}/boarding")
+    def boarding_action(session_id: str, request: BoardingRequest):
+        try:
+            return sessions.update_boarding(session_id, request.action,
+                                            request.arrival_event_id, request.bus_number)
+        except SessionError as error:
+            raise HTTPException(409, str(error)) from error
+        except BoardingError as error:
+            raise HTTPException(422, str(error)) from error
 
     # 브라우저 녹화물을 MP4로 변환해 저장
     def save_video(session_id, kind, video, path, include_audio):

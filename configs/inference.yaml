@@ -25,7 +25,7 @@ traffic:
   classifier_min_confidence: 0.60
   association_stable_frames: 3
 
-# 화면 속 정류장 크기·위치와 연속 관측으로만 근접을 추정한다. 실제 거리가 아니다.
+# 화면 크기·위치와 시간 구간의 관측으로 근접을 추정한다. 실제 거리·충돌 안전이 아니다.
 stop_proximity:
   min_box_height: 0.20
   min_box_width: 0.05
@@ -36,6 +36,11 @@ stop_proximity:
   side_min_box_width: 0.08
   side_min_box_bottom: 0.45
   confirm_frames: 3
+  confirm_s: 0.40
+  confirm_window_s: 2.0
+  candidate_hold_s: 1.0
+  nearby_hold_s: 3.0
+  min_confidence: 0.30
   match_iou: 0.10
   max_gap_s: 2.0
 

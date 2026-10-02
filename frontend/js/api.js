@@ -60,6 +60,13 @@ window.GApi = (() => {
     }).then(result);
   }
 
+  function boarding(sessionId, action, arrivalEventId, busNumber = null) {
+    return fetch(`/api/sessions/${sessionId}/boarding`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, arrival_event_id: arrivalEventId, bus_number: busNumber }),
+    }).then(result);
+  }
+
   // 테스트 종료
   /** 파일로 저장된 프레임 수를 포함한 요약을 받는다. */
   function stop(sessionId) {
@@ -67,5 +74,5 @@ window.GApi = (() => {
       body: JSON.stringify({ session_id: sessionId }) }).then(result);
   }
 
-  return { start, frame, recording, camera, recordingEvent, timings, stop };
+  return { start, frame, recording, camera, recordingEvent, timings, boarding, stop };
 })();

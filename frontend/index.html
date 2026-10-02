@@ -55,6 +55,20 @@ file_path: frontend/index.html
       <button id="test-button" type="button" class="primary" disabled>테스트 시작</button>
     </section>
 
+    <section id="boarding-panel" class="panel boarding-panel" aria-labelledby="boarding-title" hidden>
+      <h2 id="boarding-title">탑승할 버스 번호</h2>
+      <p id="boarding-message" aria-live="polite"></p>
+      <form id="boarding-form" hidden>
+        <label for="bus-number">탑승할 버스 번호를 입력해 주세요</label>
+        <input id="bus-number" type="text" maxlength="30" autocomplete="off"
+          placeholder="예: 7016, N26, 마을버스 021" aria-describedby="boarding-error">
+        <button id="boarding-submit" class="primary" type="submit">확인</button>
+      </form>
+      <p id="boarding-error" role="alert"></p>
+      <button id="boarding-cancel" class="secondary" type="button">취소 · 탑승 안 함</button>
+      <button id="boarding-reopen" class="secondary" type="button" hidden>버스 번호 입력</button>
+    </section>
+
     <section class="panel status-panel" aria-live="polite">
       <div class="status-heading"><h2>상태</h2><span id="metrics">0 프레임</span></div>
       <p id="status">서버와 카메라를 준비해 주세요.</p>
@@ -72,6 +86,7 @@ file_path: frontend/index.html
   <script defer src="/static/js/overlay.js"></script>
   <script defer src="/static/js/recorder.js"></script>
   <script defer src="/static/js/api.js"></script>
+  <script defer src="/static/js/boarding.js"></script>
   <script defer src="/static/js/app.js"></script>
 </body>
 </html>
