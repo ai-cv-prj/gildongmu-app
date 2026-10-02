@@ -17,10 +17,10 @@ frontend_dir: frontend
 voice_dir: frontend/audio/voice
 
 # 보행 영역 분할 모델
-mask2former_weights: weights/walking/mask2former
+mask2former_weights: weights/mask2former
 
 # 장애물 검출 가중치
-yolo_weights: weights/walking/yolo/finetune_v2_exp02_stage2_best.pt
+yolo_weights: weights/yolo/yolo26n_pedestrian29.pt
 
 # 신호등·횡단보도 검출 가중치
 traffic_weights: weights/traffic/best_YOLO.pt

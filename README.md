@@ -61,13 +61,12 @@ python -c "import torch; print(torch.cuda.is_available())"
 ```text
 gildongmu-app/
 ├── weights/
-│   ├── walking/
-│   │   ├── mask2former/
-│   │   │   ├── config.json
-│   │   │   ├── preprocessor_config.json
-│   │   │   └── model.safetensors
-│   │   └── yolo/
-│   │       └── finetune_v2_exp02_stage2_best.pt
+│   ├── mask2former/
+│   │   ├── config.json
+│   │   ├── preprocessor_config.json
+│   │   └── model.safetensors
+│   ├── yolo/
+│   │   └── yolo26n_pedestrian29.pt
 │   └── traffic/
 │       ├── best_YOLO.pt
 │       └── best_MobileNet.pt
@@ -82,8 +81,8 @@ gildongmu-app/
 
 | 파일 | 용도 |
 | --- | --- |
-| `weights/walking/mask2former/` | 3클래스 분할 모델과 전처리 설정 |
-| `weights/walking/yolo/*.pt` | 장애물 검출 모델 |
+| `weights/mask2former/` | 3클래스 분할 모델과 전처리 설정 |
+| `weights/yolo/yolo26n_pedestrian29.pt` | 장애물 검출 모델 |
 | `weights/traffic/best_YOLO.pt` | 보행자 신호등·횡단보도 검출 모델 |
 | `weights/traffic/best_MobileNet.pt` | 신호등 색상 분류 모델 |
 | `data/samples/input/` | 추론할 MP4 입력 폴더 |

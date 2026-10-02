@@ -86,7 +86,7 @@ class IntegrationTests(unittest.TestCase):
     def test_invalid_mask2former_weights_config_rejected(self):
         """누락되거나 잘못된 Mask2Former 가중치 설정은 명확하게 거부한다."""
         config = load_config(DEFAULT_CONFIG)
-        for section in (None, "weights/walking/mask2former", {}, {"weights": ""}, {"weights": " "}, {"weights": None}, {"weights": 123}):
+        for section in (None, "weights/mask2former", {}, {"weights": ""}, {"weights": " "}, {"weights": None}, {"weights": 123}):
             with self.subTest(section=section), patch(
                 "src.pipeline.read_yaml", return_value={**config, "mask2former": section}
             ), self.assertRaisesRegex(ValueError, "mask2former"):
@@ -98,18 +98,18 @@ class IntegrationTests(unittest.TestCase):
         for option in ("--mask2former-weights", "--model-dir"):
             with self.subTest(option=option), patch("sys.argv", [
                 "run_video_inference", option, "weights/custom-mask2former",
-                "--yolo-weights", "weights/walking/yolo/custom.pt",
+                "--yolo-weights", "weights/yolo/custom.pt",
             ]), patch("src.pipeline.run_video_inference") as run:
                 main()
                 run.assert_called_once()
                 self.assertEqual(run.call_args.kwargs["mask2former_weights"], Path("weights/custom-mask2former"))
-                self.assertEqual(run.call_args.kwargs["yolo_weights"], Path("weights/walking/yolo/custom.pt"))
+                self.assertEqual(run.call_args.kwargs["yolo_weights"], Path("weights/yolo/custom.pt"))
                 self.assertNotIn("model_dir", run.call_args.kwargs)
 
     # 통일된 가중치 인자로 모델 로딩
     def test_segmenter_loads_weights_directory(self):
         """weights 인자를 전처리기와 모델의 로컬 폴더로 전달한다."""
-        weights = PROJECT_DIR / "weights/walking/mask2former"
+        weights = PROJECT_DIR / "weights/mask2former"
         with patch.object(Path, "is_file", return_value=True), patch(
             "src.sidewalk.AutoImageProcessor.from_pretrained"
         ) as processor, patch("src.sidewalk.Mask2FormerForUniversalSegmentation.from_pretrained") as model:
