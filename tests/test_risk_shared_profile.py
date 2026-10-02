@@ -70,15 +70,13 @@ class SharedProfileTests(unittest.TestCase):
 
     def test_surrounding_walkability_controls_near_danger(self):
         for val,wanted in ((0,"caution"),(1,"danger")):
-            config={**CFG,"rear_origin_exclusion_enabled":False}
-            result=engine(None,config=config).update(FRAME,[detection()],0,
+            result=engine(None,config=CFG).update(FRAME,[detection()],0,
                          class_map=np.full((100,100),val,np.uint8),label_ids=LABELS)
             self.assertEqual(result["detections"][0]["risk_level"],wanted)
 
     def test_obstacle_on_nonwalkable_surroundings_is_downgraded(self):
         labels=np.zeros((100,100),np.uint8)
-        config={**CFG,"rear_origin_exclusion_enabled":False}
-        item=engine(None,config=config).update(
+        item=engine(None,config=CFG).update(
             FRAME,[detection((40,55,60,90),"car",3)],0,
             class_map=labels,label_ids=LABELS)["detections"][0]
         self.assertEqual(item["risk_level"],"caution")
@@ -87,16 +85,14 @@ class SharedProfileTests(unittest.TestCase):
     def test_walkable_obstacle_context_keeps_danger(self):
         labels=np.zeros((100,100),np.uint8)
         labels[76:90,36:40]=1
-        config={**CFG,"rear_origin_exclusion_enabled":False}
-        item=engine(None,config=config).update(
+        item=engine(None,config=CFG).update(
             FRAME,[detection((40,55,60,90),"car",3)],0,
             class_map=labels,label_ids=LABELS)["detections"][0]
         self.assertEqual(item["risk_level"],"danger")
 
     def test_clipped_context_uses_only_visible_regions(self):
         labels=np.zeros((100,100),np.uint8)
-        config={**CFG,"rear_origin_exclusion_enabled":False}
-        item=engine(None,config=config).update(
+        item=engine(None,config=CFG).update(
             FRAME,[detection((0,55,25,100),"car",3)],0,
             class_map=labels,label_ids=LABELS)["detections"][0]
         self.assertEqual(item["risk_level"],"caution")
@@ -104,13 +100,12 @@ class SharedProfileTests(unittest.TestCase):
         self.assertNotIn("bottom",item["surrounding_walkability"]["regions"])
 
     def test_missing_surface_mask_cannot_produce_danger(self):
-        config={**CFG,"rear_origin_exclusion_enabled":False}
-        item=engine(None,config=config).update(
+        item=engine(None,config=CFG).update(
             FRAME,[detection((40,55,60,90),"car",3)],0)["detections"][0]
         self.assertEqual(item["risk_level"],"caution")
 
     def test_approaching_obstacle_without_walkable_surroundings_is_downgraded(self):
-        e=engine(config={**CFG,"rear_origin_exclusion_enabled":False})
+        e=engine(config=CFG)
         labels=np.zeros((100,100),np.uint8)
         for t in (0,.1,.2):
             box_height=20/(1-t/.8)
@@ -121,15 +116,14 @@ class SharedProfileTests(unittest.TestCase):
 
     def test_non_vehicle_obstacle_uses_same_surroundings_rule(self):
         labels=np.zeros((100,100),np.uint8)
-        config={**CFG,"rear_origin_exclusion_enabled":False}
-        item=engine(None,config=config).update(
+        item=engine(None,config=CFG).update(
             FRAME,[detection((40,55,60,90),"person",0)],0,
             class_map=labels,label_ids=LABELS)["detections"][0]
         self.assertEqual(item["risk_level"],"caution")
         self.assertIn("nonwalkable_surroundings",item["reasons"])
 
     def test_nonwalkable_surroundings_remove_previous_danger_immediately(self):
-        e=engine(config={**CFG,"rear_origin_exclusion_enabled":False})
+        e=engine(config=CFG)
         walkable=np.ones((100,100),np.uint8)
         blocked=np.zeros((100,100),np.uint8)
         first=e.update(FRAME,[detection()],0,class_map=walkable,label_ids=LABELS)
@@ -174,8 +168,7 @@ class SharedProfileTests(unittest.TestCase):
     def test_risk_engine_keeps_group_members_and_audit_events(self):
         raw=[detection((40,55,60,90)),detection((41,55,61,90))]
         saved=deepcopy(raw)
-        config={**CFG,"rear_origin_exclusion_enabled":False}
-        result=engine(config=config).update(FRAME,raw,0)
+        result=engine(config=CFG).update(FRAME,raw,0)
         self.assertEqual(raw,saved)
         self.assertEqual(len(result["detections"]),2)
         self.assertEqual(len(result["warning_groups"]),1)

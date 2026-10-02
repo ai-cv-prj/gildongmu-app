@@ -80,7 +80,6 @@ DEFAULT_RISK.update({
     "warning_group_iou":.65, "warning_group_containment":.85,
     "warning_group_max_area_ratio":1.60,
     "walkable_surroundings_filter_enabled":False,
-    "rear_origin_exclusion_enabled":False,
     "surrounding_side_width_ratio":.15, "surrounding_side_height_ratio":.40,
     "surrounding_bottom_height_ratio":.10,
     "surrounding_max_side_width_ratio":.02,
@@ -131,8 +130,7 @@ def risk_config(value=None):
     for key in ("roi_ground_adapt_enabled","side_proximity_enabled","full_static_footprint","relative_entry_enabled",
                 "roi_recalibration_enabled","surface_risk_enabled","class_bridge_enabled",
                 "warning_grouping_enabled","wide_roi_priority_enabled",
-                "camera_view_guard_enabled","walkable_surroundings_filter_enabled",
-                "rear_origin_exclusion_enabled"):
+                "camera_view_guard_enabled","walkable_surroundings_filter_enabled"):
         if not isinstance(cfg[key],bool):
             raise ValueError(f"risk.{key} must be boolean")
     for key in ("side_near_y","side_min_height","side_min_width","roi_jitter_shift",

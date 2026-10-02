@@ -35,8 +35,7 @@ def group_warnings(detections, cfg):
     if not cfg["warning_grouping_enabled"]:
         return []
     warnings=[item for item in detections
-              if not item.get("warning_suppressed")
-              and LEVEL.get(item.get("alert_level",item.get("risk_level")),0)>0]
+              if LEVEL.get(item.get("alert_level",item.get("risk_level")),0)>0]
     # Highest urgency and confidence become the visible representative.
     warnings.sort(key=lambda item:(LEVEL[item.get("alert_level",item["risk_level"])],
                   item.get("confidence",0),-item["detection_index"]),reverse=True)
