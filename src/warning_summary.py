@@ -9,8 +9,6 @@ LEVEL = {"monitor": 0, "caution": 1, "danger": 2}
 # 객체 위험의 대표 경고 후보 계산
 def _object_candidate(item, cfg):
     """객체의 위험도와 위치로 대표 경고 후보를 만든다."""
-    if item.get("warning_suppressed"):
-        return None
     level = item.get("alert_level", item.get("risk_level"))
     if level not in ("caution", "danger") or not item.get("warning_primary", True):
         return None

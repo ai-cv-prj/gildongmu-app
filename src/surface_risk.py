@@ -95,8 +95,7 @@ class SurfaceRisk:
             # A detection elsewhere must not hide this independent path hazard.
             matches = []
             for index, item in enumerate(detections):
-                if (item.get("warning_suppressed") or
-                        item.get("label_status") != "reliable" or
+                if (item.get("label_status") != "reliable" or
                         item.get("alert_level", item.get("risk_level")) not in ("caution", "danger")):
                     continue
                 box = (item.get("geometry") or {}).get("box_norm")
