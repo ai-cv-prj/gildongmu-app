@@ -53,6 +53,13 @@ window.GApi = (() => {
     }).then(result);
   }
 
+  function timings(sessionId, records) {
+    return fetch(`/api/sessions/${sessionId}/timings`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ records }),
+    }).then(result);
+  }
+
   // 테스트 종료
   /** 파일로 저장된 프레임 수를 포함한 요약을 받는다. */
   function stop(sessionId) {
@@ -60,5 +67,5 @@ window.GApi = (() => {
       body: JSON.stringify({ session_id: sessionId }) }).then(result);
   }
 
-  return { start, frame, recording, camera, recordingEvent, stop };
+  return { start, frame, recording, camera, recordingEvent, timings, stop };
 })();

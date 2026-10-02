@@ -71,6 +71,7 @@ def geometry(detection, shape, cfg, roi=None):
     return {
         "box_norm": list(map(float, box)), "footprint": strip,
         "point": [(x1+x2)/2, y2], "height": y2-y1, "width": x2-x1,
+        "immediate_top_y": min(point[1] for point in immediate),
         "close_candidate": bool(cfg["side_proximity_enabled"] and y2>=close_y
             and (y2-y1)>=cfg["side_min_height"] and (x2-x1)>=cfg["side_min_width"]),
         "side_proximity": bool(cfg["side_proximity_enabled"] and y2>=close_y

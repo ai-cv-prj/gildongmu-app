@@ -11,11 +11,14 @@ const settings = require("./settings");
 const context = { window: { GConfig: { get: () => settings } }, performance: { now: () => 0 } };
 vm.runInNewContext(fs.readFileSync("frontend/js/guidance.js", "utf8"), context);
 const spoken = [];
+const requests = [];
 let now = 0;
 const coordinator = {
   PRIORITY: { trafficRed: 2, walking: 3, trafficChange: 4, traffic: 5 },
-  request({ text }) {
+  request(request) {
+    const { text } = request;
     spoken.push(text);
+    requests.push(request);
     return true;
   },
   clear() {},
@@ -39,7 +42,11 @@ walking.start("test", false, "walking");
 assert.equal(spoken.some(text => text.includes("안내를 시작합니다")), false);
 now = 2400;
 walking.accept({ session_id: "test", frame_id: 1,
-  event: { type: "walking_warning", level: "danger", voice_event_ids: [9],
-    voice_text: "왼쪽에 사람." } }, now);
-assert.ok(spoken.includes("왼쪽에 사람."));
+  captured_at_ms: 2400,
+  event: { type: "walking_warning", level: "danger",
+    last_action: "right", voice_text: "오른쪽으로 이동하세요." } }, now);
+assert.ok(spoken.includes("오른쪽으로 이동하세요."));
+assert.equal(requests.at(-1).metadata.action, "right");
+assert.equal(requests.at(-1).metadata.frame_id, 1);
+assert.equal(requests.at(-1).metadata.captured_at_ms, 2400);
 console.log("guidance: pass");

@@ -148,6 +148,8 @@ PC에서 두 터미널을 열어 실행합니다.
 ```
 
 두 번째 터미널에 표시되는 `https://...trycloudflare.com` 주소를 휴대폰 브라우저에서 엽니다.
+코드나 추론 설정을 변경했다면 실행 중인 서버에는 자동 반영되지 않으므로 `run.sh`와
+`tunnel.sh`를 종료한 뒤 다시 실행합니다. 휴대폰 화면도 한 번 새로고침해야 합니다.
 
 1. 휴대폰 기종을 선택합니다.
 2. **카메라 켜기**를 누릅니다.
@@ -201,10 +203,18 @@ data/sessions/YYYYMMDD/<기종명_촬영시각_테스트메모>/
 ├── frames/
 │   └── 000001.jpg         # 프레임별 추론 화면
 ├── results.jsonl          # 프레임별 추론 결과
+├── client_timing.jsonl    # 촬영·응답·음성 시작 지연(브라우저 기록)
 └── session.json           # 세션 정보
 ```
 
 날짜는 한국 시간 기준이며 저장 위치는 `configs/paths.yaml`의 `session_dir`로 변경할 수 있습니다.
+`results.jsonl`의 `risk_diagnostics`에는 객체별 위험 등급, 판정 이유, 화면 하단 좌표,
+근접 경로 진입 예상 시간과 TTC가 기록됩니다. `server_timing`에는 JPEG 디코딩·서버 처리 시간이
+밀리초로 기록됩니다. `client_timing.jsonl`의 `frame` 행에는 캡처 호출부터 JPEG 인코딩 완료까지(`capture_ms`),
+요청 왕복(`round_trip_ms`), 결과 처리(`result_ms`)가, `overlay` 행에는 실제 박스 그리기까지의
+시간(`overlay_delay_ms`)이 기록됩니다. `audio` 행에는 음성 상태와 JPEG 인코딩 완료 후 실제 재생 시작까지의
+시간(`audio_delay_ms`)과 보행 안내 행동(`action`)이 기록됩니다. 브라우저와 서버 시계의
+절대 시각을 빼서 지연을 계산하지 않습니다.
 
 ## 5. 설정 파일
 

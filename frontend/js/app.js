@@ -19,8 +19,38 @@
   let request = null, timer = null, voiceTick = null, inFlight = false;
   let pendingRawVideo = null;
   let voiceStream = null;
+  let timingQueue = [], timingFlush = null;
+  function queueTiming(record) {
+    if (!Number.isInteger(record.frame_id) || !Number.isInteger(record.captured_at_ms)) return;
+    timingQueue.push(record);
+    if (timingQueue.length >= 20) void flushTimings();
+  }
+  function flushTimings(id = sessionId) {
+    if (!id || timingFlush || !timingQueue.length) return timingFlush || Promise.resolve();
+    timingFlush = (async () => {
+      while (timingQueue.length) {
+        const batch = timingQueue.splice(0, 100);
+        try { await GApi.timings(id, batch); }
+        catch (error) {
+          timingQueue.unshift(...batch);
+          console.error("지연 기록 전송 실패:", error);
+          break;
+        }
+      }
+    })().finally(() => { timingFlush = null; });
+    return timingFlush;
+  }
+  function recordAudioTiming(event) {
+    if (!Number.isInteger(event.frame_id) || !Number.isInteger(event.captured_at_ms)) return;
+    const delay = performance.timeOrigin + event.at_ms - event.captured_at_ms;
+    queueTiming({ kind: "audio", frame_id: event.frame_id,
+      captured_at_ms: event.captured_at_ms, status: event.status, source: event.source,
+      action: event.action ?? null,
+      audio_delay_ms: event.status === "started" ? Math.max(0, Math.round(delay)) : null });
+  }
   const voicePlayer = GTts.create({ onError: message => setStatus(message) });
-  const audioCoordinator = GAudioCoordinator.create({ player: voicePlayer });
+  const audioCoordinator = GAudioCoordinator.create({ player: voicePlayer,
+    onDiagnostic: recordAudioTiming });
   const trafficGuide = GGuidance.create({ coordinator: audioCoordinator });
   const walkingGuide = GGuidance.create({ coordinator: audioCoordinator });
 
@@ -71,7 +101,7 @@
     } else {
       stopStatus.textContent = state === "unavailable"
         ? "정류장 근접 판단 보류 · 카메라 시야 확인 필요"
-        : "정류장 근접 관측 없음 · 화면 기준 시험 기능";
+        : "관측 없음 · 화면 기준";
     }
   }
 
@@ -126,11 +156,15 @@
   // 횡단보도와 도보 및 신호의 한 프레임 결과 표시
   /** 횡단보도 최우선 판정을 먼저 반영하고 나머지 안내에 같은 촬영 시각을 전달한다. */
   function showResult(result, capturedAt) {
-    GOverlay.render(result);
+    GOverlay.render(result, state => queueTiming({ kind: "overlay", frame_id: result.frame_id,
+      captured_at_ms: result.captured_at_ms,
+      overlay_delay_ms: state === "drawn" ? Math.round(performance.now() - capturedAt) : null,
+      status: state }));
     showStopProximity(result.stop_proximity);
     metrics.textContent = `${result.frame_id} 프레임 · ${result.inference_ms}ms`;
     audioCoordinator.acceptCrosswalk(result.crosswalk?.event, capturedAt);
     walkingGuide.accept({ session_id: result.session_id, frame_id: result.frame_id,
+      captured_at_ms: result.captured_at_ms,
       detections: result.walking.detections, event: result.walking.event }, capturedAt);
     trafficGuide.accept({ session_id: result.session_id, frame_id: result.frame_id,
       detections: result.traffic.detections, event: result.traffic.event }, capturedAt);
@@ -142,15 +176,22 @@
     if (!running || version !== generation || document.hidden || !GCamera.active() || inFlight) return;
     inFlight = true;
     try {
+      const captureStartedAt = performance.now();
       const blob = await GCamera.capture(settings.camera.capture_max_side, settings.camera.jpeg_quality);
       if (!blob || !running || version !== generation) return;
       const capturedAt = performance.now();
       const capturedAtMs = Math.round(performance.timeOrigin + capturedAt);
       const controller = new AbortController();
       request = controller;
+      const requestAt = performance.now();
       const result = await GApi.frame(sessionId, ++frameId, capturedAtMs, blob, controller.signal);
       if (!running || version !== generation) return;
+      const responseAt = performance.now();
       showResult(result, capturedAt);
+      queueTiming({ kind: "frame", frame_id: result.frame_id, captured_at_ms: capturedAtMs,
+        capture_ms: Math.round(capturedAt - captureStartedAt),
+        round_trip_ms: Math.round(responseAt - requestAt),
+        result_ms: Math.round(performance.now() - capturedAt) });
       setStatus("보행 위험과 보행자 신호를 분석하고 있습니다.");
     } catch (error) {
       if (error.name !== "AbortError" && running && version === generation) {
@@ -173,6 +214,7 @@
     GOverlay.clear();
     showStopProximity(null);
     running = true;
+    timingQueue = [];
     frameId = 0;
     const version = ++generation;
     updateControls();
@@ -219,6 +261,7 @@
       pendingRawVideo = null;
       if (sessionId) {
         const id = sessionId;
+        await flushTimings(id);
         await saveVideo(id, "camera", rawVideo, GApi.camera, rawError);
         await saveVideo(id, "overlay", video, GApi.recording, overlayError || error);
         await GApi.stop(id).catch((cause) => console.error("세션 종료 실패:", cause));
@@ -254,6 +297,8 @@
     showStopProximity(null);
     const id = sessionId;
     sessionId = null;
+    if (timingFlush) await timingFlush;
+    await flushTimings(id);
     setStatus("원본 영상 저장 중입니다.");
     let recordingError = null;
     let rawRecordingError = null;

@@ -6,6 +6,7 @@ file_path: backend/app.py
 
 from pathlib import Path
 import subprocess
+import time
 from typing import Literal
 
 import cv2
@@ -48,6 +49,25 @@ class RecordingEventRequest(BaseModel):
     detail: str = Field(max_length=500)
 
 
+class ClientTimingRecord(BaseModel):
+    frame_id: int = Field(ge=1)
+    kind: Literal["frame", "overlay", "audio"]
+    captured_at_ms: int = Field(gt=0)
+    capture_ms: float | None = Field(default=None, ge=0)
+    round_trip_ms: float | None = Field(default=None, ge=0)
+    result_ms: float | None = Field(default=None, ge=0)
+    overlay_delay_ms: float | None = Field(default=None, ge=0)
+    audio_delay_ms: float | None = Field(default=None, ge=0)
+    status: str | None = Field(default=None, max_length=40)
+    source: str | None = Field(default=None, max_length=20)
+    action: Literal["left", "straight", "right", "stop"] | None = None
+    event_ids: list[int] = Field(default_factory=list, max_length=20)
+
+
+class ClientTimingRequest(BaseModel):
+    records: list[ClientTimingRecord] = Field(min_length=1, max_length=100)
+
+
 # FastAPI 앱과 테스트용 세션 저장소 생성
 def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT_PATHS_CONFIG,
                audio_config=DEFAULT_AUDIO_CONFIG):
@@ -62,6 +82,15 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
     if manager is None:
         manager = SessionManager(resolve_path(paths["session_dir"]), session_settings=settings["session"])
     sessions = manager
+
+    @app.middleware("http")
+    async def disable_frontend_cache(request, call_next):
+        """현장 테스트 중 변경된 HTML·JS·CSS가 휴대폰 캐시에 남지 않게 한다."""
+        response = await call_next(request)
+        if request.url.path == "/" or request.url.path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
     app.mount("/audio", StaticFiles(directory=audio_directory(audio_config, paths_config)),
               name="audio")
     app.mount("/static", StaticFiles(directory=frontend), name="frontend")
@@ -100,6 +129,7 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
     def frame(session_id: str, frame_id: int = Form(...), captured_at_ms: int = Form(...),
               image: UploadFile = File(...)):
         """휴대폰 JPEG를 디코딩하고 도보와 신호를 함께 추론한다."""
+        request_start_ns = time.perf_counter_ns()
         if frame_id < 1 or captured_at_ms <= 0:
             raise HTTPException(422, "프레임 번호나 촬영 시간이 올바르지 않습니다.")
         content = image.file.read(upload["max_jpeg_bytes"] + 1)
@@ -110,9 +140,21 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
         if decoded is None or not minimum <= decoded.shape[0] <= maximum or not minimum <= decoded.shape[1] <= maximum:
             raise HTTPException(422, "읽을 수 있는 카메라 JPEG가 아닙니다.")
         try:
-            return sessions.process(session_id, frame_id, captured_at_ms, decoded)
+            return sessions.process(session_id, frame_id, captured_at_ms, decoded,
+                                    request_start_ns=request_start_ns,
+                                    decode_ms=round((time.perf_counter_ns()-request_start_ns)/1e6, 1))
         except SessionError as error:
             raise HTTPException(409, str(error)) from error
+
+    @app.post("/api/sessions/{session_id}/timings")
+    def client_timings(session_id: str, request: ClientTimingRequest):
+        """프레임 루프와 분리해 모은 지연 기록을 세션에 추가한다."""
+        try:
+            sessions.record_client_timings(session_id,
+                [record.model_dump() for record in request.records])
+        except SessionError as error:
+            raise HTTPException(409, str(error)) from error
+        return {"saved": len(request.records)}
 
     # 브라우저 녹화물을 MP4로 변환해 저장
     def save_video(session_id, kind, video, path, include_audio):

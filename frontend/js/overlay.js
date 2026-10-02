@@ -137,6 +137,23 @@ window.GOverlay = (() => {
     ctx.fillText(text, x + padding, y + height - 8);
   }
 
+  // 현재 장애물 이동 행동 표시
+  /** 모바일 화면 왼쪽 위에 마지막으로 판단한 이동 행동을 표시한다. */
+  function actionStatus(event) {
+    const action = event?.last_action ?? "none";
+    const text = `ACTION: ${action}`;
+    ctx.font = `bold ${Math.max(13, canvas.width / 38)}px system-ui`;
+    const padding = 8;
+    const height = Math.max(26, canvas.height / 24);
+    const width = ctx.measureText(text).width + padding * 2;
+    const x = 8;
+    const y = 8;
+    ctx.fillStyle = "rgba(24, 24, 24, 0.88)";
+    ctx.fillRect(x, y, width, height);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(text, x + padding, y + height - 8);
+  }
+
   // 하단 횡단보도 판단 ROI 표시
   /** 서버 판정에 사용한 고정 ROI를 보라색 테두리로 표시한다. */
   function crosswalkRoi(event) {
@@ -150,11 +167,11 @@ window.GOverlay = (() => {
 
   // 서버 응답의 PNG 마스크와 위험·신호 결과 합성
   /** 새 결과가 도착했을 때 이전 프레임의 비동기 이미지 로딩을 무효화한다. */
-  function render(result) {
+  function render(result, onDrawn = () => {}) {
     const current = ++version;
     size(result.image_width, result.image_height);
     const draw = mask => {
-      if (current !== version) return;
+      if (current !== version) return onDrawn("superseded");
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       if (mask) ctx.drawImage(mask, 0, 0, canvas.width, canvas.height);
       const roi = result.walking?.event?.roi || {};
@@ -165,8 +182,10 @@ window.GOverlay = (() => {
       boxes(result.walking?.detections, "walking");
       boxes(result.traffic?.detections, "traffic");
       crosswalkSafety(result.crosswalk?.event);
+      actionStatus(result.walking?.event);
       crosswalkStatus(result.crosswalk?.event);
       stopDiagnostic(result.stop_proximity);
+      onDrawn("drawn");
     };
     if (!result.walking?.mask_png) return draw(null);
     const mask = new Image();

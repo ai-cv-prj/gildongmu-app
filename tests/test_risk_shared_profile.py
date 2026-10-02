@@ -99,10 +99,11 @@ class SharedProfileTests(unittest.TestCase):
         self.assertNotIn("left",item["surrounding_walkability"]["regions"])
         self.assertNotIn("bottom",item["surrounding_walkability"]["regions"])
 
-    def test_missing_surface_mask_cannot_produce_danger(self):
+    def test_missing_surface_mask_keeps_immediate_danger(self):
         item=engine(None,config=CFG).update(
             FRAME,[detection((40,55,60,90),"car",3)],0)["detections"][0]
-        self.assertEqual(item["risk_level"],"caution")
+        self.assertEqual(item["risk_level"],"danger")
+        self.assertEqual(item["surrounding_walkability"]["status"],"unavailable")
 
     def test_approaching_obstacle_without_walkable_surroundings_is_downgraded(self):
         e=engine(config=CFG)
@@ -172,7 +173,7 @@ class SharedProfileTests(unittest.TestCase):
         self.assertEqual(raw,saved)
         self.assertEqual(len(result["detections"]),2)
         self.assertEqual(len(result["warning_groups"]),1)
-        self.assertEqual(result["warning_groups"][0]["level"],"caution")
+        self.assertEqual(result["warning_groups"][0]["level"],"danger")
         self.assertEqual(result["warning_groups"][0]["size"],2)
         self.assertEqual(len([e for e in result["events"] if e.get("source","object")=="object"]),2)
 

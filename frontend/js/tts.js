@@ -15,19 +15,14 @@
     ["횡단보도 이탈! 왼쪽으로 이동하세요!", "crosswalk-exit-left"],
     ["오른쪽으로 이동하세요!", "crosswalk-align-right"],
     ["왼쪽으로 이동하세요!", "crosswalk-align-left"],
+    ["왼쪽으로 이동하세요.", "walking-move-left"],
+    ["직진하세요.", "walking-straight"],
+    ["오른쪽으로 이동하세요.", "walking-move-right"],
+    ["멈추세요.", "walking-stop"],
   ]);
   for (const [text, name] of [...CLIPS]) CLIPS.set(`모의 신호. ${text}`, `mock-${name}`);
-  const directions = [["left", "왼쪽"], ["center", "가운데"], ["right", "오른쪽"]];
-  const categories = [["person", "사람"], ["vehicle", "차량"], ["obstacle", "장애물"]];
-  for (const [key, direction] of directions) {
-    for (const [category, name] of categories) {
-      CLIPS.set(`${direction}에 ${name}.`, `danger-${key}-${category}`);
-    }
-    CLIPS.set(`${direction}에 여러 장애물.`, `danger-${key}-multiple`);
-  }
-  CLIPS.set("여러 방향에 장애물.", "danger-multiple-directions");
-  const source = name => `/audio/${name}.mp3${name.startsWith("danger-")
-    ? "?v=walking-direction-v1" : name.startsWith("crosswalk-")
+  const source = name => `/audio/${name}.mp3${name.startsWith("walking-")
+    ? "?v=walking-action-v1" : name.startsWith("crosswalk-")
       ? "?v=crosswalk-ava-v1" : "?v=signal-sunhi-v1"}`;
 
   function create({ onError = () => {}, onStatus = () => {}, now = () => performance.now() } = {}) {
@@ -77,7 +72,8 @@
       }
     }
 
-    function speak(text, validUntil = now() + settings.default_validity_ms, { onEnd = () => {} } = {}) {
+    function speak(text, validUntil = now() + settings.default_validity_ms,
+                   { onEnd = () => {}, onStart = () => {}, onFailure = () => {} } = {}) {
       if (!audio || !CLIPS.has(text)) {
         const message = !audio ? "이 브라우저는 음성 재생을 지원하지 않습니다." : "안내 음원이 없습니다. 페이지를 새로고침해 주세요.";
         onStatus(message);
@@ -87,7 +83,8 @@
       if (now() >= validUntil) return false;
       // 안내 간 우선순위와 취소는 전역 음성 관리자가 결정한다.
       // 음원 로딩 제한 시간은 앞선 안내가 끝난 뒤 재생을 시도할 때부터 센다.
-      queue.push({ text, onEnd, startTimeoutMs: validUntil - now(), started: false });
+      queue.push({ text, onEnd, onStart, onFailure,
+        startTimeoutMs: validUntil - now(), started: false });
       return current ? true : playNext();
     }
 
@@ -99,6 +96,7 @@
       onStatus("음성 재생을 준비하고 있습니다.");
       const fail = message => {
         if (current !== request) return;
+        request.onFailure(message);
         cancel();
         onStatus(message);
         onError(message);
@@ -110,6 +108,7 @@
           return;
         }
         request.started = true;
+        request.onStart();
         clearTimeout(timer);
         onStatus("음성 재생 중입니다. 들리지 않으면 미디어 음량과 연결된 이어폰을 확인해 주세요.");
         timer = setTimeout(() => fail("음성 재생이 끝나지 않아 중단했습니다. 다시 시작해 주세요."), settings.playback_timeout_ms);
@@ -145,7 +144,7 @@
         if (audioContext?.state === "suspended") {
           audioContext.resume().catch(() => onError("브라우저가 안내 음성 재생을 차단했습니다. 사이트 소리 허용을 확인하고 테스트를 다시 시작해 주세요."));
         }
-        // 위험 안내 음원은 파일 자체에 2배속을 적용했으므로 모두 기본 속도로 재생한다.
+        // 모든 안내 음원은 파일에 저장된 원래 속도로 재생한다.
         audio.playbackRate = 1;
         audio.src = source(clip);
         audio.load();

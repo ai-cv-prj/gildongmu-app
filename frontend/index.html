@@ -58,7 +58,10 @@ file_path: frontend/index.html
     <section class="panel status-panel" aria-live="polite">
       <div class="status-heading"><h2>상태</h2><span id="metrics">0 프레임</span></div>
       <p id="status">서버와 카메라를 준비해 주세요.</p>
-      <p id="stop-proximity-status" class="stop-proximity-status" aria-live="off" data-state="not_detected">정류장 근접 관측 없음 · 화면 기준 시험 기능</p>
+      <div class="stop-proximity-card">
+        <strong>정류장 근접 인식 <span class="muted">시험</span></strong>
+        <p id="stop-proximity-status" class="stop-proximity-status" aria-live="off" data-state="not_detected">관측 없음 · 화면 기준</p>
+      </div>
     </section>
   </main>
   <script defer src="/static/js/config.js"></script>

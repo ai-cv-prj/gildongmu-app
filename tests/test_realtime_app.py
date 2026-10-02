@@ -15,8 +15,9 @@ import pytest
 import yaml
 from fastapi import HTTPException, UploadFile
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
-from backend.app import RecordingEventRequest, create_app
+from backend.app import ClientTimingRequest, RecordingEventRequest, create_app
 from backend.response import normalize_detections
 from backend.session import SessionManager
 from src.video_audio import ffmpeg_executable
@@ -46,8 +47,9 @@ class FakeModels:
             "level": "danger", "warning_text": "위험! 사람이 있음.",
             "roi": {"corridor_polygon": [[0.2, 0.3], [0.8, 0.3], [0.8, 1], [0.2, 1]],
                     "immediate_polygon": [[0.2, 0.7], [0.8, 0.7], [0.8, 1], [0.2, 1]]},
-            "camera_view": {"status": "clear"}, "voice_event_ids": [3],
-            "voice_text": "왼쪽에 사람.",
+            "camera_view": {"status": "clear"},
+            "last_action": "straight",
+            "voice_text": "직진하세요.",
             "stop_proximity": {"status": "candidate", "nearby": False,
                                "newly_nearby": False, "observations": 1,
                                "required_observations": 3, "confidence": 0.7,
@@ -98,10 +100,43 @@ def test_session_response_contains_crosswalk_event(tmp_path):
     logged = json.loads((folder / "results.jsonl").read_text(encoding="utf-8"))
     assert logged["crosswalk"]["event"]["event_id"] == 4
     assert logged["frame_file"] == "frames/000001.jpg"
+    assert logged["risk_diagnostics"][0]["track_id"] == 12
+    assert logged["server_timing"]["processing_ms"] >= 0
     assert result["frame_file"] == logged["frame_file"]
     saved = folder / logged["frame_file"]
     assert saved.is_file()
     assert cv2.imread(str(saved)).shape == frame.shape
+
+
+def test_client_timing_is_saved_with_frame_and_audio_events(tmp_path):
+    manager = SessionManager(tmp_path, model_factory=FakeModels)
+    app = create_app(manager)
+    route = next(route.endpoint for route in app.routes
+                 if getattr(route, "path", None) == "/api/sessions/{session_id}/timings")
+    session = manager.start("Phone")
+    session_id = session["session_id"]
+    records = [
+        {"kind": "frame", "frame_id": 1, "captured_at_ms": 1000,
+         "capture_ms": 12, "round_trip_ms": 140, "result_ms": 144},
+        {"kind": "overlay", "frame_id": 1, "captured_at_ms": 1000,
+         "overlay_delay_ms": 152, "status": "drawn"},
+        {"kind": "audio", "frame_id": 1, "captured_at_ms": 1000,
+         "source": "walking", "status": "started", "audio_delay_ms": 190,
+         "action": "straight"},
+    ]
+    assert route(session_id, ClientTimingRequest(records=records)) == {"saved": 3}
+    with pytest.raises(ValidationError):
+        ClientTimingRequest(records=[{**records[0], "round_trip_ms": -1}])
+    folder = tmp_path / session["date"] / session["folder_name"]
+    saved = [json.loads(line) for line in (folder / "client_timing.jsonl").read_text().splitlines()]
+    assert saved[0]["round_trip_ms"] == 140
+    assert saved[1]["overlay_delay_ms"] == 152
+    assert saved[2]["audio_delay_ms"] == 190
+    assert saved[2]["action"] == "straight"
+    manager.stop(session_id)
+    with pytest.raises(HTTPException) as error:
+        route(session_id, ClientTimingRequest(records=records))
+    assert error.value.status_code == 409
 
 
 # 실제 JPEG 디코딩부터 API 응답·로그까지 확인
@@ -135,7 +170,8 @@ def test_mobile_session_flow(tmp_path, recording_fps):
                          files={"image": ("frame.jpg", io.BytesIO(jpeg.tobytes()), "image/jpeg")})
     assert result.status_code == 200
     body = result.json()
-    assert body["walking"]["event"]["voice_text"] == "왼쪽에 사람."
+    assert body["walking"]["event"]["voice_text"] == "직진하세요."
+    assert body["walking"]["event"]["last_action"] == "straight"
     assert body["traffic"]["event"]["signal_state"] == "red"
     assert body["crosswalk"]["event"]["status"] == "crossing"
     assert body["stop_proximity"]["status"] == "candidate"

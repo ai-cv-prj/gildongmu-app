@@ -11,6 +11,7 @@ const labels = [];
 const context2d = {
   beginPath() {}, moveTo() {}, lineTo() {}, closePath() {}, fill() {}, stroke() {},
   strokeRect() {}, fillRect() {}, clearRect() {}, drawImage() {}, arc() {},
+  save() {}, restore() {},
   measureText(text) { return { width: text.length * 8 }; },
   fillText(text) { labels.push(text); },
 };
@@ -22,6 +23,7 @@ const context = {
 };
 vm.runInNewContext(fs.readFileSync("frontend/js/overlay.js", "utf8"), context);
 
+let drawState;
 context.window.GOverlay.render({
   image_width: 360,
   image_height: 640,
@@ -30,12 +32,17 @@ context.window.GOverlay.render({
       xyxy: [.1, .2, .3, .6], display_label: "person", alert_level: "danger",
       track_id: 12, event_id: 34,
     }],
-    event: { roi: {} },
+    event: { roi: {}, last_action: "left" },
   },
   traffic: { detections: [] },
   crosswalk: { event: { status: "crossing" } },
-});
+  stop_proximity: { status: "candidate", observations: 1,
+    required_observations: 3, xyxy: [.1, .2, .5, .8] },
+}, state => { drawState = state; });
 
 assert.ok(labels.includes("person · T12 · E34"));
+assert.ok(labels.includes("ACTION: left"));
 assert.ok(labels.includes("CROSSWALK: crossing"));
+assert.ok(labels.includes("정류장 후보 1/3"));
+assert.equal(drawState, "drawn");
 console.log("overlay ids: pass");

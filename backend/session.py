@@ -7,6 +7,7 @@ file_path: backend/session.py
 import json
 import re
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -89,9 +90,11 @@ class SessionManager:
                     "date": date, "folder_name": folder_name}
 
     # 한 프레임 처리와 JSONL 기록
-    def process(self, session_id, frame_id, captured_at_ms, frame):
+    def process(self, session_id, frame_id, captured_at_ms, frame, request_start_ns=None,
+                decode_ms=None):
         """요청 순서를 검증하고 세 모델 결과를 저장한다."""
         with self.lock:
+            processing_start_ns = time.perf_counter_ns()
             session = self.session
             if session is None or session["id"] != session_id:
                 raise SessionError("진행 중인 세션이 없습니다. 다시 시작하세요.")
@@ -111,11 +114,29 @@ class SessionManager:
                 raise SessionError("추론 프레임 이미지를 저장할 수 없습니다.")
             (session["folder"] / frame_file).write_bytes(jpeg.tobytes())
             result["frame_file"] = frame_file.as_posix()
+            result["server_timing"] = {
+                "decode_ms": decode_ms,
+                "processing_ms": round((time.perf_counter_ns() - processing_start_ns) / 1e6, 1),
+                "request_ms": (round((time.perf_counter_ns() - request_start_ns) / 1e6, 1)
+                               if request_start_ns is not None else None),
+            }
             # 응답의 큰 PNG는 로그에서 제외하고 판단 결과와 선택 대상만 기록한다.
             record = {
                 **{key: value for key, value in result.items() if key not in ("walking", "traffic")},
                 "walking": {key: value for key, value in result["walking"].items() if key != "mask_png"},
                 "traffic": result["traffic"],
+                "risk_diagnostics": [{
+                    "detection_index": item.get("detection_index"),
+                    "track_id": item.get("track_id"),
+                    "risk_level": item.get("risk_level"),
+                    "alert_level": item.get("alert_level"),
+                    "reasons": item.get("reasons", []),
+                    "bottom_y": (item.get("geometry") or {}).get("point", [None, None])[1],
+                    "corridor_overlap": (item.get("geometry") or {}).get("corridor_overlap"),
+                    "time_to_near_s": (item.get("motion") or {}).get("time_to_near_s"),
+                    "ttc_scale_s": (item.get("motion") or {}).get("ttc_scale_s"),
+                    "motion_quality": (item.get("motion") or {}).get("quality"),
+                } for item in risk["detections"]],
             }
             with (session["folder"] / "results.jsonl").open("a", encoding="utf-8") as file:
                 file.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n")
@@ -123,6 +144,15 @@ class SessionManager:
             session["last_frame_id"] = frame_id
             session["last_capture_ms"] = captured_at_ms
             return result
+
+    def record_client_timings(self, session_id, records):
+        """브라우저의 동일 시계 기준 지연과 실제 음성 시작 이벤트를 저장한다."""
+        with self.lock:
+            if self.session is None or self.session["id"] != session_id:
+                raise SessionError("진행 중인 세션이 없습니다.")
+            with (self.session["folder"] / "client_timing.jsonl").open("a", encoding="utf-8") as file:
+                for record in records:
+                    file.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n")
 
     # 휴대폰 테스트 종료
     def stop(self, session_id):

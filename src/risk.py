@@ -189,11 +189,22 @@ class RiskEngine:
                 if item["risk_level"] == "monitor":
                     item["risk_level"] = "caution"
                 item["reasons"].append("relative_path_entry")
+            if (self.config["approach_danger_enabled"] and related
+                    and m["time_to_near_s"] is not None):
+                item["risk_level"] = "danger"
+                item["reasons"].append("approaching_near_path")
             if self.config["ttc_alerts"] and m["ttc_scale_s"] is not None and (related or future_related):
                 ttc = m["ttc_scale_s"]
-                if ttc <= self.config["ttc_danger_s"]:
+                vx = m["velocity_norm_per_s"][0]
+                x = g["point"][0]
+                moving_outward = (g["central_immediate_overlap"] < threshold and
+                    ((x < self.config["central_danger_left"] and vx <= -self.config["min_lateral_speed"])
+                     or (x > self.config["central_danger_right"] and vx >= self.config["min_lateral_speed"])))
+                if ttc <= self.config["ttc_danger_s"] and not moving_outward:
                     item["risk_level"] = "danger"
                     item["reasons"].append("short_ttc")
+                elif moving_outward:
+                    item["reasons"].append("lateral_departure")
                 elif ttc <= self.config["ttc_caution_s"]:
                     if item["risk_level"] == "monitor":
                         item["risk_level"] = "caution"
@@ -202,6 +213,7 @@ class RiskEngine:
             item["surrounding_walkability"] = surroundings
             if (self.config["walkable_surroundings_filter_enabled"]
                     and item["risk_level"] == "danger"
+                    and surroundings["status"] == "available"
                     and surroundings["all_non_walkable"]):
                 item["risk_level"] = "caution"
                 item["reasons"].append("nonwalkable_surroundings")

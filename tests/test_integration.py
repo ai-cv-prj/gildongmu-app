@@ -26,8 +26,9 @@ from src.pipeline import (
     resolve_path,
     run_video_inference,
 )
+from src.settings import load_paths
 from src.sidewalk import SidewalkSegmenter, get_segmentation_label_ids
-from src.obstacle import EXPECTED_CLASS_NAMES, ObstacleDetector, validate_yolo_config
+from src.obstacle import EXPECTED_CLASS_NAMES, EXPECTED_CLASS_NAMES_29, ObstacleDetector, validate_yolo_config
 from src.visualization import (
     LABEL_COLORS,
     OBJECT_COLORS,
@@ -65,8 +66,11 @@ class IntegrationTests(unittest.TestCase):
     def test_default_config_and_paths(self):
         """설정 경로는 프로젝트 루트를 기준으로 해석한다."""
         config = load_config(DEFAULT_CONFIG)
-        self.assertEqual(resolve_path(config["mask2former"]["weights"]), PROJECT_DIR / "weights/walking/mask2former")
-        self.assertEqual(resolve_path(config["yolo"]["weights"]), PROJECT_DIR / "weights/walking/yolo/finetune_v2_exp02_stage2_best.pt")
+        paths = load_paths(config["paths_config"])
+        self.assertEqual(resolve_path(config["mask2former"]["weights"]),
+                         resolve_path(paths["mask2former_weights"]))
+        self.assertEqual(resolve_path(config["yolo"]["weights"]),
+                         resolve_path(paths["yolo_weights"]))
         self.assertNotIn("model_dir", config)
         self.assertEqual(resolve_path(config["sample_dir"]), PROJECT_DIR / "data/samples/input")
         self.assertEqual(resolve_path(config["session_dir"]), PROJECT_DIR / "data/sessions")
@@ -221,7 +225,7 @@ class IntegrationTests(unittest.TestCase):
             "src.pipeline.process_video"
         ) as process, patch.object(Path, "mkdir") as mkdir, redirect_stdout(io.StringIO()):
             outputs = run_video_inference(device="cpu", mode="sidewalk")
-        loader.assert_called_once_with(PROJECT_DIR / "weights/walking/mask2former", device="cpu")
+        loader.assert_called_once_with(resolve_path(load_paths()["mask2former_weights"]), device="cpu")
         detector_loader.assert_not_called()
         self.assertEqual(process.call_count, 2)
         self.assertEqual(outputs, [
@@ -468,6 +472,10 @@ class IntegrationTests(unittest.TestCase):
             self.assertEqual(detector.conf, 0.25)
             self.assertEqual(detector.imgsz, 640)
             factory.assert_called_once_with(weights.name)
+            factory.return_value.names = dict(enumerate(EXPECTED_CLASS_NAMES_29))
+            reduced = ObstacleDetector(weights.name, device="cpu")
+            self.assertEqual(reduced.class_names[20], "transit_stop")
+            self.assertEqual(len(reduced.class_names), 29)
             factory.return_value.names = {0: "person"}
             with self.assertRaisesRegex(ValueError, "32클래스"):
                 ObstacleDetector(weights.name, device="cpu")

@@ -20,6 +20,10 @@ EXPECTED_CLASS_NAMES = (
     "suitcase", "skateboard", "trash_bin",
 )
 
+EXPECTED_CLASS_NAMES_29 = tuple(
+    name for name in EXPECTED_CLASS_NAMES if name not in {"cat", "dog", "bird"}
+)
+
 
 # YOLO 설정 검증
 def validate_yolo_config(config):
@@ -53,7 +57,7 @@ class ObstacleDetector:
     # 로컬 가중치 및 클래스 확인
     def __init__(self, weights, device="auto", conf=0.25, imgsz=640, head="nms",
                  iou=0.7, max_det=300, rect=True):
-        """32클래스 장애물 가중치를 불러오고 추론 옵션을 저장한다."""
+        """지원하는 32클래스 또는 동물 제외 29클래스 가중치를 불러온다."""
         validate_yolo_config({"weights": str(weights), "conf": conf, "imgsz": imgsz,
                               "head": head, "iou": iou, "max_det": max_det, "rect": rect})
         weights = Path(weights).expanduser().resolve()
@@ -79,8 +83,11 @@ class ObstacleDetector:
         if self.model.task != "detect":
             raise ValueError("객체 탐지용 YOLO 가중치가 필요합니다.")
         self.class_names = self.model.names
-        if self.class_names != dict(enumerate(EXPECTED_CLASS_NAMES)):
-            raise ValueError("YOLO 가중치의 클래스 번호·이름이 팀의 32클래스 정의와 다릅니다.")
+        if self.class_names not in (
+            dict(enumerate(EXPECTED_CLASS_NAMES)),
+            dict(enumerate(EXPECTED_CLASS_NAMES_29)),
+        ):
+            raise ValueError("YOLO 가중치의 클래스 번호·이름이 지원하는 32클래스/29클래스 정의와 다릅니다.")
 
     # 원본 프레임의 장애물 탐지
     def predict(self, frame):
