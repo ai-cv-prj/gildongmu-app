@@ -172,6 +172,83 @@ class RiskTests(unittest.TestCase):
         self.assertFalse(np.array_equal(rendered[:40],FRAME[:40]))
         np.testing.assert_array_equal(rendered[40:],FRAME[40:])
 
+    def test_first_bbox_edge_inside_immediate_roi_is_display_only_caution(self):
+        """첫 bbox 테두리가 핑크 ROI와 겹치면 주황 박스만 남기고 경고하지 않는다."""
+        e = engine(config={"rear_origin_exclusion_enabled": True})
+        first = e.update(FRAME, [detection((40, 80, 60, 99))], 0)
+        item = first["detections"][0]
+        self.assertTrue(item["geometry"]["bbox_top_in_immediate_roi"])
+        self.assertEqual(
+            item["geometry"]["bbox_edges_in_immediate_roi"],
+            ["top", "bottom", "left", "right"],
+        )
+        self.assertTrue(item["rear_origin"])
+        self.assertEqual(item["risk_level"], "caution")
+        self.assertEqual(item["alert_level"], "caution")
+        self.assertEqual(item["alert_status"], "suppressed")
+        self.assertEqual(item["voice_suppressed_reason"], "rear_origin")
+        self.assertEqual(first["events"], [])
+        self.assertEqual(first["warning"]["level"], "monitor")
+
+        moved = e.update(FRAME, [detection((35, 45, 65, 85))], .1)
+        self.assertTrue(moved["detections"][0]["rear_origin"])
+        self.assertEqual(moved["detections"][0]["alert_level"], "caution")
+        self.assertEqual(moved["events"], [])
+        self.assertEqual(moved["warning"]["level"], "monitor")
+
+    def test_first_bbox_side_or_bottom_inside_immediate_roi_is_rear_origin(self):
+        """상단이 닿지 않아도 하단이나 좌우 테두리가 겹치면 후방 진입으로 등록한다."""
+        e = engine(config={"rear_origin_exclusion_enabled": True})
+        result = e.update(FRAME, [detection((0, 60, 30, 80))], 0)
+        item = result["detections"][0]
+        self.assertFalse(item["geometry"]["bbox_top_in_immediate_roi"])
+        self.assertEqual(
+            item["geometry"]["bbox_edges_in_immediate_roi"],
+            ["bottom", "right"],
+        )
+        self.assertTrue(item["rear_origin"])
+        self.assertEqual(item["alert_status"], "suppressed")
+        self.assertEqual(result["events"], [])
+
+    def test_no_id_rear_origin_is_suppressed_and_inherited_by_new_track(self):
+        """ID 없는 후방 객체를 즉시 제외하고 가까운 새 ID에도 상태를 승계한다."""
+        e = engine(None, config={"rear_origin_exclusion_enabled": True})
+        first = e.update(FRAME, [detection((0, 60, 30, 80))], 0)
+        self.assertIsNone(first["detections"][0]["track_id"])
+        self.assertTrue(first["detections"][0]["rear_origin"])
+        self.assertEqual(first["events"], [])
+
+        e.tracker.identity = 7
+        second = e.update(FRAME, [detection((0, 55, 30, 74))], .1)
+        item = second["detections"][0]
+        self.assertEqual(item["geometry"]["bbox_edges_in_immediate_roi"], [])
+        self.assertTrue(item["rear_origin"])
+        self.assertEqual(item["alert_status"], "suppressed")
+        self.assertEqual(second["events"], [])
+
+    def test_stale_track_id_is_reassessed_as_new_object(self):
+        """연결 시간을 넘겨 다시 나타난 기존 ID는 최초 위치로 후방 여부를 다시 판정한다."""
+        e = engine(config={"rear_origin_exclusion_enabled": True})
+        first = e.update(FRAME, [detection((40, 30, 60, 65))], 0)
+        self.assertNotIn("rear_origin", first["detections"][0])
+        e.update(FRAME, [], .1)
+        reappeared = e.update(FRAME, [detection((40, 80, 60, 99))], .4)
+        item = reappeared["detections"][0]
+        self.assertTrue(item["rear_origin"])
+        self.assertEqual(item["alert_status"], "suppressed")
+        self.assertEqual(reappeared["events"], [])
+
+    def test_track_first_seen_above_immediate_roi_is_never_reclassified_as_rear(self):
+        """ROI 밖에서 시작한 ID는 나중에 bbox 상단이 들어와도 후방 유입으로 바꾸지 않는다."""
+        e = engine(config={"rear_origin_exclusion_enabled": True})
+        first = e.update(FRAME, [detection((40, 30, 60, 65))], 0)
+        self.assertFalse(first["detections"][0]["geometry"]["bbox_top_in_immediate_roi"])
+        second = e.update(FRAME, [detection((40, 80, 60, 99))], .1)
+        item = second["detections"][0]
+        self.assertNotIn("rear_origin", item)
+        self.assertEqual(item["alert_level"], "danger")
+        self.assertNotEqual(second["warning"]["level"], "monitor")
+
     def test_alert_cooldown_escalation_tentative_identity_and_release(self):
         e=engine(None)
         result=e.update(FRAME,[detection((40,30,60,65))],0)

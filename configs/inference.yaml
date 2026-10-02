@@ -161,6 +161,8 @@ risk:
   draw_roi: true
   review_overlay: false # 검토용 상세 오버레이
   log_jsonl: true
+  # 최초 bbox 상·하·좌·우 테두리가 핑크 ROI와 겹치는 객체는 주황 박스만 표시
+  rear_origin_exclusion_enabled: true
 
   # 측면 근접과 상대 진입
   side_proximity_enabled: true
