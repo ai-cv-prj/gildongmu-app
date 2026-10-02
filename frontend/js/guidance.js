@@ -14,6 +14,8 @@
     let mode = "traffic";
     // 대상 추적 이력과 분리한다. 소실 안내 후 재확인한 경우에만 같은 색을 다시 읽는다.
     let lastAnnouncedColor = null, lastAnnouncedTarget = null;
+    let lastWalkingAction = null;
+    let lastWalkingEvent = null;
 
     function update(text) { onChange({ active, text }); }
     function resetEvidence() { target = null; color = null; candidate = null; }
@@ -25,6 +27,7 @@
       return coordinator.request({ source: mode, priority: red
         ? coordinator.PRIORITY.trafficRed
         : changed ? coordinator.PRIORITY.trafficChange
+          : metadata.action === "stop" ? coordinator.PRIORITY.emergency ?? 0
           : coordinator.PRIORITY[mode], text: message, validUntil, metadata });
     }
     function stop(text = "음성 안내가 꺼져 있습니다.") {
@@ -33,6 +36,8 @@
       lastAnnouncedColor = null;
       lastAnnouncedTarget = null;
       resetEvidence();
+      lastWalkingAction = null;
+      lastWalkingEvent = null;
       coordinator.clear(mode);
       update(text);
     }
@@ -82,6 +87,19 @@
       lastCapture = capturedAt;
       const event = res.event || {};
       if (mode === "walking") {
+        const voice = event.voice_event;
+        if (voice && typeof voice.text === "string" && ["left", "right", "straight", "stop"].includes(voice.action)) {
+          if ((voice.action !== lastWalkingAction || Number.isInteger(voice.event_id)
+              && voice.event_id !== lastWalkingEvent) && announce(voice.text, capturedAt + limits.max_age_ms, {
+            frame_id: res.frame_id, captured_at_ms: res.captured_at_ms, action: voice.action,
+          })) { lastWalkingAction = voice.action; lastWalkingEvent = voice.event_id; }
+          return;
+        }
+        if (event.voice_action === null && event.voice_clear !== false) {
+          lastWalkingAction = null;
+          lastWalkingEvent = null;
+          coordinator.clear(mode);
+        }
         if (res.crossing_active && event.voice_action === null) coordinator.clear(mode);
         const danger = event.type === "walking_warning" && event.level === "danger" &&
           typeof event.voice_text === "string";

@@ -103,7 +103,8 @@ class AlertPolicy:
             # A partially visible box may shrink before the nearby object leaves view.
             near_recent = near_now or (new!="monitor" and
                 timestamp-state.get("last_near",-float("inf"))<=self.cfg["visibility_advisory_s"])
-            state.update(track_id=item["track_id"],class_id=item["class_id"],box=item["xyxy"],
+            state.update(track_id=item["track_id"],class_id=item["class_id"],
+                         class_name=item.get("class_name"),box=item["xyxy"],
                          last_seen=timestamp,level=new,
                          direction=g.get("side_direction","front"),
                          near_candidate=near_recent)

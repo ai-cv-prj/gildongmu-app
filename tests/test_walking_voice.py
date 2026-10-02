@@ -117,16 +117,16 @@ class WalkingVoiceTests(unittest.TestCase):
                          "stop")
 
     # 동률에서 주의 객체로 좌우 비교
-    def test_center_danger_uses_caution_count_then_distance(self):
-        """위험 거리가 같으면 주의 개수와 가장 가까운 주의 거리를 차례로 비교한다."""
+    def test_center_danger_rejects_both_occupied_sides(self):
+        """주의 객체가 적은 쪽이라도 양쪽이 막혔으면 멈춘다."""
         center = danger_item(1, [45, 0, 55, 20])
         left_caution = caution_item(2, [5, 0, 15, 20])
         right_near = caution_item(3, [70, 0, 80, 20])
         right_far = caution_item(4, [88, 0, 98, 20])
         self.assertEqual(walking_action(
-            prediction(center, left_caution, right_near, right_far), 100), "left")
+            prediction(center, left_caution, right_near, right_far), 100), "stop")
         self.assertEqual(walking_action(
-            prediction(center, caution_item(5, [15, 0, 25, 20]), right_far), 100), "right")
+            prediction(center, caution_item(5, [15, 0, 25, 20]), right_far), 100), "stop")
 
     # 최종 행동 변경에만 음성 생성
     def test_only_changed_action_is_announced(self):
@@ -139,15 +139,19 @@ class WalkingVoiceTests(unittest.TestCase):
         same = prediction(danger_item(3, [10, 0, 20, 20]))
         self.assertIsNone(voice.observe(same, 100, .3))
         self.assertEqual(same["last_action"], "straight")
+        # The previously selected straight path is now occupied: stop immediately.
         self.assertEqual(voice.observe(prediction(left, center), 100, .4),
-                         ("오른쪽으로 이동하세요.", "walking-move-right.mp3"))
+                         ("멈추세요.", "walking-stop.mp3"))
         self.assertIsNone(voice.observe(prediction(left, center), 100, .5))
-        cleared = prediction(left, level="caution")
-        self.assertIsNone(voice.observe(cleared, 100, .6))
+        self.assertEqual(voice.observe(prediction(left, center), 100, .86),
+                         ("오른쪽으로 이동하세요.", "walking-move-right.mp3"))
+        cleared = prediction(level="monitor")
+        self.assertIsNone(voice.observe(cleared, 100, 1.8))
+        self.assertIsNone(voice.observe(cleared, 100, 2.45))
         self.assertIsNone(cleared["last_action"])
-        self.assertEqual(voice.observe(prediction(left), 100, .7),
+        self.assertEqual(voice.observe(prediction(left), 100, 2.5),
                          ("직진하세요.", "walking-straight.mp3"))
-        self.assertEqual(len(voice.events), 3)
+        self.assertEqual(len(voice.events), 4)
 
     # 횡단 중 차량 외 장애물 음성 제외 확인
     def test_crossing_announces_only_vehicle_obstacles(self):
