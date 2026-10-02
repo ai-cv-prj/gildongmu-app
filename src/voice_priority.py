@@ -92,7 +92,9 @@ def prioritize_voice_events(walking_events, traffic_events, crosswalk_events):
                 active_priority = None
                 active_source = None
             continue
-        if time_s < active_end - 1e-9 and priority >= active_priority:
+        walking_action_changed = source == "walking" and active_source == "walking"
+        if (time_s < active_end - 1e-9 and priority >= active_priority
+                and not walking_action_changed):
             continue
         result.append((time_s, clip))
         active_end = time_s + clip_duration(clip)
