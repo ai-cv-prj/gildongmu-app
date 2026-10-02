@@ -64,6 +64,8 @@ def make_response(session_id, frame_id, captured_at_ms, frame, risk, signal, cro
                 "last_action": risk.get("last_action"),
                 "voice_action": risk.get("voice_action"),
                 "voice_text": risk.get("voice_text"),
+                "voice_event": risk.get("voice_event"),
+                "voice_clear": risk.get("voice_clear", False),
             },
             "mask_png": encode_mask(class_map, label_ids),
         },

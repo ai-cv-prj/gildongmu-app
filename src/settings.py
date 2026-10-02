@@ -132,6 +132,9 @@ def load_audio_settings(config_path=DEFAULT_AUDIO_CONFIG):
     number(guidance, "walking_side_intrusion_ratio", 0, 1)
     number(guidance, "walking_voice_immediate_overlap_ratio", 0, 1)
     number(guidance, "walking_distance_tie_ratio", 0, 1)
+    for key in ("walking_change_confirm_ms", "walking_release_confirm_ms", "walking_missing_hold_ms"):
+        if key in guidance:
+            number(guidance, key, 1, 300000, integer=True)
     if left >= right:
         raise ValueError("walking_left_max_ratio는 walking_right_min_ratio보다 작아야 합니다.")
     return audio

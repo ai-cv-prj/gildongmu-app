@@ -61,6 +61,11 @@ DEFAULT_RISK = {
 }
 # New rules are enabled explicitly in config/walking_risk.yaml, so saved older configs replay unchanged.
 DEFAULT_RISK.update({
+    "dynamic_vehicle_risk_enabled": False,
+    "vehicle_uncertain_near_y": .55,
+    "vehicle_uncertain_min_height": .18,
+    "vehicle_uncertain_min_width": .20,
+    "vehicle_uncertain_min_confidence": .50,
     "roi_ground_adapt_enabled":False,
     "roi_top_max_y":.65, "roi_extent_smooth_s":.35,
     "roi_extent_hold_s":.50, "roi_extent_deadband":.015,
@@ -134,7 +139,7 @@ def risk_config(value=None):
                 "roi_recalibration_enabled","surface_risk_enabled","class_bridge_enabled",
                 "warning_grouping_enabled","wide_roi_priority_enabled",
                 "camera_view_guard_enabled","walkable_surroundings_filter_enabled",
-                "approach_danger_enabled"):
+                "approach_danger_enabled", "dynamic_vehicle_risk_enabled"):
         if not isinstance(cfg[key],bool):
             raise ValueError(f"risk.{key} must be boolean")
     for key in ("side_near_y","side_min_height","side_min_width","roi_jitter_shift",
@@ -145,7 +150,9 @@ def risk_config(value=None):
                 "side_danger_y","roi_extent_max_shift_per_s",
                 "surrounding_side_width_ratio","surrounding_side_height_ratio",
                 "surrounding_bottom_height_ratio","surrounding_max_side_width_ratio",
-                "surrounding_max_bottom_height_ratio","surrounding_walkable_threshold"):
+                "surrounding_max_bottom_height_ratio","surrounding_walkable_threshold",
+                "vehicle_uncertain_near_y", "vehicle_uncertain_min_height",
+                "vehicle_uncertain_min_width", "vehicle_uncertain_min_confidence"):
         _number(cfg[key],f"risk.{key}",0,1,True)
     for key in ("roi_change_confirm_s","roi_small_confirm_s","surface_confirm_s",
                 "surface_clear_s","visibility_advisory_s","roi_extent_smooth_s",

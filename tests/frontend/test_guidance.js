@@ -58,3 +58,25 @@ walking.accept({ session_id: "test", frame_id: 2, crossing_active: true,
     voice_action: null } }, now);
 assert.equal(cleared.at(-1), "walking");
 console.log("guidance: pass");
+
+// A server-authorized surface stop is independent of the summary's caution level.
+now = 2700;
+walking.accept({ session_id: "test", frame_id: 3, captured_at_ms: 2700,
+  event: { type: "walking_warning", level: "caution", voice_action: "stop",
+    voice_event: { action: "stop", text: "멈추세요.", source: "surface", urgency: "emergency" } } }, now);
+assert.equal(spoken.at(-1), "멈추세요.");
+assert.equal(requests.at(-1).priority, 0);
+
+// A new stop event must interrupt bus input even when the action stays stop.
+now = 2800;
+walking.accept({ session_id: "test", frame_id: 4, captured_at_ms: 2800,
+  event: { voice_event: { action: "stop", text: "멈추세요.", event_id: 1 } } }, now);
+const stops = spoken.filter(text => text === "멈추세요.").length;
+now = 2900;
+walking.accept({ session_id: "test", frame_id: 5, captured_at_ms: 2900,
+  event: { voice_event: { action: "stop", text: "멈추세요.", event_id: 1 } } }, now);
+assert.equal(spoken.filter(text => text === "멈추세요.").length, stops);
+now = 3000;
+walking.accept({ session_id: "test", frame_id: 6, captured_at_ms: 3000,
+  event: { voice_event: { action: "stop", text: "멈추세요.", event_id: 2 } } }, now);
+assert.equal(spoken.filter(text => text === "멈추세요.").length, stops + 1);
