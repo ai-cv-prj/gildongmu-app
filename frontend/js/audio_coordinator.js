@@ -11,7 +11,8 @@
   // 전체 안내에서 하나뿐인 음성 재생 관리자 생성
   /** 단일 플레이어의 취소와 반복을 안내 우선순위에 맞춰 제어한다. */
   function create({ player, now = () => performance.now() }) {
-    const crosswalkMaxAgeMs = window.GConfig.get().audio.crosswalk_max_age_ms;
+    const audio = window.GConfig.get().audio;
+    const crosswalkMaxAgeMs = audio.crosswalk_max_age_ms;
     let active = false, current = null, generation = 0;
 
     // 현재 요청 음성 한 번 재생
@@ -31,11 +32,13 @@
 
     // 일반 안내 재생 요청
     /** 더 높은 우선순위만 현재 음성을 중단하며 나머지는 대기시키지 않고 폐기한다. */
-    function request({ source, priority, text, validUntil, repeat = false }) {
+    function request({ source, priority, text, validUntil, repeat = false, kind = null }) {
       if (!active || !text || !Number.isFinite(validUntil) || now() >= validUntil) return false;
       if (current) {
-        if (current.source === source && current.text === text && current.repeat === repeat) {
+        if (current.source === source && current.text === text && current.kind === kind) {
           current.validUntil = Math.max(current.validUntil, validUntil);
+          current.repeat = repeat;
+          current.finishing = false;
           return true;
         }
         const urgentReplacement = priority <= PRIORITY.walking && current.source === source
@@ -44,8 +47,18 @@
         generation++;
         player.cancel();
       }
-      current = { source, priority, text, validUntil, repeat };
+      current = { source, priority, text, validUntil, repeat, kind, finishing: false };
       return play(current);
+    }
+
+    // 현재 문장을 유지한 채 반복만 종료
+    /** 복귀한 이탈 안내는 재생 중인 문장을 자르지 않고 다음 반복만 막는다. */
+    function finishRepeat(source, kind) {
+      if (!current || current.source !== source || current.kind !== kind) return false;
+      current.repeat = false;
+      current.finishing = true;
+      current.validUntil = Math.max(current.validUntil, now() + audio.playback_timeout_ms);
+      return true;
     }
 
     // 특정 안내 종류만 취소
@@ -67,13 +80,13 @@
       if (["align_left", "align_right"].includes(event.status)
           && event.repeat && event.voice_text) {
         request({ source: "crosswalk", priority: PRIORITY.crosswalk, text: event.voice_text,
-          validUntil, repeat: true });
+          validUntil, repeat: true, kind: "align" });
         return;
       }
       if (["outside_left", "outside_right"].includes(event.status)
           && event.repeat && event.voice_text) {
         request({ source: "crosswalk", priority: PRIORITY.crosswalk, text: event.voice_text,
-          validUntil, repeat: true });
+          validUntil, repeat: true, kind: "exit" });
         return;
       }
       if (event.status === "uncertain" && event.crossing_active
@@ -81,6 +94,7 @@
         current.validUntil = Math.max(current.validUntil, validUntil);
         return;
       }
+      if (finishRepeat("crosswalk", "exit")) return;
       clear("crosswalk");
     }
 

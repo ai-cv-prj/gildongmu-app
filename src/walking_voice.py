@@ -24,6 +24,7 @@ ACTION_MESSAGES = {
     "right": ("오른쪽으로 이동하세요.", "walking-move-right.mp3"),
     "stop": ("멈추세요.", "walking-stop.mp3"),
 }
+VEHICLE_CLASSES = frozenset({"car", "bus", "truck", "motorcycle"})
 
 
 # 객체 바닥에서 횡단보도 픽셀 비율 계산
@@ -122,8 +123,8 @@ def inside_voice_roi(item):
 
 
 # 행동 안내에 사용할 위험·주의 객체 선별
-def guidance_items(prediction, level):
-    """대표 위험이 유효할 때 핑크 ROI 음성 조건을 만족하는 객체를 반환한다."""
+def guidance_items(prediction, level, crossing_active=False):
+    """횡단 중에는 차량만 남겨 핑크 ROI 음성 조건의 객체를 반환한다."""
     warning = prediction.get("warning") or {}
     index = warning.get("detection_index")
     if (warning.get("level") != "danger" or not isinstance(index, int) or isinstance(index, bool)):
@@ -132,6 +133,7 @@ def guidance_items(prediction, level):
             if item.get("alert_level", item.get("risk_level")) == level
             and item.get("warning_primary", True)
             and not item.get("voice_suppressed_reason")
+            and (not crossing_active or item.get("class_name") in VEHICLE_CLASSES)
             and (level != "danger" or inside_voice_roi(item))]
 
 
@@ -177,9 +179,9 @@ def safer_side(dangers, cautions, image_width):
 
 
 # 위험 분포를 최종 이동 행동으로 변환
-def walking_action(prediction, image_width):
-    """왼쪽·가운데·오른쪽 위험 분포와 좌우 안전도를 하나의 행동으로 바꾼다."""
-    dangers = guidance_items(prediction, "danger")
+def walking_action(prediction, image_width, crossing_active=False):
+    """횡단 상태에 맞는 위험 분포와 좌우 안전도를 하나의 행동으로 바꾼다."""
+    dangers = guidance_items(prediction, "danger", crossing_active)
     directions = {direction for item in dangers
                   for direction in warning_directions(item, image_width)}
     if not directions:
@@ -193,7 +195,8 @@ def walking_action(prediction, image_width):
     if directions == {"left", "center", "right"}:
         return "stop"
     if directions == {"center"}:
-        return safer_side(dangers, guidance_items(prediction, "caution"), image_width) or "stop"
+        cautions = guidance_items(prediction, "caution", crossing_active)
+        return safer_side(dangers, cautions, image_width) or "stop"
     return "stop"
 
 
@@ -207,19 +210,23 @@ class WalkingVoice:
         self.events = []
 
     # 현재 프레임의 신규 위험 안내 기록
-    def observe(self, prediction, image_width, output_time_s):
-        """현재 행동을 계산하고 이전 행동과 달라졌을 때만 음원을 예약한다."""
+    def observe(self, prediction, image_width, output_time_s, crossing_active=False):
+        """횡단 중 차량만으로 행동을 계산하고 변경된 음원만 예약한다."""
         prediction.pop("voice_text", None)
         prediction.pop("voice_clip", None)
-        action = walking_action(prediction, image_width)
-        prediction["last_action"] = action
-        if action is None:
+        display_action = walking_action(prediction, image_width)
+        voice_action = walking_action(prediction, image_width, crossing_active)
+        prediction["last_action"] = display_action
+        prediction["voice_action"] = voice_action
+        if voice_action is None:
+            if crossing_active and self.last_action is not None:
+                self.events.append((output_time_s, None))
             self.last_action = None
             return None
-        if action == self.last_action:
+        if voice_action == self.last_action:
             return None
-        self.last_action = action
-        message = ACTION_MESSAGES[action]
+        self.last_action = voice_action
+        message = ACTION_MESSAGES[voice_action]
         prediction["voice_text"] = message[0]
         self.events.append((output_time_s, message[1]))
         prediction["voice_clip"] = message[1]

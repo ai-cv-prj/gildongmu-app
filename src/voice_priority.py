@@ -2,8 +2,10 @@
 file_path: src/voice_priority.py
 
 영상 결과의 횡단보도·장애물·신호등 음성을 하나의 우선순위 시간축으로 합친다.
-횡단보도 이탈 구간은 문장을 연속 반복하고 복귀 시점에 즉시 자른다.
+횡단보도 이탈 구간은 문장을 연속 반복하고 복귀 시 현재 문장까지만 재생한다.
 """
+
+import math
 
 from src.video_audio import SAMPLE_RATE, decode_clip
 
@@ -52,27 +54,38 @@ class CrosswalkVoice:
 
     # 영상 종료 시 구간과 반복 이벤트 완성
     def events(self, duration_s):
-        """영상 끝에서 열린 구간을 닫고 문장 길이마다 반복할 이벤트를 반환한다."""
+        """같은 방향의 짧은 복귀를 이어 문장이 끝나는 경계마다 반복한다."""
         if self.active is not None:
             end = min(duration_s, self.active["end"])
             if end > self.active["start"]:
                 self.intervals.append((self.active["start"], end, self.active["clip"]))
             self.active = None
-        events = []
+        merged = []
         for start, end, clip in self.intervals:
+            step = max(0.01, clip_duration(clip))
+            if merged and merged[-1][2] == clip:
+                previous_start, previous_end, _ = merged[-1]
+                repeats = max(1, math.ceil((previous_end - previous_start) / step))
+                audible_end = previous_start + repeats * step
+                if start < audible_end - 1e-9:
+                    merged[-1] = (previous_start, max(previous_end, end), clip)
+                    continue
+            merged.append((start, end, clip))
+        events = []
+        for start, end, clip in merged:
             cursor = start
             step = max(0.01, clip_duration(clip))
             while cursor < end - 1e-9:
                 events.append((cursor, clip, 1, "crosswalk"))
                 cursor += step
-            events.append((end, None, 1, "crosswalk_stop"))
         return events
 
 
 # 세 안내 종류를 전역 우선순위로 병합
 def prioritize_voice_events(walking_events, traffic_events, crosswalk_events):
     """상위 음성이 재생 중인 시점의 하위 이벤트를 폐기해 단일 재생 시간축을 만든다."""
-    candidates = [(time_s, clip, 3, "walking") for time_s, clip in walking_events]
+    candidates = [(time_s, clip, 3, "walking" if clip else "walking_stop")
+                  for time_s, clip in walking_events]
     candidates += [
         (time_s, clip, 2 if clip in RED_TRAFFIC_CLIPS
          else 4 if clip in TRAFFIC_CHANGE_CLIPS else 5, "traffic")
@@ -84,20 +97,33 @@ def prioritize_voice_events(walking_events, traffic_events, crosswalk_events):
     active_end = 0.0
     active_priority = None
     active_source = None
+    active_clip = None
     for time_s, clip, priority, source in candidates:
+        if source == "walking_stop":
+            if active_source == "walking":
+                result.append((time_s, None))
+                active_end = time_s
+                active_priority = None
+                active_source = None
+                active_clip = None
+            continue
         if source == "crosswalk_stop":
             if active_source == "crosswalk":
                 result.append((time_s, None))
                 active_end = time_s
                 active_priority = None
                 active_source = None
+                active_clip = None
             continue
         walking_action_changed = source == "walking" and active_source == "walking"
+        crosswalk_direction_changed = (source == "crosswalk" and active_source == "crosswalk"
+                                       and clip != active_clip)
         if (time_s < active_end - 1e-9 and priority >= active_priority
-                and not walking_action_changed):
+                and not walking_action_changed and not crosswalk_direction_changed):
             continue
         result.append((time_s, clip))
         active_end = time_s + clip_duration(clip)
         active_priority = priority
         active_source = source
+        active_clip = clip
     return result

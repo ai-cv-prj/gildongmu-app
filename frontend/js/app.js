@@ -81,7 +81,8 @@
     metrics.textContent = `${result.frame_id} 프레임 · ${result.inference_ms}ms`;
     audioCoordinator.acceptCrosswalk(result.crosswalk?.event, capturedAt);
     walkingGuide.accept({ session_id: result.session_id, frame_id: result.frame_id,
-      detections: result.walking.detections, event: result.walking.event }, capturedAt);
+      detections: result.walking.detections, event: result.walking.event,
+      crossing_active: result.crosswalk?.event?.crossing_active === true }, capturedAt);
     trafficGuide.accept({ session_id: result.session_id, frame_id: result.frame_id,
       detections: result.traffic.detections, event: result.traffic.event }, capturedAt);
   }
