@@ -34,7 +34,7 @@ def danger_item(event_id, box, name="person", **extra):
     """신뢰할 수 있는 객체 이름과 위험 이벤트 ID를 가진 검출을 반환한다."""
     return {"event_id": event_id, "detection_index": event_id - 1,
             "xyxy": box, "alert_level": "danger", "risk_level": "danger",
-            "label_status": "reliable", "display_label": name,
+            "class_name": name, "label_status": "reliable", "display_label": name,
             "warning_primary": True, "geometry": {"immediate_overlap": 1.0}, **extra}
 
 
@@ -148,6 +148,37 @@ class WalkingVoiceTests(unittest.TestCase):
         self.assertEqual(voice.observe(prediction(left), 100, .7),
                          ("직진하세요.", "walking-straight.mp3"))
         self.assertEqual(len(voice.events), 3)
+
+    # 횡단 중 차량 외 장애물 음성 제외 확인
+    def test_crossing_announces_only_vehicle_obstacles(self):
+        """횡단 중 사람과 일반 장애물은 침묵하고 네 차량 클래스만 안내한다."""
+        for name in ("person", "pole"):
+            with self.subTest(suppressed=name):
+                voice = WalkingVoice()
+                result = prediction(danger_item(1, [45, 0, 55, 20], name))
+                self.assertIsNone(voice.observe(result, 100, .1, crossing_active=True))
+                self.assertEqual(result["last_action"], "stop")
+                self.assertIsNone(result["voice_action"])
+                self.assertNotIn("voice_text", result)
+        for name in ("car", "bus", "truck", "motorcycle"):
+            with self.subTest(allowed=name):
+                voice = WalkingVoice()
+                result = prediction(danger_item(1, [45, 0, 55, 20], name))
+                self.assertEqual(
+                    voice.observe(result, 100, .1, crossing_active=True),
+                    ("멈추세요.", "walking-stop.mp3"),
+                )
+                self.assertEqual(result["last_action"], "stop")
+                self.assertEqual(result["voice_action"], "stop")
+
+    # 횡단 진입 시 기존 비차량 음성 중단 확인
+    def test_crossing_suppression_stops_previous_walking_audio(self):
+        """진입 전에 시작한 사람 안내는 횡단 상태에서 중단 이벤트를 기록한다."""
+        voice = WalkingVoice()
+        person = prediction(danger_item(1, [5, 0, 15, 20]))
+        self.assertIsNotNone(voice.observe(person, 100, .1))
+        self.assertIsNone(voice.observe(person, 100, .2, crossing_active=True))
+        self.assertEqual(voice.events[-1], (.2, None))
 
     # 객체 없는 위험 처리
     def test_non_object_warning_is_silent(self):

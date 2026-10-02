@@ -12,13 +12,14 @@ const context = { window: { GConfig: { get: () => settings } }, performance: { n
 vm.runInNewContext(fs.readFileSync("frontend/js/guidance.js", "utf8"), context);
 const spoken = [];
 let now = 0;
+const cleared = [];
 const coordinator = {
   PRIORITY: { trafficRed: 2, walking: 3, trafficChange: 4, traffic: 5 },
   request({ text }) {
     spoken.push(text);
     return true;
   },
-  clear() {},
+  clear(source) { cleared.push(source); },
 };
 
 // 1초가 넘는 간격에서도 세 프레임 확인 후 한 번 안내
@@ -42,4 +43,11 @@ walking.accept({ session_id: "test", frame_id: 1,
   event: { type: "walking_warning", level: "danger",
     voice_text: "오른쪽으로 이동하세요." } }, now);
 assert.ok(spoken.includes("오른쪽으로 이동하세요."));
+
+// 횡단 중 차량 행동이 없으면 진입 전에 재생하던 일반 장애물 음성을 중단
+now = 2500;
+walking.accept({ session_id: "test", frame_id: 2, crossing_active: true,
+  event: { type: "walking_warning", level: "danger", last_action: "stop",
+    voice_action: null } }, now);
+assert.equal(cleared.at(-1), "walking");
 console.log("guidance: pass");

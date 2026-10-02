@@ -82,6 +82,7 @@
       lastCapture = capturedAt;
       const event = res.event || {};
       if (mode === "walking") {
+        if (res.crossing_active && event.voice_action === null) coordinator.clear(mode);
         const danger = event.type === "walking_warning" && event.level === "danger" &&
           typeof event.voice_text === "string";
         if (!danger) return;
