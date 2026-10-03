@@ -8,6 +8,11 @@ device: auto
 mode: all # all: 전체, both: 도보+장애물, 나머지: 단독
 overlay_alpha: 0.55 # 마스크 투명도
 
+# 녹화 영상도 휴대폰 실시간 전송 프레임과 같은 크기·JPEG 품질로 추론한다.
+recorded_frame:
+  max_side: 640
+  jpeg_quality: 0.72
+
 # 장애물 YOLO
 yolo:
   conf: 0.25
@@ -96,6 +101,23 @@ crosswalk_safety:
   non_green_obstacle_crosswalk_threshold: 0.20
   non_green_obstacle_contact_half_height: 0.02
 
+# 보행로 이탈 안내
+# 횡단보도 판정과 같은 가상 발 영역을 사용하되 상태와 음성은 따로 관리한다.
+walking_surface:
+  enabled: true
+  foot_x: 0.50
+  foot_y: 0.92
+  foot_half_width: 0.04
+  foot_half_height: 0.04
+  exit_fraction: 0.40
+  inside_fraction: 0.60
+  exit_confirm_s: 0.30
+  return_confirm_s: 0.50
+  max_gap_s: 2.00
+  stale_after_s: 1.50
+  min_component_fraction: 0.003
+  direction_deadband: 0.01
+
 # 장애물 위험 판단
 # 좌표는 정규화된 영상 좌표이며 실제 거리 단위가 아니다.
 # 객체 검출은 전체 화면을 사용한다.
@@ -179,9 +201,12 @@ risk:
   max_motion_residual: 0.03
 
   # 카메라 움직임 허용 범위
-  camera_max_rotation_deg: 4.0
-  camera_max_translation: 0.12
-  camera_max_scale_change: 0.1
+  camera_max_rotation_deg: 8.0
+  camera_max_translation: 0.24
+  camera_max_scale_change: 0.20
+  camera_motion_failure_hold_s: 0.75
+  camera_motion_min_inlier_ratio: 0.30
+  camera_motion_min_inlier_points: 12
 
   # 경고 유지와 출력
   release_hold_s: 0.5

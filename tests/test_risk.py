@@ -37,7 +37,7 @@ class FixedTracker:
                 for i,d in enumerate(detections)]
 
 def engine(identity=1, stable=True, config=None):
-    guard = SimpleNamespace(update=lambda frame:stable,reset=lambda:None)
+    guard = SimpleNamespace(update=lambda frame, timestamp:stable,reset=lambda:None)
     return RiskEngine(config,tracker=FixedTracker(identity),camera_guard=guard)
 
 class RiskTests(unittest.TestCase):

@@ -13,7 +13,7 @@ import torch
 
 from src.traffic import DEFAULTS, TrafficSignalPipeline, validate_traffic_config
 from src.traffic_association import TemporalSelector, associate
-from src.visualization import TRAFFIC_COLORS, draw_traffic
+from src.visualization import TRAFFIC_COLORS, draw_traffic, traffic_label
 from src.pipeline import process_video, run_video_inference
 from scripts.run_video_inference import main
 
@@ -149,6 +149,18 @@ class TrafficTests(unittest.TestCase):
         np.testing.assert_array_equal(frame, FRAME)
         self.assertEqual(rendered[100, 600].tolist(), list(TRAFFIC_COLORS["green"]))
         np.testing.assert_array_equal(rendered[350:], frame[350:])
+
+    def test_recorded_signal_labels_match_realtime_labels(self):
+        """녹화 추론의 선택 신호와 후보 라벨을 실시간 한글 표기와 맞춘다."""
+        self.assertEqual(traffic_label({
+            "selection_status": "selected", "signal_state": "red",
+        }), "신호 red")
+        self.assertEqual(traffic_label({
+            "selection_status": "selected", "signal_state": "green",
+        }), "신호 green")
+        self.assertEqual(traffic_label({
+            "selection_status": "candidate", "signal_state": "unknown",
+        }), "신호 후보")
 
     def test_invalid_settings(self):
         config = {"weights": "yolo.pt", "classifier_weights": "classifier.pt"}

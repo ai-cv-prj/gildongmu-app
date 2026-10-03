@@ -5,26 +5,29 @@
  */
 (() => {
   const CLIPS = new Map([
-    ["빨간불입니다.", "red"],
-    ["초록불입니다. 다음 초록 신호를 기다려 주세요.", "green-initial-wait"],
-    ["초록불입니다.", "green"],
-    ["초록불로 바뀌었습니다.", "green-changed"],
-    ["빨간불로 바뀌었습니다.", "red-changed"],
-    ["신호를 확인할 수 없습니다.", "missing"],
+    ["빨간불.", "red"],
+    ["초록불. 다음 신호를 기다리세요.", "green-initial-wait"],
+    ["초록불.", "green"],
+    ["초록불로 바뀜.", "green-changed"],
+    ["빨간불로 바뀜.", "red-changed"],
+    ["신호 확인 불가.", "missing"],
     ["횡단보도 이탈! 오른쪽으로 이동하세요!", "crosswalk-exit-right"],
     ["횡단보도 이탈! 왼쪽으로 이동하세요!", "crosswalk-exit-left"],
     ["오른쪽으로 이동하세요!", "crosswalk-align-right"],
     ["왼쪽으로 이동하세요!", "crosswalk-align-left"],
-    ["왼쪽으로 이동하세요.", "walking-move-left"],
-    ["직진하세요.", "walking-straight"],
-    ["오른쪽으로 이동하세요.", "walking-move-right"],
+    ["왼쪽 이동.", "walking-move-left"],
+    ["직진.", "walking-straight"],
+    ["오른쪽 이동.", "walking-move-right"],
     ["멈추세요.", "walking-stop"],
+    ["보행로 이탈. 오른쪽 이동.", "walkway-exit-right"],
+    ["보행로 이탈. 왼쪽 이동.", "walkway-exit-left"],
   ]);
   for (const [text, name] of [...CLIPS]) CLIPS.set(`모의 신호. ${text}`, `mock-${name}`);
   const SPEECH_TEXT = "정류장 근처입니다. 탑승할 버스 번호를 입력해 주세요. 탑승하지 않으면 취소를 누르세요.";
-  const source = name => `/audio/${name}.mp3${name.startsWith("walking-")
-    ? "?v=walking-action-v1" : name.startsWith("crosswalk-")
-      ? "?v=crosswalk-ava-v1" : "?v=signal-sunhi-v1"}`;
+  const source = name => `/audio/${name}.mp3${name.startsWith("walkway-")
+    ? "?v=walkway-exit-v1" : name.startsWith("walking-")
+    ? "?v=walking-action-v2" : name.startsWith("crosswalk-")
+      ? "?v=crosswalk-ava-v1" : "?v=signal-sunhi-v2"}`;
 
   function create({ onError = () => {}, onStatus = () => {}, now = () => performance.now() } = {}) {
     const settings = window.GConfig.get().audio;

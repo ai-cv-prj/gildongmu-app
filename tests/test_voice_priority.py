@@ -80,6 +80,20 @@ def test_red_traffic_preempts_walking_without_queue():
     assert events == [(0.0, "walking-straight.mp3"), (0.2, "red.mp3")]
 
 
+# 보행로 이탈 우선순위 확인
+def test_walking_surface_sits_between_red_and_obstacle_guidance():
+    """보행로 이탈은 장애물 안내를 선점하지만 재생 중인 빨간불은 선점하지 않는다."""
+    surface = [(0.1, "walkway-exit-right.mp3", 3, "walking_surface")]
+    with patch("src.voice_priority.clip_duration", return_value=1.0):
+        events = prioritize_voice_events(
+            [(0.0, "walking-straight.mp3")], [(0.2, "red.mp3")], [], surface)
+    assert events == [
+        (0.0, "walking-straight.mp3"),
+        (0.1, "walkway-exit-right.mp3"),
+        (0.2, "red.mp3"),
+    ]
+
+
 # 장애물 행동 전환 즉시 반영 확인
 def test_changed_walking_action_interrupts_previous_walking_clip():
     """새 장애물 행동은 재생 중인 이전 행동과 겹쳐도 폐기하지 않는다."""

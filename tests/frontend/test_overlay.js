@@ -8,10 +8,12 @@ const fs = require("node:fs");
 const vm = require("node:vm");
 
 const labels = [];
+const strokeColors = [];
 const rectangles = [];
 const context2d = {
   beginPath() {}, moveTo() {}, lineTo() {}, closePath() {}, fill() {}, stroke() {},
-  strokeRect(...args) { rectangles.push(args); }, fillRect() {}, clearRect() {}, drawImage() {}, arc() {},
+  strokeRect(...args) { strokeColors.push(this.strokeStyle); rectangles.push(args); },
+  fillRect() {}, clearRect() {}, drawImage() {}, arc() {},
   save() {}, restore() {},
   measureText(text) { return { width: text.length * 8 }; },
   fillText(text) { labels.push(text); },
@@ -37,13 +39,17 @@ context.window.GOverlay.render({
   },
   traffic: { detections: [] },
   crosswalk: { event: { status: "crossing" } },
+  walking_surface: { event: { status: "inside",
+    roi: { left: .46, right: .54, top: .88, bottom: .96 } } },
   stop_proximity: { status: "candidate", observations: 1,
     required_observations: 3, xyxy: [.1, .2, .5, .8] },
 }, state => { drawState = state; });
 
-assert.ok(labels.includes("person · T12 · E34"));
+assert.ok(labels.includes("person | T12 · E34"));
 assert.ok(labels.includes("ACTION: left"));
 assert.ok(labels.includes("CROSSWALK: crossing"));
+assert.ok(labels.includes("WALKWAY: inside"));
+assert.ok(strokeColors.includes("#50e65a"));
 assert.ok(labels.includes("정류장 후보 1/3"));
 assert.equal(drawState, "drawn");
 

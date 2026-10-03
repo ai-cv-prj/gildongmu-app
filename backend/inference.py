@@ -19,6 +19,7 @@ from src.risk_config import risk_config, tracking_config
 from src.sidewalk import SidewalkSegmenter
 from src.traffic import TrafficSignalPipeline, validate_traffic_config
 from src.walking_voice import WalkingVoice, suppress_non_green_crosswalk_voice
+from src.walking_surface import WalkingSurfaceEngine, walking_surface_config
 
 
 class RealtimeInference:
@@ -48,6 +49,7 @@ class RealtimeInference:
         self.tracking_settings = tracking_config(config["tracking"])
         self.stop_proximity_settings = config.get("stop_proximity", {})
         self.crosswalk_settings = crosswalk_safety_config(config.get("crosswalk_safety"))
+        self.walking_surface_settings = walking_surface_config(config.get("walking_surface"))
         self.reset()
 
     # 새 휴대폰 세션의 이전 추적 상태 제거
@@ -58,6 +60,7 @@ class RealtimeInference:
         self.stop_proximity = StopProximity(self.stop_proximity_settings)
         self.boarding = Boarding()
         self.crosswalk = CrosswalkSafetyEngine(self.crosswalk_settings)
+        self.walking_surface = WalkingSurfaceEngine(self.walking_surface_settings)
         self.traffic.reset()
 
     # 같은 원본 프레임의 세 모델 추론
@@ -89,14 +92,20 @@ class RealtimeInference:
             captured_at_ms / 1000, camera_stable=camera_stable,
             detections=risk["detections"],
         )
+        walking_surface = self.walking_surface.update(
+            class_map, self.segmenter.label_ids, frame.shape, captured_at_ms / 1000,
+            camera_stable=camera_stable, crosswalk_status=crosswalk["status"],
+        )
         risk["boarding"] = self.boarding.observe(
             risk["stop_proximity"], crossing_active=crosswalk["crossing_active"])
         self.voice.observe(
             risk, width, captured_at_ms / 1000,
             crossing_active=crosswalk["crossing_active"],
+            signal=signal,
+            crosswalk_status=crosswalk["status"],
         )
         # 영상 출력과 마찬가지로 일반 장애물 모델의 신호등 박스는 중복 표시하지 않는다.
         risk["detections"] = [item for item in risk["detections"]
                               if item.get("class_name") != "traffic_light"]
-        return (risk, signal, crosswalk, class_map, self.segmenter.label_ids,
+        return (risk, signal, crosswalk, walking_surface, class_map, self.segmenter.label_ids,
                 round((perf_counter() - started) * 1000))

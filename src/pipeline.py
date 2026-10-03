@@ -30,6 +30,8 @@ from src.crosswalk_safety import (
     crosswalk_safety_config as normalize_crosswalk,
 )
 from src.crosswalk_visualization import draw_crosswalk_safety
+from src.walking_surface import WalkingSurfaceEngine, walking_surface_config
+from src.walking_surface_visualization import draw_walking_surface
 from src.voice_priority import CrosswalkVoice, prioritize_voice_events
 
 
@@ -75,7 +77,38 @@ def load_config(config_path):
     alpha = config["overlay_alpha"]
     if isinstance(alpha, bool) or not isinstance(alpha, (int, float)) or not 0 <= alpha <= 1:
         raise ValueError("overlay_alpha는 0부터 1 사이의 숫자여야 합니다.")
+    recorded_frame = config.get("recorded_frame")
+    if not isinstance(recorded_frame, dict):
+        raise ValueError("recorded_frame 설정에는 max_side와 jpeg_quality가 필요합니다.")
+    max_side = recorded_frame.get("max_side")
+    jpeg_quality = recorded_frame.get("jpeg_quality")
+    if isinstance(max_side, bool) or not isinstance(max_side, int) or max_side < 1:
+        raise ValueError("recorded_frame.max_side는 양의 정수여야 합니다.")
+    if (isinstance(jpeg_quality, bool)
+            or not isinstance(jpeg_quality, (int, float))
+            or not 0 < jpeg_quality <= 1):
+        raise ValueError("recorded_frame.jpeg_quality는 0보다 크고 1 이하여야 합니다.")
     return config
+
+
+# 녹화 프레임을 실시간 전송 조건으로 변환
+def prepare_recorded_frame(frame, settings):
+    """비율을 유지해 최대 변을 줄이고 지정 품질의 JPEG를 거친 BGR 프레임을 반환한다."""
+    if settings is None:
+        return frame
+    height, width = frame.shape[:2]
+    scale = min(1.0, settings["max_side"] / max(width, height))
+    target_width = max(1, round(width * scale))
+    target_height = max(1, round(height * scale))
+    resized = cv2.resize(frame, (target_width, target_height), interpolation=cv2.INTER_AREA)
+    quality = round(settings["jpeg_quality"] * 100)
+    encoded, payload = cv2.imencode(".jpg", resized, [cv2.IMWRITE_JPEG_QUALITY, quality])
+    if not encoded:
+        raise RuntimeError("녹화 프레임을 JPEG로 변환하지 못했습니다.")
+    decoded = cv2.imdecode(payload, cv2.IMREAD_COLOR)
+    if decoded is None:
+        raise RuntimeError("JPEG 녹화 프레임을 다시 읽지 못했습니다.")
+    return decoded
 
 
 # 샘플 MP4 조회
@@ -127,7 +160,8 @@ def publish_video_result(video_source, output_path, risk_log=None):
 
 # 영상 한 개 처리
 def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=None, traffic=None,
-                  risk_config=None, tracking_config=None, crosswalk_config=None):
+                  risk_config=None, tracking_config=None, crosswalk_config=None,
+                  recorded_frame_config=None, walking_surface_config_value=None):
     """임시 MP4로 처리한 뒤 프레임 수 확인에 성공하면 이전 결과를 교체한다."""
     if segmenter is None and detector is None and traffic is None:
         raise ValueError("도보, 장애물 또는 신호등 모델이 하나 이상 필요합니다.")
@@ -149,11 +183,13 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
     voice = None
     signal_voice = None
     crosswalk_voice = None
+    walking_surface_voice = None
     temporary_wav = None
     temporary_mux = None
     committed = False
     engine = None
     crosswalk_engine = None
+    walking_surface_engine = None
     try:
         if not capture.isOpened():
             raise RuntimeError(f"영상을 열 수 없습니다: {video_path}")
@@ -167,6 +203,10 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
         )
         if width <= 0 or height <= 0 or not math.isfinite(fps) or fps <= 0:
             raise ValueError(f"영상 크기 또는 FPS가 올바르지 않습니다: {video_path}")
+        output_scale = (min(1.0, recorded_frame_config["max_side"] / max(width, height))
+                        if recorded_frame_config is not None else 1.0)
+        output_width = max(1, round(width * output_scale))
+        output_height = max(1, round(height * output_scale))
         if total_frames is None:
             warnings.warn(
                 f"전체 프레임 수를 알 수 없어 누락 여부를 검증할 수 없습니다: {video_path}",
@@ -183,7 +223,8 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
         ) as temporary_file:
             temporary_path = Path(temporary_file.name)
         writer = cv2.VideoWriter(
-            str(temporary_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height)
+            str(temporary_path), cv2.VideoWriter_fourcc(*"mp4v"), fps,
+            (output_width, output_height),
         )
         if not writer.isOpened():
             raise RuntimeError(f"결과 영상을 생성할 수 없습니다: {output_path}")
@@ -196,6 +237,10 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
         if crosswalk_settings["enabled"] and segmenter is not None and traffic is not None:
             crosswalk_engine = CrosswalkSafetyEngine(crosswalk_settings)
             crosswalk_voice = CrosswalkVoice()
+        walking_surface_settings = walking_surface_config(walking_surface_config_value)
+        if walking_surface_settings["enabled"] and segmenter is not None:
+            walking_surface_engine = WalkingSurfaceEngine(walking_surface_settings)
+            walking_surface_voice = CrosswalkVoice(source="walking_surface", priority=3)
 
         if risk_enabled:
             engine = RiskEngine(risk_settings, tracking_config)
@@ -208,7 +253,8 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
             success, frame = capture.read()
             if not success:
                 break
-            # 모든 모델이 색칠 전의 같은 원본 프레임 사용
+            frame = prepare_recorded_frame(frame, recorded_frame_config)
+            # 모든 모델이 색칠 전의 같은 JPEG 변환 프레임 사용
             detections = detector.predict(frame) if detector is not None else []
             class_map = segmenter.predict(frame) if segmenter is not None else None
             risk_result = None
@@ -247,11 +293,24 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
                 crosswalk_voice.observe(crosswalk_result, processed_frames / fps, 1 / fps)
                 if risk_result is not None:
                     risk_result["crosswalk_safety"] = crosswalk_result
+            walking_surface_result = None
+            if walking_surface_engine is not None:
+                walking_surface_result = walking_surface_engine.update(
+                    class_map, segmenter.label_ids, frame.shape, processed_frames / fps,
+                    camera_stable=crosswalk_camera_stable(risk_result),
+                    crosswalk_status=(crosswalk_result or {}).get("status"),
+                )
+                walking_surface_voice.observe(
+                    walking_surface_result, processed_frames / fps, 1 / fps)
+                if risk_result is not None:
+                    risk_result["walking_surface"] = walking_surface_result
             if risk_result is not None:
                 voice.observe(
-                    risk_result, width, processed_frames / fps,
+                    risk_result, output_width, processed_frames / fps,
                     crossing_active=bool(
                         crosswalk_result and crosswalk_result["crossing_active"]),
+                    signal=traffic_result,
+                    crosswalk_status=(crosswalk_result or {}).get("status"),
                 )
             if traffic_result is not None:
                 # 일반 장애물 모델의 traffic_light 박스와 대상 신호등 표시가 겹치지 않게 한다.
@@ -270,6 +329,8 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
                 result = draw_traffic(result, traffic_result)
             if crosswalk_result is not None:
                 result = draw_crosswalk_safety(result, crosswalk_result)
+            if walking_surface_result is not None:
+                result = draw_walking_surface(result, walking_surface_result)
             writer.write(result)
             processed_frames += 1
             print(
@@ -294,7 +355,11 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
         signal_events = signal_voice.events if signal_voice is not None else []
         crosswalk_events = (crosswalk_voice.events(processed_frames / fps)
                             if crosswalk_voice is not None else [])
-        voice_events = prioritize_voice_events(walking_events, signal_events, crosswalk_events)
+        walking_surface_events = (
+            walking_surface_voice.events(processed_frames / fps)
+            if walking_surface_voice is not None else [])
+        voice_events = prioritize_voice_events(
+            walking_events, signal_events, crosswalk_events, walking_surface_events)
         if voice_events:
             with tempfile.NamedTemporaryFile(
                 dir=output_path.parent, prefix=f".{output_path.stem}.",
@@ -468,5 +533,7 @@ def run_video_inference(
         output.parent.mkdir(parents=True, exist_ok=True)
         process_video(video, output, segmenter, config["overlay_alpha"], detector=detector,
                       traffic=traffic, risk_config=risk_settings, tracking_config=tracking_settings,
-                      crosswalk_config=config.get("crosswalk_safety"))
+                      crosswalk_config=config.get("crosswalk_safety"),
+                      recorded_frame_config=config["recorded_frame"],
+                      walking_surface_config_value=config.get("walking_surface"))
     return outputs

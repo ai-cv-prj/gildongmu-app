@@ -39,7 +39,7 @@ def risk_identity(item):
         values.append(f'T{item["track_id"]}')
     if item.get("event_id") is not None:
         values.append(f'E{item["event_id"]}')
-    return "/".join(values) if values else "no-ID"
+    return " · ".join(values) if values else "no-ID"
 
 # 영상에 위험 판정 표시
 def draw_risk(frame, prediction, config):

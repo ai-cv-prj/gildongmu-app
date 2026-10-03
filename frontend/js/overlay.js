@@ -55,7 +55,7 @@ window.GOverlay = (() => {
         Number.isInteger(item.track_id) ? `T${item.track_id}` : null,
         Number.isInteger(item.event_id) ? `E${item.event_id}` : null,
       ].filter(Boolean) : [];
-      const name = identifiers.length ? `${baseName} · ${identifiers.join(" · ")}` : baseName;
+      const name = identifiers.length ? `${baseName} | ${identifiers.join(" · ")}` : baseName;
       ctx.font = `bold ${Math.max(13, canvas.width / 38)}px system-ui`;
       const textWidth = ctx.measureText(name).width + 12;
       const labelY = Math.max(2, y - 26);
@@ -167,6 +167,37 @@ window.GOverlay = (() => {
       "#9b5de5", "#9b5de50d");
   }
 
+  // 보행로 판정용 가상 발 ROI 표시
+  /** 흰색 가상 발 주변에서 실제 판정에 사용한 작은 영역을 녹색 테두리로 표시한다. */
+  function walkingSurfaceRoi(event) {
+    const roi = event?.roi;
+    const values = [roi?.left, roi?.right, roi?.top, roi?.bottom];
+    if (!values.every(Number.isFinite)) return;
+    const [left, right, top, bottom] = values;
+    ctx.strokeStyle = "#50e65a";
+    ctx.lineWidth = Math.max(2, canvas.width / 320);
+    ctx.strokeRect(left * canvas.width, top * canvas.height,
+      (right - left) * canvas.width, (bottom - top) * canvas.height);
+  }
+
+  // 현재 보행로 상태 표시
+  /** 횡단보도 상태 아래에 독립적인 보행로 이탈 상태를 표시한다. */
+  function walkingSurfaceStatus(event) {
+    const status = event?.status;
+    if (!status || status === "disabled") return;
+    const text = `WALKWAY: ${status}`;
+    ctx.font = `bold ${Math.max(13, canvas.width / 38)}px system-ui`;
+    const padding = 8;
+    const height = Math.max(26, canvas.height / 24);
+    const width = ctx.measureText(text).width + padding * 2;
+    const x = Math.max(0, canvas.width - width - 8);
+    const y = 8 + height + 8;
+    ctx.fillStyle = "rgba(24, 24, 24, 0.88)";
+    ctx.fillRect(x, y, width, height);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(text, x + padding, y + height - 8);
+  }
+
   // 서버 응답의 PNG 마스크와 위험·신호 결과 합성
   /** 새 결과가 도착했을 때 이전 프레임의 비동기 이미지 로딩을 무효화한다. */
   function render(result, onDrawn = () => {}) {
@@ -186,11 +217,13 @@ window.GOverlay = (() => {
         polygon(points, "#4ce3fa", "#4ce3fa20");
       polygon(roi.immediate_polygon, "#ff88ba", "#ff88ba24");
       crosswalkRoi(result.crosswalk?.event);
+      walkingSurfaceRoi(result.walking_surface?.event);
       boxes(result.walking?.detections, "walking");
       boxes(result.traffic?.detections, "traffic");
       crosswalkSafety(result.crosswalk?.event);
       actionStatus(result.walking?.event);
       crosswalkStatus(result.crosswalk?.event);
+      walkingSurfaceStatus(result.walking_surface?.event);
       stopDiagnostic(result.stop_proximity);
       onDrawn("drawn");
     };

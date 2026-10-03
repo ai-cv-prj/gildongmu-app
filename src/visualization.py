@@ -77,6 +77,14 @@ def overlay_segmentation(frame, class_map, label_ids, alpha=0.55):
     return result
 
 
+# 실시간 화면과 같은 신호등 라벨 생성
+def traffic_label(signal):
+    """신호 선택 상태와 색상을 실시간 오버레이와 같은 한글 문자열로 반환한다."""
+    if signal["selection_status"] == "selected":
+        return f"신호 {signal['signal_state']}"
+    return "신호 후보"
+
+
 def draw_traffic(frame, prediction):
     """신호등 검출·확인 중 후보·안내 대상만 표시하고 횡단보도 진단은 숨긴다."""
     result = frame.copy()
@@ -114,10 +122,10 @@ def draw_traffic(frame, prediction):
         if selection == "selected":
             state = signal["signal_state"]
             color = TRAFFIC_COLORS[state]
-            label = f"SIGNAL {state.upper()}"
+            label = traffic_label(signal)
         else:
             color = TRAFFIC_COLORS["candidate"]
-            label = "SIGNAL CANDIDATE"
+            label = traffic_label(signal)
         add_box(signal["xyxy"], label, color, 4 if selection == "selected" else 2)
 
     # 라벨은 모든 박스 뒤에 그려 다른 테두리에 가려지지 않게 한다.

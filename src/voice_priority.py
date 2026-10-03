@@ -1,8 +1,8 @@
 """
 file_path: src/voice_priority.py
 
-영상 결과의 횡단보도·장애물·신호등 음성을 하나의 우선순위 시간축으로 합친다.
-횡단보도 이탈 구간은 문장을 연속 반복하고 복귀 시 현재 문장까지만 재생한다.
+영상 결과의 횡단보도·신호등·보행로·장애물 음성을 한 시간축으로 합친다.
+이탈 구간은 문장을 반복하고 복귀하면 재생 중인 문장은 유지한 채 새 반복만 멈춘다.
 """
 
 import math
@@ -21,11 +21,13 @@ def clip_duration(filename):
 
 
 class CrosswalkVoice:
-    """프레임별 이탈 판정을 방향별 연속 구간으로 기록한다."""
+    """프레임별 반복 안내를 방향별 연속 구간으로 기록한다."""
 
     # 횡단보도 음성 구간 기록기 초기화
-    def __init__(self):
-        """현재 이탈 구간과 완료된 구간을 빈 상태로 준비한다."""
+    def __init__(self, source="crosswalk", priority=1):
+        """음성 출처와 우선순위를 저장하고 반복 구간을 빈 상태로 준비한다."""
+        self.source = source
+        self.priority = priority
         self.active = None
         self.intervals = []
 
@@ -76,22 +78,24 @@ class CrosswalkVoice:
             cursor = start
             step = max(0.01, clip_duration(clip))
             while cursor < end - 1e-9:
-                events.append((cursor, clip, 1, "crosswalk"))
+                events.append((cursor, clip, self.priority, self.source))
                 cursor += step
         return events
 
 
 # 세 안내 종류를 전역 우선순위로 병합
-def prioritize_voice_events(walking_events, traffic_events, crosswalk_events):
+def prioritize_voice_events(walking_events, traffic_events, crosswalk_events,
+                            walking_surface_events=()):
     """상위 음성이 재생 중인 시점의 하위 이벤트를 폐기해 단일 재생 시간축을 만든다."""
-    candidates = [(time_s, clip, 3, "walking" if clip else "walking_stop")
+    candidates = [(time_s, clip, 4, "walking" if clip else "walking_stop")
                   for time_s, clip in walking_events]
     candidates += [
         (time_s, clip, 2 if clip in RED_TRAFFIC_CLIPS
-         else 4 if clip in TRAFFIC_CHANGE_CLIPS else 5, "traffic")
+         else 5 if clip in TRAFFIC_CHANGE_CLIPS else 6, "traffic")
         for time_s, clip in traffic_events
     ]
     candidates += list(crosswalk_events)
+    candidates += list(walking_surface_events)
     candidates.sort(key=lambda item: (item[0], item[2]))
     result = []
     active_end = 0.0

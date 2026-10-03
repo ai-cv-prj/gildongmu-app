@@ -50,7 +50,7 @@ def detection(box, name="person"):
 # 테스트용 위험 판정기 생성
 def engine():
     """모델 대신 고정 추적기와 안정적인 촬영 상태를 사용한다."""
-    stable = SimpleNamespace(update=lambda frame: True, reset=lambda: None)
+    stable = SimpleNamespace(update=lambda frame, timestamp: True, reset=lambda: None)
     return RiskEngine(SETTINGS["risk"], SETTINGS["tracking"],
                       tracker=FixedTracker(), camera_guard=stable)
 

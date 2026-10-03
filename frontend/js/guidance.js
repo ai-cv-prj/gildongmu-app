@@ -22,7 +22,7 @@
     function announce(text, validUntil, metadata = {}) {
       const message = mock && mode === "traffic" ? `모의 신호. ${text}` : text;
       update(message);
-      const changed = mode === "traffic" && text.includes("바뀌었습니다");
+      const changed = mode === "traffic" && text.includes("바뀜");
       const red = mode === "traffic" && text.startsWith("빨간불");
       return coordinator.request({ source: mode, priority: red
         ? coordinator.PRIORITY.trafficRed
@@ -69,7 +69,7 @@
       if (age > audio.realtime_max_gap_ms) interrupt();
       if (hasConfirmedSignal && age >= limits.missing_ms && !missingAnnounced) {
         missingAnnounced = true;
-        announce("신호를 확인할 수 없습니다.", now() + limits.max_age_ms);
+        announce("신호 확인 불가.", now() + limits.max_age_ms);
       }
     }
     function accept(res, capturedAt) {
@@ -87,6 +87,7 @@
       lastCapture = capturedAt;
       const event = res.event || {};
       if (mode === "walking") {
+        const vehicleOnly = res.crossing_active || res.crosswalk_status === "approach";
         const voice = event.voice_event;
         if (voice && typeof voice.text === "string" && ["left", "right", "straight", "stop"].includes(voice.action)) {
           if ((voice.action !== lastWalkingAction || Number.isInteger(voice.event_id)
@@ -95,12 +96,11 @@
           })) { lastWalkingAction = voice.action; lastWalkingEvent = voice.event_id; }
           return;
         }
-        if (event.voice_action === null && event.voice_clear !== false) {
+        if (event.voice_action === null && (event.voice_clear !== false || vehicleOnly)) {
           lastWalkingAction = null;
           lastWalkingEvent = null;
           coordinator.clear(mode);
         }
-        if (res.crossing_active && event.voice_action === null) coordinator.clear(mode);
         const danger = event.type === "walking_warning" && event.level === "danger" &&
           typeof event.voice_text === "string";
         if (!danger) return;
@@ -138,11 +138,11 @@
       missingAnnounced = false;
       let text;
       if (previous !== null && previous !== next) {
-        text = next === "green" ? "초록불로 바뀌었습니다." : "빨간불로 바뀌었습니다.";
+        text = next === "green" ? "초록불로 바뀜." : "빨간불로 바뀜.";
       } else if (next === "green") {
-        text = firstConfirmed ? "초록불입니다. 다음 초록 신호를 기다려 주세요."
-          : "초록불입니다.";
-      } else text = "빨간불입니다.";
+        text = firstConfirmed ? "초록불. 다음 신호를 기다리세요."
+          : "초록불.";
+      } else text = "빨간불.";
       if (lastAnnouncedTarget === target && lastAnnouncedColor === next && !recoveredAfterMissing) {
         // 소실 안내가 없었던 짧은 끊김 뒤 같은 대상·색상은 반복하지 않는다.
         update(mock ? `모의 신호. ${text}` : text);

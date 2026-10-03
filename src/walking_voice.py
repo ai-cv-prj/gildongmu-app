@@ -20,12 +20,14 @@ SIDE_INTRUSION_RATIO = GUIDANCE["walking_side_intrusion_ratio"]
 VOICE_IMMEDIATE_OVERLAP_RATIO = GUIDANCE["walking_voice_immediate_overlap_ratio"]
 DISTANCE_TIE_RATIO = GUIDANCE["walking_distance_tie_ratio"]
 ACTION_MESSAGES = {
-    "left": ("왼쪽으로 이동하세요.", "walking-move-left.mp3"),
-    "straight": ("직진하세요.", "walking-straight.mp3"),
-    "right": ("오른쪽으로 이동하세요.", "walking-move-right.mp3"),
+    "left": ("왼쪽 이동.", "walking-move-left.mp3"),
+    "straight": ("직진.", "walking-straight.mp3"),
+    "right": ("오른쪽 이동.", "walking-move-right.mp3"),
     "stop": ("멈추세요.", "walking-stop.mp3"),
 }
 VEHICLE_CLASSES = frozenset({"car", "bus", "truck", "motorcycle"})
+NON_GREEN_SIGNAL_STATES = frozenset({"red", "unknown"})
+CROSSWALK_WAIT_STATUSES = frozenset({"used", "eligible"})
 
 
 # 객체 바닥에서 횡단보도 픽셀 비율 계산
@@ -247,6 +249,20 @@ def walking_action(prediction, image_width, crossing_active=False):
     return "stop"
 
 
+# 횡단보도 대기 중 직진 음성 제외 조건 확인
+def suppress_waiting_straight(signal, action):
+    """빨간불 또는 확인 불가 신호에서 전방 횡단보도 직진 안내를 제외한다."""
+    if action != "straight" or not isinstance(signal, dict):
+        return False
+    if signal.get("signal_state") not in NON_GREEN_SIGNAL_STATES:
+        return False
+    diagnostics = signal.get("crosswalk_diagnostics") or {}
+    if diagnostics.get("eligible_count", 0) > 0:
+        return True
+    return any(item.get("crosswalk_status") in CROSSWALK_WAIT_STATUSES
+               for item in signal.get("crosswalks", []))
+
+
 class WalkingVoice:
     """영상 프레임마다 최종 이동 행동이 달라질 때만 음성을 기록한다."""
 
@@ -302,15 +318,18 @@ class WalkingVoice:
         return {**prediction, "detections": current + retained}, len(retained)
 
     # 현재 프레임의 신규 위험 안내 기록
-    def observe(self, prediction, image_width, output_time_s, crossing_active=False):
-        """횡단 중 차량만으로 행동을 계산하고 변경된 음원만 예약한다."""
+    def observe(self, prediction, image_width, output_time_s, crossing_active=False, signal=None,
+                crosswalk_status=None):
+        """횡단 상태와 신호 대기 조건을 반영해 변경된 행동 음원만 예약한다."""
         prediction.pop("voice_text", None)
         prediction.pop("voice_clip", None)
         prediction.pop("voice_event", None)
         evidence, retained = self._evidence(prediction, output_time_s)
+        previous_action = self.last_action
         display_action = walking_action(evidence, image_width)
-        raw_action = walking_action(evidence, image_width, crossing_active)
-        blockers = path_blockers(evidence, crossing_active)
+        vehicle_only = crossing_active or crosswalk_status == "approach"
+        raw_action = walking_action(evidence, image_width, vehicle_only)
+        blockers = path_blockers(evidence, vehicle_only)
         allowed = available_actions(evidence, blockers, image_width)
         if self.last_action in ("left", "right", "straight") and self.last_action not in allowed:
             raw_action = "stop"
@@ -343,10 +362,12 @@ class WalkingVoice:
                     self.pending_action = self.pending_since = None
             else:
                 self.pending_action = self.pending_since = None
-        prediction["last_action"] = display_action if crossing_active else voice_action
+        if suppress_waiting_straight(signal, voice_action):
+            voice_action = None
+        prediction["last_action"] = display_action
         prediction["voice_action"] = voice_action
         prediction["voice_clear"] = voice_action is None and self.last_action is None
-        eligible = guidance_items(evidence, "danger", crossing_active)
+        eligible = guidance_items(evidence, "danger", vehicle_only)
         eligible_ids = {id(item) for item in eligible}
         hazard_ids = {f"{item.get('class_name')}:{item.get('hazard_id') or item.get('event_id') or item.get('track_id')}"
                       for item in eligible}
@@ -363,7 +384,7 @@ class WalkingVoice:
                                                 "risk_suppressed_reason": item.get("risk_suppressed_reason")}
                                                 for item in evidence.get("detections", [])]}
         if voice_action is None:
-            if crossing_active:
+            if vehicle_only and previous_action is not None:
                 self.events.append((output_time_s, None))
             return None
         message = ACTION_MESSAGES[voice_action]
