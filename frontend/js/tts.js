@@ -19,11 +19,14 @@
     ["직진하세요.", "walking-straight"],
     ["오른쪽으로 이동하세요.", "walking-move-right"],
     ["멈추세요.", "walking-stop"],
+    ["보행로 이탈. 오른쪽 이동.", "walkway-exit-right"],
+    ["보행로 이탈. 왼쪽 이동.", "walkway-exit-left"],
   ]);
   for (const [text, name] of [...CLIPS]) CLIPS.set(`모의 신호. ${text}`, `mock-${name}`);
-  const source = name => `/audio/${name}.mp3${name.startsWith("walking-")
-    ? "?v=walking-action-v1" : name.startsWith("crosswalk-")
-      ? "?v=crosswalk-ava-v1" : "?v=signal-sunhi-v1"}`;
+  const source = name => `/audio/${name}.mp3${name.startsWith("walkway-")
+    ? "?v=walkway-exit-v1" : name.startsWith("walking-")
+    ? "?v=walking-action-v2" : name.startsWith("crosswalk-")
+      ? "?v=crosswalk-ava-v1" : "?v=signal-sunhi-v2"}`;
 
   function create({ onError = () => {}, onStatus = () => {}, now = () => performance.now() } = {}) {
     const settings = window.GConfig.get().audio;

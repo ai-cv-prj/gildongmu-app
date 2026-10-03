@@ -1,12 +1,12 @@
 /**
  * file_path: frontend/js/audio_coordinator.js
  *
- * 횡단보도·장애물·신호등 안내를 한 재생기에서 우선순위대로 관리한다.
+ * 횡단보도·신호등·보행로·장애물 안내를 한 재생기에서 우선순위대로 관리한다.
  * 지난 장면의 음성은 대기열에 쌓지 않고 유효한 현재 안내만 재생한다.
  */
 (() => {
-  const PRIORITY = Object.freeze({ crosswalk: 1, trafficRed: 2, walking: 3,
-    trafficChange: 4, traffic: 5 });
+  const PRIORITY = Object.freeze({ crosswalk: 1, trafficRed: 2, walkingSurface: 3,
+    walking: 4, trafficChange: 5, traffic: 6 });
 
   // 전체 안내에서 하나뿐인 음성 재생 관리자 생성
   /** 단일 플레이어의 취소와 반복을 안내 우선순위에 맞춰 제어한다. */
@@ -98,6 +98,22 @@
       clear("crosswalk");
     }
 
+    // 보행로 이탈 판정 수신
+    /** 방향이 확정된 보행로 이탈만 반복하고 복귀 시 현재 문장은 끝까지 재생한다. */
+    function acceptWalkingSurface(event, capturedAt) {
+      if (!active || !event || !Number.isFinite(capturedAt)) return;
+      const staleAfter = Number.isFinite(event.stale_after_ms)
+        ? Math.max(100, event.stale_after_ms) : crosswalkMaxAgeMs;
+      const validUntil = capturedAt + staleAfter;
+      if (["outside_left", "outside_right"].includes(event.status)
+          && event.repeat && event.voice_text) {
+        request({ source: "walkingSurface", priority: PRIORITY.walkingSurface,
+          text: event.voice_text, validUntil, repeat: true, kind: "exit" });
+        return;
+      }
+      finishRepeat("walkingSurface", "exit");
+    }
+
     // 음성 관리자 시작
     /** 새 세션에서 이전 이벤트와 취소 토큰을 초기화한다. */
     function start() {
@@ -120,7 +136,8 @@
       if (current && now() >= current.validUntil) clear(current.source);
     }
 
-    return { start, stop, request, clear, acceptCrosswalk, tick, PRIORITY };
+    return { start, stop, request, clear, acceptCrosswalk, acceptWalkingSurface,
+      tick, PRIORITY };
   }
 
   window.GAudioCoordinator = { create, PRIORITY };

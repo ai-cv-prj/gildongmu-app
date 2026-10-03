@@ -99,11 +99,12 @@ class SessionManager:
                 raise SessionError("프레임 번호가 연속적이지 않습니다.")
             if session["last_capture_ms"] is not None and captured_at_ms <= session["last_capture_ms"]:
                 raise SessionError("촬영 시간이 이전 프레임보다 늦지 않습니다.")
-            risk, signal, crosswalk, class_map, label_ids, elapsed = self.models.predict(
+            risk, signal, crosswalk, walking_surface, class_map, label_ids, elapsed = self.models.predict(
                 frame, frame_id, captured_at_ms,
             )
             result = make_response(session_id, frame_id, captured_at_ms, frame,
-                                   risk, signal, crosswalk, class_map, label_ids, elapsed)
+                                   risk, signal, crosswalk, walking_surface,
+                                   class_map, label_ids, elapsed)
             frame_name = f"{frame_id:06d}.jpg"
             frame_file = Path("frames") / frame_name
             encoded, jpeg = cv2.imencode(".jpg", frame)

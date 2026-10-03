@@ -30,6 +30,8 @@ from src.crosswalk_safety import (
     crosswalk_safety_config as normalize_crosswalk,
 )
 from src.crosswalk_visualization import draw_crosswalk_safety
+from src.walking_surface import WalkingSurfaceEngine, walking_surface_config
+from src.walking_surface_visualization import draw_walking_surface
 from src.voice_priority import CrosswalkVoice, prioritize_voice_events
 
 
@@ -181,11 +183,13 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
     voice = None
     signal_voice = None
     crosswalk_voice = None
+    walking_surface_voice = None
     temporary_wav = None
     temporary_mux = None
     committed = False
     engine = None
     crosswalk_engine = None
+    walking_surface_engine = None
     try:
         if not capture.isOpened():
             raise RuntimeError(f"영상을 열 수 없습니다: {video_path}")
@@ -233,6 +237,10 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
         if crosswalk_settings["enabled"] and segmenter is not None and traffic is not None:
             crosswalk_engine = CrosswalkSafetyEngine(crosswalk_settings)
             crosswalk_voice = CrosswalkVoice()
+        walking_surface_settings = walking_surface_config(walking_surface_config_value)
+        if walking_surface_settings["enabled"] and segmenter is not None:
+            walking_surface_engine = WalkingSurfaceEngine(walking_surface_settings)
+            walking_surface_voice = CrosswalkVoice(source="walking_surface", priority=3)
 
         if risk_enabled:
             engine = RiskEngine(risk_settings, tracking_config)
@@ -285,6 +293,17 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
                 crosswalk_voice.observe(crosswalk_result, processed_frames / fps, 1 / fps)
                 if risk_result is not None:
                     risk_result["crosswalk_safety"] = crosswalk_result
+            walking_surface_result = None
+            if walking_surface_engine is not None:
+                walking_surface_result = walking_surface_engine.update(
+                    class_map, segmenter.label_ids, frame.shape, processed_frames / fps,
+                    camera_stable=crosswalk_camera_stable(risk_result),
+                    crosswalk_status=(crosswalk_result or {}).get("status"),
+                )
+                walking_surface_voice.observe(
+                    walking_surface_result, processed_frames / fps, 1 / fps)
+                if risk_result is not None:
+                    risk_result["walking_surface"] = walking_surface_result
             if risk_result is not None:
                 voice.observe(
                     risk_result, output_width, processed_frames / fps,
@@ -308,6 +327,8 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
                 result = draw_traffic(result, traffic_result)
             if crosswalk_result is not None:
                 result = draw_crosswalk_safety(result, crosswalk_result)
+            if walking_surface_result is not None:
+                result = draw_walking_surface(result, walking_surface_result)
             writer.write(result)
             processed_frames += 1
             print(
@@ -332,7 +353,11 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
         signal_events = signal_voice.events if signal_voice is not None else []
         crosswalk_events = (crosswalk_voice.events(processed_frames / fps)
                             if crosswalk_voice is not None else [])
-        voice_events = prioritize_voice_events(walking_events, signal_events, crosswalk_events)
+        walking_surface_events = (
+            walking_surface_voice.events(processed_frames / fps)
+            if walking_surface_voice is not None else [])
+        voice_events = prioritize_voice_events(
+            walking_events, signal_events, crosswalk_events, walking_surface_events)
         if voice_events:
             with tempfile.NamedTemporaryFile(
                 dir=output_path.parent, prefix=f".{output_path.stem}.",

@@ -47,7 +47,7 @@ class FakeModels:
                     "immediate_polygon": [[0.2, 0.7], [0.8, 0.7], [0.8, 1], [0.2, 1]]},
             "camera_view": {"status": "clear"},
             "last_action": "straight",
-            "voice_text": "직진하세요.",
+            "voice_text": "직진.",
         }
         signal = {
             "detections": [{"xyxy": [50, 5, 70, 30], "class_name": "pedestrian_signal",
@@ -61,7 +61,14 @@ class FakeModels:
             "repeat": False, "event_id": 4,
             "reasons": ["inside_crosswalk"], "geometry": None,
         }
-        return risk, signal, crosswalk, np.ones(frame.shape[:2], dtype=np.uint8), {
+        walking_surface = {
+            "enabled": True, "status": "inside", "direction": None,
+            "voice_text": None, "voice_clip": None, "repeat": False,
+            "event_id": 1, "reasons": ["inside_walkable"],
+            "walkable_fraction": 1.0,
+            "roi": {"left": .46, "right": .54, "top": .88, "bottom": .96},
+        }
+        return risk, signal, crosswalk, walking_surface, np.ones(frame.shape[:2], dtype=np.uint8), {
             "walkable": 1, "crosswalk": 2,
         }, 35
 
@@ -89,9 +96,11 @@ def test_session_response_contains_crosswalk_event(tmp_path):
     frame = np.zeros((80, 100, 3), dtype=np.uint8)
     result = manager.process(session["session_id"], 1, 1000, frame)
     assert result["crosswalk"]["event"]["status"] == "crossing"
+    assert result["walking_surface"]["event"]["status"] == "inside"
     folder = tmp_path / session["date"] / session["folder_name"]
     logged = json.loads((folder / "results.jsonl").read_text(encoding="utf-8"))
     assert logged["crosswalk"]["event"]["event_id"] == 4
+    assert logged["walking_surface"]["event"]["event_id"] == 1
     assert logged["frame_file"] == "frames/000001.jpg"
     assert result["frame_file"] == logged["frame_file"]
     saved = folder / logged["frame_file"]
@@ -130,7 +139,7 @@ def test_mobile_session_flow(tmp_path, recording_fps):
                          files={"image": ("frame.jpg", io.BytesIO(jpeg.tobytes()), "image/jpeg")})
     assert result.status_code == 200
     body = result.json()
-    assert body["walking"]["event"]["voice_text"] == "직진하세요."
+    assert body["walking"]["event"]["voice_text"] == "직진."
     assert body["walking"]["event"]["last_action"] == "straight"
     assert body["traffic"]["event"]["signal_state"] == "red"
     assert body["crosswalk"]["event"]["status"] == "crossing"

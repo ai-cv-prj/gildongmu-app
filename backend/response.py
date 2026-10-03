@@ -48,7 +48,7 @@ def encode_mask(class_map, label_ids, width=320):
 
 # 브라우저 안내 정책이 읽을 단일 프레임 응답 작성
 def make_response(session_id, frame_id, captured_at_ms, frame, risk, signal, crosswalk,
-                  class_map, label_ids, inference_ms):
+                  walking_surface, class_map, label_ids, inference_ms):
     """보행·신호·횡단보도 안전 결과와 같은 프레임의 마스크를 포함한다."""
     height, width = frame.shape[:2]
     return {
@@ -76,5 +76,6 @@ def make_response(session_id, frame_id, captured_at_ms, frame, risk, signal, cro
             },
         },
         "crosswalk": {"event": crosswalk},
+        "walking_surface": {"event": walking_surface},
         "inference_ms": inference_ms,
     }
