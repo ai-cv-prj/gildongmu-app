@@ -92,8 +92,7 @@ OpenCV 결과 영상은 영문 라벨을 사용합니다. TARGET·CANDIDATE·UNS
 `configs/paths.yaml`의 기본 경로 `weights/traffic/best_YOLO.pt`는 **v2 내용**입니다.
 테스트 앱의 `best_YOLO_v2.pt`와 SHA-256이 같으며 색상 분류기도 동일합니다.
 가중치는 Git 제외 대상이므로 다른 환경에는 별도로 배치해야 합니다.
-보행 모델은 `weights/walking/mask2former/`와
-`weights/walking/yolo/finetune_v2_exp02_stage2_best.pt`에 두고 파일명은 유지합니다.
+현재 보행·장애물 가중치 배치는 `configs/paths.yaml`을 따릅니다.
 
 - 검출기 SHA-256: `d530a19b53570988ded114defdbd77af51d0ad06228cad38b7464c9758da42aa`
 - 분류기 SHA-256: `e3fb14c1efd89686be7f03fba98f5aac34c57430436d1e1415fc448f25745098`

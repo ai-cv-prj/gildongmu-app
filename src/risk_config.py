@@ -38,6 +38,9 @@ DEFAULT_RISK = {
     "history_window_s": 0.60,
     "min_history_s": 0.20,
     "prediction_horizon_s": 0.80,
+    "approach_danger_enabled": False,
+    "approach_danger_s": 1.20,
+    "min_forward_speed": 0.05,
     "min_lateral_speed": 0.05,
     "lateral_near_y": 0.60,
     "reset_gap_s": 0.50,
@@ -58,6 +61,11 @@ DEFAULT_RISK = {
 }
 # New rules are enabled explicitly in config/walking_risk.yaml, so saved older configs replay unchanged.
 DEFAULT_RISK.update({
+    "dynamic_vehicle_risk_enabled": False,
+    "vehicle_uncertain_near_y": .55,
+    "vehicle_uncertain_min_height": .18,
+    "vehicle_uncertain_min_width": .20,
+    "vehicle_uncertain_min_confidence": .50,
     "roi_ground_adapt_enabled":False,
     "roi_top_max_y":.65, "roi_extent_smooth_s":.35,
     "roi_extent_hold_s":.50, "roi_extent_deadband":.015,
@@ -130,7 +138,8 @@ def risk_config(value=None):
     for key in ("roi_ground_adapt_enabled","side_proximity_enabled","full_static_footprint","relative_entry_enabled",
                 "roi_recalibration_enabled","surface_risk_enabled","class_bridge_enabled",
                 "warning_grouping_enabled","wide_roi_priority_enabled",
-                "camera_view_guard_enabled","walkable_surroundings_filter_enabled"):
+                "camera_view_guard_enabled","walkable_surroundings_filter_enabled",
+                "approach_danger_enabled", "dynamic_vehicle_risk_enabled"):
         if not isinstance(cfg[key],bool):
             raise ValueError(f"risk.{key} must be boolean")
     for key in ("side_near_y","side_min_height","side_min_width","roi_jitter_shift",
@@ -141,7 +150,9 @@ def risk_config(value=None):
                 "side_danger_y","roi_extent_max_shift_per_s",
                 "surrounding_side_width_ratio","surrounding_side_height_ratio",
                 "surrounding_bottom_height_ratio","surrounding_max_side_width_ratio",
-                "surrounding_max_bottom_height_ratio","surrounding_walkable_threshold"):
+                "surrounding_max_bottom_height_ratio","surrounding_walkable_threshold",
+                "vehicle_uncertain_near_y", "vehicle_uncertain_min_height",
+                "vehicle_uncertain_min_width", "vehicle_uncertain_min_confidence"):
         _number(cfg[key],f"risk.{key}",0,1,True)
     for key in ("roi_change_confirm_s","roi_small_confirm_s","surface_confirm_s",
                 "surface_clear_s","visibility_advisory_s","roi_extent_smooth_s",
@@ -154,7 +165,7 @@ def risk_config(value=None):
     if cfg["roi_jitter_shift"] >= cfg["roi_large_shift"]:
         raise ValueError("ROI jitter threshold must be below large shift")
     unit = ("footprint_height_ratio", "overlap_threshold", "edge_margin_ratio",
-            "min_lateral_speed", "lateral_near_y", "min_expansion_rate",
+            "min_lateral_speed", "min_forward_speed", "lateral_near_y", "min_expansion_rate",
             "max_motion_residual", "camera_max_translation", "camera_max_scale_change",
             "event_match_iou", "footprint_max_height", "exit_overlap_threshold",
             "exit_margin", "static_caution_y", "static_danger_y", "roi_max_shift",
@@ -162,7 +173,7 @@ def risk_config(value=None):
     for key in unit:
         _number(cfg[key], f"risk.{key}", 0, 1, True)
     for key in ("history_window_s", "min_history_s", "prediction_horizon_s", "reset_gap_s",
-                "ttc_danger_s", "ttc_caution_s", "release_hold_s", "repeat_cooldown_s",
+                "ttc_danger_s", "ttc_caution_s", "approach_danger_s", "release_hold_s", "repeat_cooldown_s",
                 "camera_max_rotation_deg", "roi_confirm_s", "roi_smooth_s", "roi_hold_s",
                 "roi_return_s", "clear_confirm_s", "uncertainty_hold_s", "id_bridge_s"):
         _number(cfg[key], f"risk.{key}", 0, strictly_positive=True)

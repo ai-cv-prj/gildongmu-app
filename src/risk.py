@@ -4,6 +4,7 @@ file_path: src/risk.py
 Experimental obstacle risk assessment with preserved detections and optional IDs.
 """
 import math
+import numpy as np
 from copy import deepcopy
 from src.risk_config import risk_config
 from src.risk_geometry import geometry, sidewalk_context, surrounding_walkability
@@ -17,6 +18,8 @@ from src.warning_groups import group_warnings
 from src.hazard_labels import LabelMemory
 from src.warning_summary import WarningSelector
 from src.camera_view import CameraViewGuard
+
+VEHICLES = frozenset({"car", "bus", "truck", "motorcycle"})
 
 class VideoClock:
     """Use source PTS. Nominal FPS fallback is explicitly invalid for motion."""
@@ -64,12 +67,14 @@ class RiskEngine:
         self.warning_selector.reset()
         self.camera_view.reset()
         self.last_trusted_danger_time = None
+        self.last_trusted_danger_class = None
         self.previous_time, self.previous_shape = None, None
         self.previous_tracker_status = self.tracker.status
         self.epoch = getattr(self, "epoch", -1) + 1
 
     # 프레임 위험도 판정
-    def update(self, frame, detections, timestamp_s, timestamp_valid=True, class_map=None, label_ids=None):
+    def update(self, frame, detections, timestamp_s, timestamp_valid=True, class_map=None, label_ids=None,
+               *, suppress_stop_hazard=False):
         """프레임의 장애물과 보행 영역에서 위험도와 대표 경고를 고른다."""
         shape = frame.shape[:2]
         frame_gap_s = None if self.previous_time is None else timestamp_s - self.previous_time
@@ -83,6 +88,13 @@ class RiskEngine:
         elif motion_gap:
             self.motion.reset()
         self.previous_time, self.previous_shape = timestamp_s, shape
+        if suppress_stop_hazard:
+            # Remove prior stop alerts as well as new ones; loss advisories must not
+            # keep a stop warning alive while the user is entering a bus number.
+            self.alerts.states = {key: state for key, state in self.alerts.states.items()
+                                  if state.get("class_name") != "transit_stop"}
+            if self.last_trusted_danger_class == "transit_stop":
+                self.last_trusted_danger_time = None
         # No motion quantities are trusted after timestamp loss.
         if not timestamp_valid:
             self.motion.reset()
@@ -189,19 +201,56 @@ class RiskEngine:
                 if item["risk_level"] == "monitor":
                     item["risk_level"] = "caution"
                 item["reasons"].append("relative_path_entry")
+            if (self.config["approach_danger_enabled"] and related
+                    and m["time_to_near_s"] is not None):
+                item["risk_level"] = "danger"
+                item["reasons"].append("approaching_near_path")
             if self.config["ttc_alerts"] and m["ttc_scale_s"] is not None and (related or future_related):
                 ttc = m["ttc_scale_s"]
-                if ttc <= self.config["ttc_danger_s"]:
+                vx = m["velocity_norm_per_s"][0]
+                x = g["point"][0]
+                moving_outward = (g["central_immediate_overlap"] < threshold and
+                    ((x < self.config["central_danger_left"] and vx <= -self.config["min_lateral_speed"])
+                     or (x > self.config["central_danger_right"] and vx >= self.config["min_lateral_speed"])))
+                if ttc <= self.config["ttc_danger_s"] and not moving_outward:
                     item["risk_level"] = "danger"
                     item["reasons"].append("short_ttc")
+                elif moving_outward:
+                    item["reasons"].append("lateral_departure")
                 elif ttc <= self.config["ttc_caution_s"]:
                     if item["risk_level"] == "monitor":
                         item["risk_level"] = "caution"
                     item["reasons"].append("approaching")
+            vehicle = detection["class_name"] in VEHICLES
+            if self.config["dynamic_vehicle_risk_enabled"] and vehicle:
+                entering = (m["quality"] == "valid" and m.get("time_to_path_s") is not None
+                            and g["point"][1] >= self.config["lateral_near_y"])
+                velocity = m.get("velocity_norm_per_s") or [0, 0]
+                lateral_in_path = (m["quality"] == "valid" and related
+                    and g["point"][1] >= self.config["vehicle_uncertain_near_y"]
+                    and abs(velocity[0]) >= self.config["min_lateral_speed"]
+                    and not ((g["point"][0] < self.config["central_danger_left"] and velocity[0] < 0)
+                             or (g["point"][0] > self.config["central_danger_right"] and velocity[0] > 0)))
+                uncertain_near = (
+                    g["point"][1] >= self.config["vehicle_uncertain_near_y"]
+                    and g["height"] >= self.config["vehicle_uncertain_min_height"]
+                    and g["width"] >= self.config["vehicle_uncertain_min_width"]
+                    and detection.get("confidence", 0) >= self.config["vehicle_uncertain_min_confidence"]
+                    and (g["clipped"] or m["quality"] != "valid")
+                    and g["box_norm"][0] < self.config["central_danger_right"]
+                    and g["box_norm"][2] > self.config["central_danger_left"])
+                if entering or lateral_in_path or uncertain_near:
+                    item["risk_level"] = "danger"
+                    item["reasons"].append("vehicle_predicted_entry" if entering
+                        else "vehicle_lateral_path_motion" if lateral_in_path
+                        else "vehicle_near_unverified_motion")
             surroundings = surrounding_walkability(g,class_map,label_ids,shape,self.config)
             item["surrounding_walkability"] = surroundings
             if (self.config["walkable_surroundings_filter_enabled"]
                     and item["risk_level"] == "danger"
+                    and not (self.config["dynamic_vehicle_risk_enabled"] and vehicle)
+                    and m.get("time_to_near_s") is None
+                    and surroundings["status"] == "available"
                     and surroundings["all_non_walkable"]):
                 item["risk_level"] = "caution"
                 item["reasons"].append("nonwalkable_surroundings")
@@ -217,6 +266,11 @@ class RiskEngine:
                 item["release_evidence"] = "lower_proximity_or_urgency"
             if m["quality"] == "valid" and not g["clipped"]:
                 item["assessment_quality"] = "valid"
+            if suppress_stop_hazard and detection["class_name"] == "transit_stop":
+                item.update(untrusted_risk_level=item["risk_level"], risk_level=None,
+                            alert_level=None, assessment_quality="assumed_stationary",
+                            risk_suppressed_reason="boarding_input_assumed_stationary")
+                item["reasons"].append("boarding_input_assumed_stationary")
             results.append(item)
         if view_unavailable:
             # Preserve detector output and raw geometric assessment for audit.
@@ -273,6 +327,9 @@ class RiskEngine:
                            "reasons": ["previous_hazard_unverified"]}
         elif camera_view["status"] == "clear" and warning["level"] == "danger":
             self.last_trusted_danger_time = timestamp_s
+            selected_index = warning.get("detection_index")
+            self.last_trusted_danger_class = next((item["class_name"] for item in results
+                if item.get("detection_index") == selected_index), None)
         return {"timestamp_s":timestamp_s, "timestamp_valid":timestamp_valid,
                 "state_epoch":self.epoch, "state_reset":bool(discontinuity or tracking_reset or view_recovered),
                 "view_recovered":view_recovered, "camera_view":camera_view,
@@ -290,4 +347,26 @@ class RiskEngine:
         for item in prediction["detections"]:
             if item["geometry"] is not None:
                 item["sidewalk"] = sidewalk_context(item["geometry"], class_map, label_ids, shape)
+        prediction["path_safety"] = self.path_safety(class_map, label_ids, shape,
+                                                    prediction.get("camera_view", {}))
         return prediction
+
+    @staticmethod
+    def path_safety(class_map, label_ids, shape, camera_view):
+        """Check visible near ground separately for each proposed movement."""
+        result = {action: {"status": "unknown", "walkable_fraction": None}
+                  for action in ("left", "straight", "right")}
+        if (class_map is None or class_map.shape != tuple(shape[:2]) or not label_ids
+                or not all(key in label_ids for key in ("walkable", "crosswalk"))
+                or camera_view.get("status", "clear") != "clear"):
+            return result
+        h, w = shape[:2]
+        walk = np.isin(class_map, [label_ids["walkable"], label_ids["crosswalk"]])
+        for action, (left, right) in {"left": (0.02, .35), "straight": (.35, .65),
+                                      "right": (.65, .98)}.items():
+            patch = walk[round(h * .70):h, round(w * left):round(w * right)]
+            if patch.size:
+                fraction = float(patch.mean())
+                result[action] = {"status": "clear" if fraction >= .65 else "blocked",
+                                  "walkable_fraction": fraction}
+        return result

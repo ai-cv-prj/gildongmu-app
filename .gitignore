@@ -44,8 +44,12 @@ Thumbs.db
 
 .agents/
 AGENTS.md
+.gitignore.bak
 .claude/
 CLAUDE.md
+
+# 개인 정류장 위치 연동 계획서
+docs/stop_location_implementation_plan_20260930.md
 
 # WSL 다운로드 부산물
 *:Zone.Identifier

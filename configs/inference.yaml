@@ -25,6 +25,25 @@ traffic:
   classifier_min_confidence: 0.60
   association_stable_frames: 3
 
+# 화면 크기·위치와 시간 구간의 관측으로 근접을 추정한다. 실제 거리·충돌 안전이 아니다.
+stop_proximity:
+  min_box_height: 0.20
+  min_box_width: 0.05
+  min_box_bottom: 0.60
+  # 박스 중심이 좌우 25% 영역에 있고 더 큰 박스가 화면 중간 높이까지 내려와야 한다.
+  side_center_limit: 0.25
+  side_min_box_height: 0.30
+  side_min_box_width: 0.08
+  side_min_box_bottom: 0.45
+  confirm_frames: 3
+  confirm_s: 0.40
+  confirm_window_s: 2.0
+  candidate_hold_s: 1.0
+  nearby_hold_s: 3.0
+  min_confidence: 0.30
+  match_iou: 0.10
+  max_gap_s: 2.0
+
 # 횡단보도 안전 안내
 # 좌표와 여유값은 영상 너비·높이 기준 비율이다.
 crosswalk_safety:
@@ -137,6 +156,16 @@ risk:
   history_window_s: 0.6
   min_history_s: 0.2
   prediction_horizon_s: 0.8
+  # 안정적인 추적에서 장애물이 근접 경로에 들어올 때를 미리 위험으로 판단
+  approach_danger_enabled: true
+  # 횡진입·잘림·추적 불안정 차량의 근접 위험을 별도로 유지
+  dynamic_vehicle_risk_enabled: true
+  vehicle_uncertain_near_y: 0.55
+  vehicle_uncertain_min_height: 0.18
+  vehicle_uncertain_min_width: 0.20
+  vehicle_uncertain_min_confidence: 0.50
+  approach_danger_s: 1.2
+  min_forward_speed: 0.05
   min_lateral_speed: 0.05
   lateral_near_y: 0.42
 

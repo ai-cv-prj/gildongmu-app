@@ -54,7 +54,8 @@ class MotionHistory:
 
     def update(self, detection, geometry, timestamp, valid, corridor_polygon=None):
         result = {"quality": "insufficient", "velocity_norm_per_s": None,
-                  "time_to_corridor_s": None, "time_to_path_s": None, "ttc_scale_s": None, "history_s": 0.0,
+                  "time_to_corridor_s": None, "time_to_path_s": None, "time_to_near_s": None,
+                  "ttc_scale_s": None, "history_s": 0.0,
                   "relative_expansion_per_s": None, "approach_state": "unknown",
                   "ttc_invalid_reason": "insufficient_history"}
         track_id = detection["track_id"]
@@ -91,6 +92,23 @@ class MotionHistory:
         vx, vy, dh = map(float, fitted[0])
         result["quality"] = "valid"
         result["velocity_norm_per_s"] = [vx, vy]
+        # Only a tracked, stable image-space approach may anticipate the near zone.
+        if (self.cfg["approach_danger_enabled"] and not geometry["clipped"]
+                and vy >= self.cfg["min_forward_speed"]):
+            near_y = (self.cfg["static_danger_y"] if detection["class_name"] in
+                      self.cfg["static_ground_classes"] else
+                      geometry["immediate_top_y"])
+            if geometry["point"][1] < near_y:
+                until_near = (near_y - geometry["point"][1]) / vy
+                if until_near <= self.cfg["approach_danger_s"]:
+                    left, _, right, _ = geometry["footprint"]
+                    left += vx * until_near
+                    right += vx * until_near
+                    central_left = self.cfg["central_danger_left"]
+                    central_right = self.cfg["central_danger_right"]
+                    horizontal_overlap = max(0.0, min(right, central_right) - max(left, central_left)) / (right-left)
+                    if horizontal_overlap >= self.cfg["overlap_threshold"]:
+                        result["time_to_near_s"] = float(until_near)
         # TTC uses relative expansion; do not subtract forward ego-motion.
         expansion = dh / geometry["height"]
         if any(row[5] for row in history):

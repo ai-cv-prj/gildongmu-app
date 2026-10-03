@@ -11,12 +11,15 @@ const settings = require("./settings");
 const context = { window: { GConfig: { get: () => settings } }, performance: { now: () => 0 } };
 vm.runInNewContext(fs.readFileSync("frontend/js/guidance.js", "utf8"), context);
 const spoken = [];
+const requests = [];
 let now = 0;
 const cleared = [];
 const coordinator = {
   PRIORITY: { trafficRed: 2, walking: 3, trafficChange: 4, traffic: 5 },
-  request({ text }) {
+  request(request) {
+    const { text } = request;
     spoken.push(text);
+    requests.push(request);
     return true;
   },
   clear(source) { cleared.push(source); },
@@ -40,9 +43,13 @@ walking.start("test", false, "walking");
 assert.equal(spoken.some(text => text.includes("안내를 시작합니다")), false);
 now = 2400;
 walking.accept({ session_id: "test", frame_id: 1,
+  captured_at_ms: 2400,
   event: { type: "walking_warning", level: "danger",
-    voice_text: "오른쪽으로 이동하세요." } }, now);
+    last_action: "right", voice_text: "오른쪽으로 이동하세요." } }, now);
 assert.ok(spoken.includes("오른쪽으로 이동하세요."));
+assert.equal(requests.at(-1).metadata.action, "right");
+assert.equal(requests.at(-1).metadata.frame_id, 1);
+assert.equal(requests.at(-1).metadata.captured_at_ms, 2400);
 
 // 횡단 중 차량 행동이 없으면 진입 전에 재생하던 일반 장애물 음성을 중단
 now = 2500;
@@ -51,3 +58,25 @@ walking.accept({ session_id: "test", frame_id: 2, crossing_active: true,
     voice_action: null } }, now);
 assert.equal(cleared.at(-1), "walking");
 console.log("guidance: pass");
+
+// A server-authorized surface stop is independent of the summary's caution level.
+now = 2700;
+walking.accept({ session_id: "test", frame_id: 3, captured_at_ms: 2700,
+  event: { type: "walking_warning", level: "caution", voice_action: "stop",
+    voice_event: { action: "stop", text: "멈추세요.", source: "surface", urgency: "emergency" } } }, now);
+assert.equal(spoken.at(-1), "멈추세요.");
+assert.equal(requests.at(-1).priority, 0);
+
+// A new stop event must interrupt bus input even when the action stays stop.
+now = 2800;
+walking.accept({ session_id: "test", frame_id: 4, captured_at_ms: 2800,
+  event: { voice_event: { action: "stop", text: "멈추세요.", event_id: 1 } } }, now);
+const stops = spoken.filter(text => text === "멈추세요.").length;
+now = 2900;
+walking.accept({ session_id: "test", frame_id: 5, captured_at_ms: 2900,
+  event: { voice_event: { action: "stop", text: "멈추세요.", event_id: 1 } } }, now);
+assert.equal(spoken.filter(text => text === "멈추세요.").length, stops);
+now = 3000;
+walking.accept({ session_id: "test", frame_id: 6, captured_at_ms: 3000,
+  event: { voice_event: { action: "stop", text: "멈추세요.", event_id: 2 } } }, now);
+assert.equal(spoken.filter(text => text === "멈추세요.").length, stops + 1);

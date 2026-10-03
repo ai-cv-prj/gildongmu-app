@@ -21,7 +21,6 @@ def overlap(box, polygon):
     intersection, _ = cv2.intersectConvexConvex(rectangle(box), np.asarray(polygon, np.float32))
     return float(np.clip(intersection / area, 0, 1))
 
-
 # 위험 판정용 화면 기하 계산
 def geometry(detection, shape, cfg, roi=None):
     """객체 발자국과 복도·즉시 위험 ROI의 관계를 계산한다."""
@@ -72,6 +71,7 @@ def geometry(detection, shape, cfg, roi=None):
     return {
         "box_norm": list(map(float, box)), "footprint": strip,
         "point": [(x1+x2)/2, y2], "height": y2-y1, "width": x2-x1,
+        "immediate_top_y": min(point[1] for point in immediate),
         "close_candidate": bool(cfg["side_proximity_enabled"] and y2>=close_y
             and (y2-y1)>=cfg["side_min_height"] and (x2-x1)>=cfg["side_min_width"]),
         "side_proximity": bool(cfg["side_proximity_enabled"] and y2>=close_y

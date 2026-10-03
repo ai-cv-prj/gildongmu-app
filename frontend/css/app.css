@@ -51,5 +51,17 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid #8beed1; outline-offset: 2px; }
 .status-heading { display: flex; justify-content: space-between; align-items: center; }.status-heading h2 { margin: 0; font-size: 1.05rem; }.status-heading span { color: #617187; font-size: .82rem; }
 #status { min-height: 1.5em; color: #405269; line-height: 1.5; }
+.stop-proximity-card { margin-top: 10px; }
+.stop-proximity-card > strong { display: block; margin-bottom: 6px; font-size: .9rem; }
+.stop-proximity-status { margin: 0; padding: 9px 11px; border: 1px solid #b8c4d3; border-radius: 9px; color: #405269; font-size: .86rem; }
+.stop-proximity-status[data-state="candidate"] { border-color: #b88742; color: #80551c; }
+.stop-proximity-status[data-state="nearby"] { border-color: #2a9d75; color: #1f7558; font-weight: 700; }
 .footnote { color: #647489; font-size: .78rem; line-height: 1.5; }
+.boarding-panel { margin-bottom: 16px; }
+.boarding-panel[hidden], .boarding-panel [hidden] { display: none; }
+.boarding-panel h2 { margin-top: 0; font-size: 1.15rem; }
+.boarding-panel p { line-height: 1.6; }
+.boarding-panel form { display: grid; gap: 10px; margin-bottom: 12px; }
+.boarding-panel button { width: 100%; }
+#boarding-error { color: #a52534; }
 @media (max-width: 390px) { .page { padding: 18px 12px 28px; } .controls { gap: 7px; } button { font-size: .9rem; } }

@@ -8,6 +8,7 @@
   const cameraButton = $("camera-button"), testButton = $("test-button");
   const device = $("device"), customDevice = $("custom-device");
   const status = $("status"), metrics = $("metrics"), badge = $("camera-badge");
+  const stopStatus = $("stop-proximity-status");
   let settings;
   try { settings = await GConfig.load(); }
   catch (error) {
@@ -18,14 +19,130 @@
   let request = null, timer = null, voiceTick = null, inFlight = false;
   let pendingRawVideo = null;
   let voiceStream = null;
+  let timingQueue = [], timingFlush = null;
+  function queueTiming(record) {
+    if (!Number.isInteger(record.frame_id) || !Number.isInteger(record.captured_at_ms)) return;
+    timingQueue.push(record);
+    if (timingQueue.length >= 20) void flushTimings();
+  }
+  function flushTimings(id = sessionId) {
+    if (!id || timingFlush || !timingQueue.length) return timingFlush || Promise.resolve();
+    timingFlush = (async () => {
+      while (timingQueue.length) {
+        const batch = timingQueue.splice(0, 100);
+        try { await GApi.timings(id, batch); }
+        catch (error) {
+          timingQueue.unshift(...batch);
+          console.error("지연 기록 전송 실패:", error);
+          break;
+        }
+      }
+    })().finally(() => { timingFlush = null; });
+    return timingFlush;
+  }
+  function recordAudioTiming(event) {
+    if (!Number.isInteger(event.frame_id) || !Number.isInteger(event.captured_at_ms)) return;
+    const delay = performance.timeOrigin + event.at_ms - event.captured_at_ms;
+    queueTiming({ kind: "audio", frame_id: event.frame_id,
+      captured_at_ms: event.captured_at_ms, status: event.status, source: event.source,
+      occurred_at_ms: Math.round(performance.timeOrigin + event.at_ms),
+      action: event.action ?? null,
+      audio_delay_ms: event.status === "started" ? Math.max(0, Math.round(delay)) : null });
+  }
   const voicePlayer = GTts.create({ onError: message => setStatus(message) });
-  const audioCoordinator = GAudioCoordinator.create({ player: voicePlayer });
+  const audioCoordinator = GAudioCoordinator.create({ player: voicePlayer,
+    onDiagnostic: recordAudioTiming });
   const trafficGuide = GGuidance.create({ coordinator: audioCoordinator });
   const walkingGuide = GGuidance.create({ coordinator: audioCoordinator });
+  let boardingView = null;
+  const boardingGuide = GBoarding.create({ api: GApi, coordinator: audioCoordinator,
+    onError: message => { $("boarding-error").textContent = message; },
+    onChange: state => {
+      const previous = boardingView;
+      boardingView = state;
+      const visible = state && state.status !== "searching";
+      $("boarding-panel").hidden = !visible;
+      if (!visible) { $("boarding-error").textContent = ""; $("bus-number").value = ""; return; }
+      const pending = state.status === "pending";
+      const messages = {
+        awaiting_stop: "정류장 근처입니다. 멈춤 안내 후 버스 번호를 입력해 주세요.",
+        pending: "정류장 근처입니다. 탑승할 버스 번호를 입력하거나 취소를 눌러 주세요.",
+        submitted: `탑승할 버스: ${state.bus_number}`,
+        cancelled: "버스 탑승 입력을 취소했습니다. 보행 안내는 계속됩니다.",
+      };
+      const message = messages[state.status] || "";
+      if ($("boarding-message").textContent !== message) $("boarding-message").textContent = message;
+      $("boarding-form").hidden = !pending;
+      $("boarding-cancel").hidden = !["pending", "awaiting_stop"].includes(state.status);
+      $("boarding-reopen").hidden = !["submitted", "cancelled"].includes(state.status);
+      for (const id of ["boarding-submit", "boarding-cancel", "boarding-reopen", "bus-number"])
+        $(id).disabled = state.busy;
+      if (state.status !== previous?.status) {
+        $("boarding-error").textContent = "";
+      }
+      if (!state.busy && (state.status !== previous?.status || previous?.busy)) {
+        if (pending) $("bus-number").focus({ preventScroll: false });
+        else if (["submitted", "cancelled"].includes(state.status)) $("boarding-reopen").focus();
+      }
+    } });
 
   // 사용자에게 현재 작업 상태 알림
   /** 화면의 단일 상태 문장을 바꾼다. */
   function setStatus(message) { status.textContent = message; }
+
+  // 세션 폴더에 영상 누락 사유를 남기고 화면에도 같은 오류를 표시한다.
+  async function reportVideoFailure(id, kind, state, error) {
+    console.error(`${kind} 영상 저장 실패:`, error);
+    try {
+      await GApi.recordingEvent(id, kind, state, String(error.message || error).slice(0, 500));
+    } catch (logError) {
+      console.error(`${kind} 영상 실패 기록 전송 실패:`, logError);
+    }
+  }
+
+  /** 빈 녹화물과 전송 실패를 구분해 기록한다. */
+  async function saveVideo(id, kind, blob, upload, recordingError = null) {
+    if (recordingError) {
+      await reportVideoFailure(id, kind, "failed", recordingError);
+      return recordingError;
+    }
+    if (!blob || blob.size === 0) {
+      const error = new Error("녹화 파일이 비어 있습니다.");
+      await reportVideoFailure(id, kind, "empty", error);
+      return error;
+    }
+    try {
+      await upload(id, blob);
+      return null;
+    } catch (error) {
+      await reportVideoFailure(id, kind, "failed", error);
+      return error;
+    }
+  }
+
+  // 개발 중 근접 추정 결과를 음성이나 단계 전환 없이 표시한다.
+  function showStopProximity(event) {
+    const state = event?.status || "not_detected";
+    const basis = { left: "좌측", right: "우측", bottom: "하단" }[event?.basis];
+    const position = basis ? ` · ${basis}` : "";
+    stopStatus.dataset.state = state;
+    if (state === "nearby") {
+      stopStatus.textContent = event.held
+        ? "정류장 근접 상태 유지" + position + " · 현재 재확인 중 (화면 기준)"
+        : "정류장 근접 추정" + position + " · 최근 구간 " + event.observations + "회 관측 · 검출 신뢰도 " + event.confidence.toFixed(2) + " (화면 기준)";
+    } else if (event?.arrival_recorded) {
+      stopStatus.textContent = "정류장 근접 확인 기록 · " + (state === "unavailable"
+        ? "현재 카메라 시야 확인 필요" : "현재 근접 재확인 중");
+    } else if (state === "candidate") {
+      stopStatus.textContent = event.held
+        ? "정류장 후보 유지" + position + " · 현재 재확인 중 (화면 기준)"
+        : "정류장 후보 확인 중" + position + " · " + event.observations + "/" + event.required_observations + "회 관측 (화면 기준)";
+    } else {
+      stopStatus.textContent = state === "unavailable"
+        ? "정류장 근접 판단 보류 · 카메라 시야 확인 필요"
+        : "관측 없음 · 화면 기준";
+    }
+  }
 
   // 선택한 휴대폰 기종 읽기
   /** 직접 입력을 포함하여 저장할 기종 이름을 반환한다. */
@@ -59,6 +176,7 @@
       GRecorder.stopPreview();
       GCamera.stop();
       GOverlay.clear();
+      showStopProximity(null);
       $("placeholder").hidden = false;
       setStatus("카메라를 껐습니다.");
     } else {
@@ -77,14 +195,20 @@
   // 횡단보도와 도보 및 신호의 한 프레임 결과 표시
   /** 횡단보도 최우선 판정을 먼저 반영하고 나머지 안내에 같은 촬영 시각을 전달한다. */
   function showResult(result, capturedAt) {
-    GOverlay.render(result);
+    GOverlay.render(result, state => queueTiming({ kind: "overlay", frame_id: result.frame_id,
+      captured_at_ms: result.captured_at_ms,
+      overlay_delay_ms: state === "drawn" ? Math.round(performance.now() - capturedAt) : null,
+      status: state }));
+    showStopProximity(result.stop_proximity);
     metrics.textContent = `${result.frame_id} 프레임 · ${result.inference_ms}ms`;
     audioCoordinator.acceptCrosswalk(result.crosswalk?.event, capturedAt);
     walkingGuide.accept({ session_id: result.session_id, frame_id: result.frame_id,
+      captured_at_ms: result.captured_at_ms,
       detections: result.walking.detections, event: result.walking.event,
       crossing_active: result.crosswalk?.event?.crossing_active === true }, capturedAt);
     trafficGuide.accept({ session_id: result.session_id, frame_id: result.frame_id,
       detections: result.traffic.detections, event: result.traffic.event }, capturedAt);
+    boardingGuide.accept(result, capturedAt);
   }
 
   // 이전 응답을 기다린 다음 프레임 캡처
@@ -93,15 +217,22 @@
     if (!running || version !== generation || document.hidden || !GCamera.active() || inFlight) return;
     inFlight = true;
     try {
+      const captureStartedAt = performance.now();
       const blob = await GCamera.capture(settings.camera.capture_max_side, settings.camera.jpeg_quality);
       if (!blob || !running || version !== generation) return;
       const capturedAt = performance.now();
       const capturedAtMs = Math.round(performance.timeOrigin + capturedAt);
       const controller = new AbortController();
       request = controller;
+      const requestAt = performance.now();
       const result = await GApi.frame(sessionId, ++frameId, capturedAtMs, blob, controller.signal);
       if (!running || version !== generation) return;
+      const responseAt = performance.now();
       showResult(result, capturedAt);
+      queueTiming({ kind: "frame", frame_id: result.frame_id, captured_at_ms: capturedAtMs,
+        capture_ms: Math.round(capturedAt - captureStartedAt),
+        round_trip_ms: Math.round(responseAt - requestAt),
+        result_ms: Math.round(performance.now() - capturedAt) });
       setStatus("보행 위험과 보행자 신호를 분석하고 있습니다.");
     } catch (error) {
       if (error.name !== "AbortError" && running && version === generation) {
@@ -122,7 +253,9 @@
     if (!GCamera.active()) return setStatus("먼저 카메라를 켜 주세요.");
     if (!deviceName()) return setStatus("휴대폰 기종을 입력해 주세요.");
     GOverlay.clear();
+    showStopProximity(null);
     running = true;
+    timingQueue = [];
     frameId = 0;
     const version = ++generation;
     updateControls();
@@ -138,42 +271,55 @@
       walkingGuide.start("pending", false, "walking");
       const session = await GApi.start(deviceName(), $("note").value.trim());
       if (!running || version !== generation) {
-        let error = null;
+        let rawVideo = null, recordingError = null;
         try {
-          const rawVideo = await pendingRawVideo;
-          if (rawVideo) await GApi.camera(session.session_id, rawVideo);
-          else error = new Error("원본 카메라 녹화 파일이 없습니다.");
-        } catch (cause) { error = cause; }
-        await GApi.stop(session.session_id).catch((cause) => { error = cause; });
+          rawVideo = await pendingRawVideo;
+        } catch (error) { recordingError = error; }
+        const error = await saveVideo(session.session_id, "camera", rawVideo,
+          GApi.camera, recordingError);
+        let stopError = null;
+        await GApi.stop(session.session_id).catch((cause) => { stopError = cause; });
         pendingRawVideo = null;
-        setStatus(error ? `원본 영상 저장 실패: ${error.message}` : "원본 카메라 영상 저장 완료.");
+        setStatus(stopError ? `세션 종료 오류: ${stopError.message}`
+          : error ? `원본 영상 저장 실패: ${error.message}` : "원본 카메라 영상 저장 완료.");
         return;
       }
       sessionId = session.session_id;
       trafficGuide.bindSession(sessionId);
       walkingGuide.bindSession(sessionId);
+      boardingGuide.start(sessionId);
       GRecorder.start();
       voiceTick = setInterval(() => {
         trafficGuide.tick();
         walkingGuide.tick();
         audioCoordinator.tick();
+        boardingGuide.tick();
       }, settings.audio.tick_ms);
       nextFrame(version);
     } catch (error) {
       setStatus(`테스트 시작 실패: ${error.message}`);
-      await GRecorder.stop().catch(() => {});
-      await GRecorder.stopRaw().catch(() => {});
+      let video = null, rawVideo = null, overlayError = null, rawError = null;
+      try { video = await GRecorder.stop(); } catch (cause) { overlayError = cause; }
+      try { rawVideo = await GRecorder.stopRaw(); } catch (cause) { rawError = cause; }
       pendingRawVideo = null;
-      if (sessionId) await GApi.stop(sessionId).catch(() => {});
+      if (sessionId) {
+        const id = sessionId;
+        await flushTimings(id);
+        await saveVideo(id, "camera", rawVideo, GApi.camera, rawError);
+        await saveVideo(id, "overlay", video, GApi.recording, overlayError || error);
+        await GApi.stop(id).catch((cause) => console.error("세션 종료 실패:", cause));
+      }
       sessionId = null;
       running = false;
       trafficGuide.stop();
       walkingGuide.stop();
+      boardingGuide.stop();
       audioCoordinator.stop();
       GRecorder.cancelPreparedAudio();
       GRecorder.stopPreview();
       GCamera.stop();
       GOverlay.clear();
+      showStopProximity(null);
       $("placeholder").hidden = false;
       updateControls();
     }
@@ -191,9 +337,13 @@
     request?.abort();
     trafficGuide.stop();
     walkingGuide.stop();
+    boardingGuide.stop();
     audioCoordinator.stop();
+    showStopProximity(null);
     const id = sessionId;
     sessionId = null;
+    if (timingFlush) await timingFlush;
+    await flushTimings(id);
     setStatus("원본 영상 저장 중입니다.");
     let recordingError = null;
     let rawRecordingError = null;
@@ -218,14 +368,11 @@
       setStatus("테스트 시작을 취소했습니다.");
       return;
     }
-    try {
-      if (rawVideo) await GApi.camera(id, rawVideo);
-      else rawRecordingError ||= new Error("원본 카메라 녹화 파일이 없습니다.");
-    } catch (error) { rawRecordingError = error; }
+    rawRecordingError = await saveVideo(id, "camera", rawVideo,
+      GApi.camera, rawRecordingError);
     setStatus("오버레이 영상 저장 중입니다.");
-    try {
-      if (video) await GApi.recording(id, video);
-    } catch (error) { recordingError = error; }
+    recordingError = await saveVideo(id, "overlay", video,
+      GApi.recording, recordingError);
     try {
       const summary = await GApi.stop(id);
       const errors = [rawRecordingError && `원본 영상: ${rawRecordingError.message}`,
@@ -244,6 +391,14 @@
   // 선택 사항과 브라우저 수명 이벤트 연결
   /** 화면이 숨겨지면 카메라 전송을 멈추고 다시 보이면 재개한다. */
   function bind() {
+    $("boarding-form").addEventListener("submit", event => {
+      event.preventDefault();
+      const number = $("bus-number").value.trim();
+      if (!number) { $("boarding-error").textContent = "탑승할 버스 번호를 입력해 주세요."; return; }
+      void boardingGuide.submit(number);
+    });
+    $("boarding-cancel").addEventListener("click", () => { void boardingGuide.cancel(); });
+    $("boarding-reopen").addEventListener("click", () => { void boardingGuide.reopen(); });
     device.addEventListener("change", () => { customDevice.hidden = device.value !== "custom"; });
     cameraButton.addEventListener("click", toggleCamera);
     testButton.addEventListener("click", () => running ? stopTest() : startTest());
