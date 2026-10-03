@@ -23,6 +23,7 @@ from src.pipeline import (
     find_sample_videos,
     load_config,
     process_video,
+    prepare_recorded_frame,
     resolve_path,
     run_video_inference,
 )
@@ -74,6 +75,7 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(resolve_path("/tmp/example.mp4"), Path("/tmp/example.mp4"))
         self.assertEqual(config["overlay_alpha"], 0.55)
         self.assertEqual(config["mode"], "all")
+        self.assertEqual(config["recorded_frame"], {"max_side": 640, "jpeg_quality": 0.72})
         self.assertEqual(config["yolo"]["conf"], 0.25)
         self.assertEqual(config["yolo"]["imgsz"], 640)
         self.assertEqual(config["yolo"]["head"], "nms")
@@ -87,6 +89,33 @@ class IntegrationTests(unittest.TestCase):
                 "src.pipeline.read_yaml", return_value={**config, "mask2former": section}
             ), self.assertRaisesRegex(ValueError, "mask2former"):
                 load_config(DEFAULT_CONFIG)
+
+    # 녹화 프레임 설정 검증
+    def test_invalid_recorded_frame_config_rejected(self):
+        """녹화 프레임의 최대 크기와 JPEG 품질 범위를 실행 전에 확인한다."""
+        config = load_config(DEFAULT_CONFIG)
+        cases = (
+            None,
+            {},
+            {"max_side": 0, "jpeg_quality": .72},
+            {"max_side": 640.0, "jpeg_quality": .72},
+            {"max_side": 640, "jpeg_quality": 0},
+            {"max_side": 640, "jpeg_quality": 1.1},
+        )
+        for section in cases:
+            with self.subTest(section=section), patch(
+                "src.pipeline.read_yaml", return_value={**config, "recorded_frame": section}
+            ), self.assertRaisesRegex(ValueError, "recorded_frame"):
+                load_config(DEFAULT_CONFIG)
+
+    # 실시간과 같은 녹화 프레임 전처리 확인
+    def test_recorded_frame_uses_640_max_side_and_jpeg_roundtrip(self):
+        """세로 원본을 360x640으로 줄이고 JPEG를 거친 새 프레임을 반환한다."""
+        frame = np.random.default_rng(42).integers(0, 256, (1280, 720, 3), dtype=np.uint8)
+        result = prepare_recorded_frame(frame, {"max_side": 640, "jpeg_quality": .72})
+        self.assertEqual(result.shape, (640, 360, 3))
+        self.assertFalse(np.array_equal(result, cv2.resize(frame, (360, 640),
+                                                           interpolation=cv2.INTER_AREA)))
 
     # 새 옵션과 이전 별칭 확인
     def test_mask2former_cli_option_and_legacy_alias(self):
@@ -438,6 +467,50 @@ class IntegrationTests(unittest.TestCase):
                     while capture.read()[0]:
                         decoded += 1
                     self.assertEqual(decoded, 3)
+                finally:
+                    capture.release()
+            finally:
+                output_path.unlink(missing_ok=True)
+
+    # 녹화 영상의 실시간 프레임 조건 적용 확인
+    def test_mp4_recorded_frame_config_outputs_360_by_640(self):
+        """세로 녹화 영상의 모델 입력과 결과 영상을 360x640 JPEG 조건으로 맞춘다."""
+        with tempfile.NamedTemporaryFile(suffix=".mp4") as source, tempfile.NamedTemporaryFile(
+            suffix=".mp4"
+        ) as destination:
+            output_path = Path(destination.name)
+            destination.close()
+            writer = cv2.VideoWriter(source.name, cv2.VideoWriter_fourcc(*"mp4v"),
+                                     10.0, (720, 1280))
+            try:
+                if not writer.isOpened():
+                    self.skipTest("MP4 인코더를 사용할 수 없습니다.")
+                writer.write(np.random.default_rng(42).integers(
+                    0, 256, (1280, 720, 3), dtype=np.uint8))
+            finally:
+                writer.release()
+
+            def predict(frame):
+                """전처리된 모델 입력 크기에 맞는 클래스 지도를 반환한다."""
+                self.assertEqual(frame.shape, (640, 360, 3))
+                return np.ones(frame.shape[:2], dtype=np.int64)
+
+            segmenter = SimpleNamespace(label_ids=LABEL_IDS, predict=Mock(side_effect=predict))
+            try:
+                with redirect_stdout(io.StringIO()):
+                    count = process_video(
+                        source.name, output_path, segmenter,
+                        recorded_frame_config={"max_side": 640, "jpeg_quality": .72},
+                    )
+                self.assertEqual(count, 1)
+                capture = cv2.VideoCapture(str(output_path))
+                try:
+                    self.assertTrue(capture.isOpened())
+                    self.assertEqual(int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)), 360)
+                    self.assertEqual(int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)), 640)
+                    self.assertAlmostEqual(capture.get(cv2.CAP_PROP_FPS), 10.0, places=2)
+                    self.assertTrue(capture.read()[0])
+                    self.assertFalse(capture.read()[0])
                 finally:
                     capture.release()
             finally:

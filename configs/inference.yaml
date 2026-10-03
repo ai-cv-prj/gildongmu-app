@@ -8,6 +8,11 @@ device: auto
 mode: all # all: 전체, both: 도보+장애물, 나머지: 단독
 overlay_alpha: 0.55 # 마스크 투명도
 
+# 녹화 영상도 휴대폰 실시간 전송 프레임과 같은 크기·JPEG 품질로 추론한다.
+recorded_frame:
+  max_side: 640
+  jpeg_quality: 0.72
+
 # 장애물 YOLO
 yolo:
   conf: 0.25
