@@ -86,7 +86,7 @@ class RiskEngine:
         # No motion quantities are trusted after timestamp loss.
         if not timestamp_valid:
             self.motion.reset()
-        camera_stable = bool(self.camera_guard.update(frame))
+        camera_stable = bool(self.camera_guard.update(frame, timestamp_s))
         previous_view_status = self.camera_view.status
         camera_view = self.camera_view.update(frame, detections, class_map, label_ids,
                                               timestamp_s, camera_stable)

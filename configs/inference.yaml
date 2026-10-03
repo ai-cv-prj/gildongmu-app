@@ -150,9 +150,12 @@ risk:
   max_motion_residual: 0.03
 
   # 카메라 움직임 허용 범위
-  camera_max_rotation_deg: 4.0
-  camera_max_translation: 0.12
-  camera_max_scale_change: 0.1
+  camera_max_rotation_deg: 8.0
+  camera_max_translation: 0.24
+  camera_max_scale_change: 0.20
+  camera_motion_failure_hold_s: 0.75
+  camera_motion_min_inlier_ratio: 0.30
+  camera_motion_min_inlier_points: 12
 
   # 경고 유지와 출력
   release_hold_s: 0.5

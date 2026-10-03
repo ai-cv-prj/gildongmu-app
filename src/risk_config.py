@@ -46,9 +46,12 @@ DEFAULT_RISK = {
     "ttc_caution_s": 3.00,
     "min_expansion_rate": 0.05,
     "max_motion_residual": 0.03,
-    "camera_max_rotation_deg": 4.0,
-    "camera_max_translation": 0.12,
-    "camera_max_scale_change": 0.10,
+    "camera_max_rotation_deg": 8.0,
+    "camera_max_translation": 0.24,
+    "camera_max_scale_change": 0.20,
+    "camera_motion_failure_hold_s": 0.75,
+    "camera_motion_min_inlier_ratio": 0.30,
+    "camera_motion_min_inlier_points": 12,
     "release_hold_s": 0.50,
     "repeat_cooldown_s": 2.0,
     "event_match_iou": 0.30,
@@ -139,6 +142,7 @@ def risk_config(value=None):
                 "warning_group_containment","roi_top_max_y","roi_extent_deadband",
                 "label_confidence","central_danger_left","central_danger_right",
                 "side_danger_y","roi_extent_max_shift_per_s",
+                "camera_motion_min_inlier_ratio",
                 "surrounding_side_width_ratio","surrounding_side_height_ratio",
                 "surrounding_bottom_height_ratio","surrounding_max_side_width_ratio",
                 "surrounding_max_bottom_height_ratio","surrounding_walkable_threshold"):
@@ -164,11 +168,16 @@ def risk_config(value=None):
     for key in ("history_window_s", "min_history_s", "prediction_horizon_s", "reset_gap_s",
                 "ttc_danger_s", "ttc_caution_s", "release_hold_s", "repeat_cooldown_s",
                 "camera_max_rotation_deg", "roi_confirm_s", "roi_smooth_s", "roi_hold_s",
-                "roi_return_s", "clear_confirm_s", "uncertainty_hold_s", "id_bridge_s"):
+                "roi_return_s", "clear_confirm_s", "uncertainty_hold_s", "id_bridge_s",
+                "camera_motion_failure_hold_s"):
         _number(cfg[key], f"risk.{key}", 0, strictly_positive=True)
     if (isinstance(cfg["label_confirm_frames"], bool) or
             not isinstance(cfg["label_confirm_frames"], int) or cfg["label_confirm_frames"] < 1):
         raise ValueError("label_confirm_frames must be a positive integer")
+    if (isinstance(cfg["camera_motion_min_inlier_points"], bool) or
+            not isinstance(cfg["camera_motion_min_inlier_points"], int)
+            or cfg["camera_motion_min_inlier_points"] < 3):
+        raise ValueError("camera_motion_min_inlier_points must be an integer of at least 3")
     if cfg["hard_reset_gap_s"] < cfg["reset_gap_s"]:
         raise ValueError("hard_reset_gap_s must not be below reset_gap_s")
     if cfg["roi_top_max_y"] >= min(p[1] for p in cfg["corridor_polygon"]

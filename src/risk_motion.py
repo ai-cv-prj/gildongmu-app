@@ -5,6 +5,15 @@ import cv2
 import numpy as np
 from src.risk_geometry import overlap
 
+
+# RANSAC 카메라 변환 신뢰 조건 확인
+def camera_motion_inliers_valid(inliers, cfg):
+    """일치점 비율과 실제 개수가 모두 설정 기준 이상인지 반환한다."""
+    if inliers is None or not inliers.size:
+        return False
+    return (float(inliers.mean()) >= cfg["camera_motion_min_inlier_ratio"]
+            and int(inliers.sum()) >= cfg["camera_motion_min_inlier_points"])
+
 class CameraMotionGuard:
     """Conservative affine sanity check; this does not measure world velocity."""
     def __init__(self, cfg):
@@ -12,33 +21,64 @@ class CameraMotionGuard:
         self.reset()
 
     def reset(self):
+        """직전 영상과 안정 판정 및 계산 실패 유예 시간을 초기화한다."""
         self.previous = None
+        self.last_stable_at = None
+        self.unavailable_since = None
+        self.last_result = None
 
-    def update(self, frame):
+    # 인접 프레임의 카메라 변환 측정
+    def _measure(self, frame):
+        """변환이 안정적이면 참, 임계값 초과면 거짓, 계산할 수 없으면 None을 반환한다."""
         h, w = frame.shape[:2]
         gray = cv2.cvtColor(cv2.resize(frame, (320, max(32, round(h*320/w)))), cv2.COLOR_BGR2GRAY)
         previous, self.previous = self.previous, gray
         if previous is None or previous.shape != gray.shape:
-            return False
+            return None
         points = cv2.goodFeaturesToTrack(previous, 120, .01, 8)
         if points is None or len(points) < 8:
-            return False
+            return None
         following, status, _ = cv2.calcOpticalFlowPyrLK(previous, gray, points, None)
         if following is None or status is None:
-            return False
+            return None
         selected = status.ravel().astype(bool)
         a, b = points[selected], following[selected]
         if len(a) < 8:
-            return False
+            return None
         transform, inliers = cv2.estimateAffinePartial2D(a, b, method=cv2.RANSAC, ransacReprojThreshold=3)
-        if transform is None or not np.isfinite(transform).all() or inliers.mean() < .5:
-            return False
+        if (transform is None or not np.isfinite(transform).all()
+                or not camera_motion_inliers_valid(inliers, self.cfg)):
+            return None
         scale = math.hypot(transform[0,0], transform[1,0])
         rotation = abs(math.degrees(math.atan2(transform[1,0], transform[0,0])))
         translation = math.hypot(transform[0,2]/gray.shape[1], transform[1,2]/gray.shape[0])
         return (rotation <= self.cfg["camera_max_rotation_deg"]
                 and abs(scale-1) <= self.cfg["camera_max_scale_change"]
                 and translation <= self.cfg["camera_max_translation"])
+
+    # 카메라 안정 상태 갱신
+    def update(self, frame, timestamp):
+        """계산 불가를 잠시 유예하되 실제 임계값 초과는 즉시 불안정으로 반환한다."""
+        measured = self._measure(frame)
+        if measured is True:
+            self.last_stable_at = timestamp
+            self.unavailable_since = None
+            self.last_result = True
+            return True
+        if measured is False:
+            self.unavailable_since = None
+            self.last_result = False
+            return False
+        if self.last_result is False:
+            return False
+        if self.unavailable_since is None:
+            self.unavailable_since = timestamp
+        reference = (self.last_stable_at if self.last_stable_at is not None
+                     else self.unavailable_since)
+        held = timestamp - reference <= self.cfg["camera_motion_failure_hold_s"] + 1e-9
+        if not held:
+            self.last_result = False
+        return held
 
 class MotionHistory:
     def __init__(self, cfg):
