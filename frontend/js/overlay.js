@@ -66,6 +66,41 @@ window.GOverlay = (() => {
     }
   }
 
+  // 현장 테스트용 정류장 판정. 캔버스에 그리므로 오버레이 영상에도 남는다.
+  function stopDiagnostic(event) {
+    const state = event?.status || "unavailable";
+    const basis = { left: "좌측", right: "우측", bottom: "하단" }[event?.basis];
+    const position = basis ? `${basis} ` : "";
+    const color = state === "nearby" ? "#57d7ab"
+      : state === "candidate" ? "#ffce73" : "#c2ceda";
+    const label = state === "nearby" ? `${position}정류장 ${event.held ? "근접 유지 · 재확인 중" : "근접 추정"}`
+      : event?.arrival_recorded ? "정류장 확인 기록 · 재확인 중"
+      : state === "candidate" ? event.held ? `${position}정류장 후보 유지`
+        : `${position}정류장 후보 ${event.observations}/${event.required_observations}`
+      : state === "not_detected" ? "정류장 미검출" : "정류장 판정 보류";
+    const box = event?.xyxy;
+    ctx.save();
+    if (!event?.held && ["nearby", "candidate"].includes(state) && Array.isArray(box)
+        && box.length === 4 && box.every(Number.isFinite)) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(4, canvas.width / 120);
+      ctx.strokeRect(box[0] * canvas.width, box[1] * canvas.height,
+        (box[2] - box[0]) * canvas.width, (box[3] - box[1]) * canvas.height);
+    }
+    ctx.font = `bold ${Math.max(14, Math.min(20, canvas.width / 32))}px system-ui`;
+    const bannerWidth = Math.min(canvas.width - 16, ctx.measureText(label).width + 22);
+    const x = canvas.width - bannerWidth - 8;
+    const y = 52;
+    ctx.fillStyle = "#08131feb";
+    ctx.fillRect(x, y, bannerWidth, 36);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, bannerWidth, 36);
+    ctx.fillStyle = color;
+    ctx.fillText(label, x + 11, y + 24);
+    ctx.restore();
+  }
+
   // 횡단보도 안전 경계 표시
   /** 가상 사용자 위치 높이에서 추정한 좌우 경계와 현재 발 위치를 그린다. */
   function crosswalkSafety(event) {
@@ -165,12 +200,17 @@ window.GOverlay = (() => {
 
   // 서버 응답의 PNG 마스크와 위험·신호 결과 합성
   /** 새 결과가 도착했을 때 이전 프레임의 비동기 이미지 로딩을 무효화한다. */
-  function render(result) {
+  function render(result, onDrawn = () => {}) {
     const current = ++version;
     size(result.image_width, result.image_height);
     const draw = mask => {
-      if (current !== version) return;
+      if (current !== version) return onDrawn("superseded");
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (Number.isFinite(result.captured_at_ms) && typeof performance !== "undefined"
+          && Number.isFinite(performance.timeOrigin)
+          && performance.timeOrigin + performance.now() - result.captured_at_ms > 400) {
+        return onDrawn("stale");
+      }
       if (mask) ctx.drawImage(mask, 0, 0, canvas.width, canvas.height);
       const roi = result.walking?.event?.roi || {};
       for (const points of roi.corridor_polygons || [roi.corridor_polygon])
@@ -184,6 +224,8 @@ window.GOverlay = (() => {
       actionStatus(result.walking?.event);
       crosswalkStatus(result.crosswalk?.event);
       walkingSurfaceStatus(result.walking_surface?.event);
+      stopDiagnostic(result.stop_proximity);
+      onDrawn("drawn");
     };
     if (!result.walking?.mask_png) return draw(null);
     const mask = new Image();

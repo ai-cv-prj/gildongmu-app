@@ -1,0 +1,95 @@
+/** Stop playback completion, bus input and cancellation share one session. */
+(() => {
+  const PROMPT = "정류장 근처입니다. 탑승할 버스 번호를 입력해 주세요. 탑승하지 않으면 취소를 누르세요.";
+
+  function create({ api, coordinator, onChange = () => {}, onError = () => {},
+    now = () => performance.now() }) {
+    let sessionId = null, generation = 0, state = null, busy = false;
+    let resultAt = null, canStop = false, audioPending = false, audioToken = 0;
+    let promptFinished = false;
+    let frameMetadata = {};
+    const emit = () => onChange(state ? { ...state, busy } : null);
+
+    function apply(next) {
+      if (!next || !Number.isInteger(next.revision) || (state && next.revision < state.revision)) return;
+      const previous = state?.status;
+      state = { ...next };
+      if (previous !== state.status) {
+        audioToken++;
+        audioPending = false;
+        coordinator.clear("boarding-stop");
+        coordinator.clear("boarding");
+        if (state.status === "awaiting_stop") promptFinished = false;
+      }
+      emit();
+    }
+
+    async function act(action, busNumber = null) {
+      if (!sessionId || !state?.arrival_event_id || busy) return false;
+      const version = generation, id = sessionId;
+      busy = true;
+      emit();
+      try {
+        const next = await api.boarding(id, action, state.arrival_event_id, busNumber);
+        if (generation !== version || sessionId !== id) return false;
+        apply(next);
+        return true;
+      } catch (error) {
+        if (generation === version) onError(error.message);
+        return false;
+      } finally {
+        if (generation === version) { busy = false; emit(); }
+      }
+    }
+
+    function tick() {
+      if (!sessionId || !state || busy || audioPending || resultAt === null
+          || now() - resultAt >= 1500) return;
+      const awaiting = state.status === "awaiting_stop";
+      if ((!awaiting && (state.status !== "pending" || promptFinished)) || (awaiting && !canStop)) return;
+      const version = generation, token = ++audioToken;
+      audioPending = true;
+      const accepted = coordinator.request({ source: awaiting ? "boarding-stop" : "boarding",
+        priority: awaiting ? coordinator.PRIORITY.emergency : coordinator.PRIORITY.boarding,
+        text: awaiting ? "멈추세요." : PROMPT,
+        metadata: { ...frameMetadata, action: awaiting ? "stop" : null },
+        validUntil: awaiting ? resultAt + 1500 : now() + 8000,
+        kind: "bus-input", onCancel: () => {
+          if (version === generation && token === audioToken) audioPending = false;
+        }, onComplete: () => {
+          if (version !== generation || token !== audioToken) return;
+          audioPending = false;
+          if (awaiting) void act("stop_announced");
+          else promptFinished = true;
+        } });
+      if (!accepted) audioPending = false;
+    }
+
+    function start(id) {
+      stop();
+      sessionId = id;
+    }
+    function stop() {
+      generation++;
+      sessionId = state = resultAt = null;
+      canStop = audioPending = busy = promptFinished = false;
+      frameMetadata = {};
+      audioToken++;
+      coordinator.clear("boarding-stop");
+      coordinator.clear("boarding");
+      emit();
+    }
+    function accept(result, capturedAt) {
+      if (!sessionId || result.session_id !== sessionId || !Number.isFinite(capturedAt)
+          || now() < capturedAt || now() - capturedAt >= 1500) return;
+      resultAt = capturedAt;
+      frameMetadata = { frame_id: result.frame_id, captured_at_ms: result.captured_at_ms };
+      canStop = result.stop_proximity?.nearby === true && !result.crosswalk?.event?.crossing_active;
+      apply(result.boarding);
+      tick();
+    }
+    return { start, stop, accept, tick, submit: number => act("submit", number),
+      cancel: () => act("cancel"), reopen: () => act("reopen") };
+  }
+  window.GBoarding = { create, PROMPT };
+})();

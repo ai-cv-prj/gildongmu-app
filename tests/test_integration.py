@@ -27,8 +27,9 @@ from src.pipeline import (
     resolve_path,
     run_video_inference,
 )
+from src.settings import load_paths
 from src.sidewalk import SidewalkSegmenter, get_segmentation_label_ids
-from src.obstacle import EXPECTED_CLASS_NAMES, ObstacleDetector, validate_yolo_config
+from src.obstacle import EXPECTED_CLASS_NAMES, EXPECTED_CLASS_NAMES_29, ObstacleDetector, validate_yolo_config
 from src.visualization import (
     LABEL_COLORS,
     OBJECT_COLORS,
@@ -66,8 +67,11 @@ class IntegrationTests(unittest.TestCase):
     def test_default_config_and_paths(self):
         """설정 경로는 프로젝트 루트를 기준으로 해석한다."""
         config = load_config(DEFAULT_CONFIG)
-        self.assertEqual(resolve_path(config["mask2former"]["weights"]), PROJECT_DIR / "weights/walking/mask2former")
-        self.assertEqual(resolve_path(config["yolo"]["weights"]), PROJECT_DIR / "weights/walking/yolo/finetune_v2_exp02_stage2_best.pt")
+        paths = load_paths(config["paths_config"])
+        self.assertEqual(resolve_path(config["mask2former"]["weights"]),
+                         resolve_path(paths["mask2former_weights"]))
+        self.assertEqual(resolve_path(config["yolo"]["weights"]),
+                         resolve_path(paths["yolo_weights"]))
         self.assertNotIn("model_dir", config)
         self.assertEqual(resolve_path(config["sample_dir"]), PROJECT_DIR / "data/samples/input")
         self.assertEqual(resolve_path(config["session_dir"]), PROJECT_DIR / "data/sessions")
@@ -84,7 +88,7 @@ class IntegrationTests(unittest.TestCase):
     def test_invalid_mask2former_weights_config_rejected(self):
         """누락되거나 잘못된 Mask2Former 가중치 설정은 명확하게 거부한다."""
         config = load_config(DEFAULT_CONFIG)
-        for section in (None, "weights/walking/mask2former", {}, {"weights": ""}, {"weights": " "}, {"weights": None}, {"weights": 123}):
+        for section in (None, "weights/mask2former", {}, {"weights": ""}, {"weights": " "}, {"weights": None}, {"weights": 123}):
             with self.subTest(section=section), patch(
                 "src.pipeline.read_yaml", return_value={**config, "mask2former": section}
             ), self.assertRaisesRegex(ValueError, "mask2former"):
@@ -123,18 +127,18 @@ class IntegrationTests(unittest.TestCase):
         for option in ("--mask2former-weights", "--model-dir"):
             with self.subTest(option=option), patch("sys.argv", [
                 "run_video_inference", option, "weights/custom-mask2former",
-                "--yolo-weights", "weights/walking/yolo/custom.pt",
+                "--yolo-weights", "weights/yolo/custom.pt",
             ]), patch("src.pipeline.run_video_inference") as run:
                 main()
                 run.assert_called_once()
                 self.assertEqual(run.call_args.kwargs["mask2former_weights"], Path("weights/custom-mask2former"))
-                self.assertEqual(run.call_args.kwargs["yolo_weights"], Path("weights/walking/yolo/custom.pt"))
+                self.assertEqual(run.call_args.kwargs["yolo_weights"], Path("weights/yolo/custom.pt"))
                 self.assertNotIn("model_dir", run.call_args.kwargs)
 
     # 통일된 가중치 인자로 모델 로딩
     def test_segmenter_loads_weights_directory(self):
         """weights 인자를 전처리기와 모델의 로컬 폴더로 전달한다."""
-        weights = PROJECT_DIR / "weights/walking/mask2former"
+        weights = PROJECT_DIR / "weights/mask2former"
         with patch.object(Path, "is_file", return_value=True), patch(
             "src.sidewalk.AutoImageProcessor.from_pretrained"
         ) as processor, patch("src.sidewalk.Mask2FormerForUniversalSegmentation.from_pretrained") as model:
@@ -250,7 +254,7 @@ class IntegrationTests(unittest.TestCase):
             "src.pipeline.process_video"
         ) as process, patch.object(Path, "mkdir") as mkdir, redirect_stdout(io.StringIO()):
             outputs = run_video_inference(device="cpu", mode="sidewalk")
-        loader.assert_called_once_with(PROJECT_DIR / "weights/walking/mask2former", device="cpu")
+        loader.assert_called_once_with(resolve_path(load_paths()["mask2former_weights"]), device="cpu")
         detector_loader.assert_not_called()
         self.assertEqual(process.call_count, 2)
         self.assertEqual(outputs, [
@@ -541,6 +545,10 @@ class IntegrationTests(unittest.TestCase):
             self.assertEqual(detector.conf, 0.25)
             self.assertEqual(detector.imgsz, 640)
             factory.assert_called_once_with(weights.name)
+            factory.return_value.names = dict(enumerate(EXPECTED_CLASS_NAMES_29))
+            reduced = ObstacleDetector(weights.name, device="cpu")
+            self.assertEqual(reduced.class_names[20], "transit_stop")
+            self.assertEqual(len(reduced.class_names), 29)
             factory.return_value.names = {0: "person"}
             with self.assertRaisesRegex(ValueError, "32클래스"):
                 ObstacleDetector(weights.name, device="cpu")

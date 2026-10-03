@@ -124,3 +124,23 @@ coordinator.tick();
 assert.equal(cancelCount, beforeStaleCancelCount + 1);
 
 console.log("audio coordinator: pass");
+
+// Once playback starts, the frame start deadline must not truncate a one-shot clip.
+let runningClip;
+let completed = 0, interrupted = 0;
+const startedPlayer = { speak(_text, _deadline, options) { runningClip = options; options.onStart(); return true; },
+  cancel() {} };
+const playback = context.window.GAudioCoordinator.create({ player: startedPlayer, now: () => now });
+playback.start();
+playback.request({ source: "boarding-stop", priority: 0, text: "멈추세요.", validUntil: now + 100,
+  onComplete: () => completed++, onCancel: () => interrupted++ });
+now += 200;
+playback.tick();
+assert.equal(interrupted, 0);
+assert.equal(completed, 0);
+runningClip.onEnd();
+assert.equal(completed, 1);
+playback.request({ source: "boarding", priority: 6, text: "버스 번호", validUntil: now + 1000,
+  onCancel: () => interrupted++ });
+playback.request({ source: "walking", priority: 0, text: "멈추세요.", validUntil: now + 1000 });
+assert.equal(interrupted, 1);

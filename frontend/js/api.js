@@ -45,6 +45,28 @@ window.GApi = (() => {
     return fetch(`/api/sessions/${sessionId}/camera`, { method: "POST", body }).then(result);
   }
 
+  // 브라우저 녹화와 업로드 실패를 세션 로그에 기록
+  function recordingEvent(sessionId, kind, status, detail) {
+    return fetch(`/api/sessions/${sessionId}/recording-events`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind, status, detail }),
+    }).then(result);
+  }
+
+  function timings(sessionId, records) {
+    return fetch(`/api/sessions/${sessionId}/timings`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ records }),
+    }).then(result);
+  }
+
+  function boarding(sessionId, action, arrivalEventId, busNumber = null) {
+    return fetch(`/api/sessions/${sessionId}/boarding`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, arrival_event_id: arrivalEventId, bus_number: busNumber }),
+    }).then(result);
+  }
+
   // 테스트 종료
   /** 파일로 저장된 프레임 수를 포함한 요약을 받는다. */
   function stop(sessionId) {
@@ -52,5 +74,5 @@ window.GApi = (() => {
       body: JSON.stringify({ session_id: sessionId }) }).then(result);
   }
 
-  return { start, frame, recording, camera, stop };
+  return { start, frame, recording, camera, recordingEvent, timings, boarding, stop };
 })();

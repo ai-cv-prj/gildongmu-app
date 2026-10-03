@@ -5,12 +5,12 @@
  * 지난 장면의 음성은 대기열에 쌓지 않고 유효한 현재 안내만 재생한다.
  */
 (() => {
-  const PRIORITY = Object.freeze({ crosswalk: 1, trafficRed: 2, walkingSurface: 3,
-    walking: 4, trafficChange: 5, traffic: 6 });
+  const PRIORITY = Object.freeze({ emergency: 0, crosswalk: 1, trafficRed: 2,
+    walkingSurface: 3, walking: 4, trafficChange: 5, traffic: 6, boarding: 7 });
 
   // 전체 안내에서 하나뿐인 음성 재생 관리자 생성
   /** 단일 플레이어의 취소와 반복을 안내 우선순위에 맞춰 제어한다. */
-  function create({ player, now = () => performance.now() }) {
+  function create({ player, now = () => performance.now(), onDiagnostic = () => {} }) {
     const audio = window.GConfig.get().audio;
     const crosswalkMaxAgeMs = audio.crosswalk_max_age_ms;
     let active = false, current = null, generation = 0;
@@ -23,31 +23,59 @@
         return false;
       }
       const version = generation;
-      return player.speak(request.text, request.validUntil, { onEnd: () => {
-        if (!active || version !== generation || current !== request) return;
-        if (request.repeat && now() < request.validUntil) play(request);
-        else current = null;
-      } });
+      const accepted = player.speak(request.text, request.validUntil, {
+        onStart: () => {
+          request.started = true;
+          onDiagnostic({ ...request.metadata, source: request.source, status: "started", at_ms: now() });
+        },
+        onFailure: () => {
+          onDiagnostic({ ...request.metadata, source: request.source, status: "failed", at_ms: now() });
+          if (current === request) { current = null; request.onCancel(); }
+        },
+        onEnd: () => {
+          if (!active || version !== generation || current !== request) return;
+          if (request.repeat && now() < request.validUntil) play(request);
+          else { current = null; request.onComplete(); }
+        } });
+      if (!accepted) {
+        onDiagnostic({ ...request.metadata, source: request.source,
+          status: "rejected", at_ms: now() });
+        if (current === request) current = null;
+      }
+      return accepted;
     }
 
     // 일반 안내 재생 요청
     /** 더 높은 우선순위만 현재 음성을 중단하며 나머지는 대기시키지 않고 폐기한다. */
-    function request({ source, priority, text, validUntil, repeat = false, kind = null }) {
-      if (!active || !text || !Number.isFinite(validUntil) || now() >= validUntil) return false;
+    function request({ source, priority, text, validUntil, repeat = false,
+      kind = null, metadata = {}, onComplete = () => {}, onCancel = () => {} }) {
+      if (!active || !text || !Number.isFinite(validUntil) || now() >= validUntil) {
+        onDiagnostic({ ...metadata, source, status: "stale", at_ms: now() });
+        return false;
+      }
       if (current) {
         if (current.source === source && current.text === text && current.kind === kind) {
           current.validUntil = Math.max(current.validUntil, validUntil);
           current.repeat = repeat;
           current.finishing = false;
+          current.metadata = metadata;
           return true;
         }
         const urgentReplacement = priority <= PRIORITY.walking && current.source === source
           && priority === current.priority;
-        if (priority > current.priority || (priority === current.priority && !urgentReplacement)) return false;
+        if (priority > current.priority || (priority === current.priority && !urgentReplacement)) {
+          onDiagnostic({ ...metadata, source, status: "priority_rejected", at_ms: now() });
+          return false;
+        }
+        onDiagnostic({ ...current.metadata, source: current.source,
+          status: "cancelled", at_ms: now() });
+        const previous = current;
         generation++;
         player.cancel();
+        previous.onCancel();
       }
-      current = { source, priority, text, validUntil, repeat, kind, finishing: false };
+      current = { source, priority, text, validUntil, repeat, kind, finishing: false,
+        metadata, onComplete, onCancel, started: false };
       return play(current);
     }
 
@@ -65,9 +93,13 @@
     /** 다른 종류가 재생 중이면 건드리지 않고 요청한 종류의 현재 음성만 중단한다. */
     function clear(source) {
       if (!current || current.source !== source) return;
+      onDiagnostic({ ...current.metadata, source: current.source,
+        status: "cancelled", at_ms: now() });
+      const previous = current;
       generation++;
       current = null;
       player.cancel();
+      previous.onCancel();
     }
 
     // 횡단보도 안전 판정 수신
@@ -124,16 +156,20 @@
     // 모든 음성 관리자 종료
     /** 세션 종료 시 반복 음성과 남은 플레이어 요청을 즉시 취소한다. */
     function stop() {
+      const previous = current;
+      if (current) onDiagnostic({ ...current.metadata, source: current.source,
+        status: "cancelled", at_ms: now() });
       active = false;
       current = null;
       generation++;
       player.cancel();
+      previous?.onCancel();
     }
 
     // 오래된 이탈 결과 정리
     /** 서버 응답이 끊기면 마지막 이탈 안내가 무한 반복되지 않게 중단한다. */
     function tick() {
-      if (current && now() >= current.validUntil) clear(current.source);
+      if (current && now() >= current.validUntil && (!current.started || current.repeat)) clear(current.source);
     }
 
     return { start, stop, request, clear, acceptCrosswalk, acceptWalkingSurface,

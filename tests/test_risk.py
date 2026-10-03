@@ -70,6 +70,43 @@ class RiskTests(unittest.TestCase):
         self.assertEqual(result["detections"][0]["motion"]["approach_state"],"receding")
         self.assertIsNone(result["detections"][0]["motion"]["ttc_scale_s"])
 
+    def test_stable_approach_promotes_before_near_zone(self):
+        e = engine(config={"approach_danger_enabled": True, "approach_danger_s": 1.2,
+                           "min_forward_speed": .05})
+        for t, bottom in ((0, .55), (.1, .57), (.2, .59)):
+            result = e.update(FRAME, [detection((40, int((bottom-.3)*100), 60, bottom*100))], t)
+        item = result["detections"][0]
+        self.assertLess(item["geometry"]["point"][1], item["geometry"]["immediate_top_y"])
+        self.assertEqual(item["risk_level"], "danger")
+        self.assertIn("approaching_near_path", item["reasons"])
+        self.assertLess(item["motion"]["time_to_near_s"], 1.2)
+
+    def test_static_approach_promotes_but_unstable_camera_does_not(self):
+        config = {"approach_danger_enabled": True, "approach_danger_s": 1.2,
+                  "min_forward_speed": .05}
+        for stable in (True, False):
+            e = engine(stable=stable, config=config)
+            for t, bottom in ((0, .65), (.1, .69), (.2, .73)):
+                result = e.update(FRAME, [detection((45, (bottom-.25)*100,
+                                                     55, bottom*100), name="pole")], t)
+            item = result["detections"][0]
+            self.assertLess(item["geometry"]["point"][1], e.config["static_danger_y"])
+            self.assertEqual(item["risk_level"], "danger" if stable else "caution")
+            self.assertEqual(item["motion"]["time_to_near_s"] is not None, stable)
+
+    def test_lateral_departure_does_not_promote_short_ttc(self):
+        e = engine(config={"ttc_alerts": True, "wide_roi_priority_enabled": True,
+                           "corridor_polygon": [[.01,.3],[.99,.3],[.99,1],[.01,1]],
+                           "immediate_polygon": [[.01,.7],[.99,.7],[.99,1],[.01,1]]})
+        for t, center in ((0, .23), (.1, .16), (.2, .09)):
+            height = .25 / (1-t/.8)
+            box = ((center-.07)*100, (.65-height)*100, (center+.07)*100, 65)
+            result = e.update(FRAME, [detection(box)], t)
+        item = result["detections"][0]
+        self.assertIsNotNone(item["motion"]["ttc_scale_s"])
+        self.assertNotEqual(item["risk_level"], "danger")
+        self.assertIn("lateral_departure", item["reasons"])
+
     def test_review_overlay_keeps_input_and_excludes_traffic_risk(self):
         e=engine(None)
         frame=np.zeros((480,270,3),np.uint8)
@@ -110,6 +147,13 @@ class RiskTests(unittest.TestCase):
         self.assertEqual(item["sidewalk"]["walkable_fraction"],0)
         e.add_sidewalk_context(result,None,None,FRAME.shape)
         self.assertEqual(item["risk_level"],"danger")
+
+    def test_unavailable_surroundings_cannot_veto_danger(self):
+        e = engine(None, config={"walkable_surroundings_filter_enabled": True})
+        result = e.update(FRAME, [detection()], 0, class_map=None, label_ids=None)
+        item = result["detections"][0]
+        self.assertEqual(item["surrounding_walkability"]["status"], "unavailable")
+        self.assertEqual(item["risk_level"], "danger")
 
     def test_lateral_entry_outside_roi_without_scale_expansion(self):
         e=engine()

@@ -7,6 +7,8 @@ file_path: backend/inference.py
 
 from time import perf_counter
 
+from backend.boarding import Boarding
+from backend.stop_proximity import StopProximity
 from src.crosswalk_safety import (
     CrosswalkSafetyEngine, crosswalk_camera_stable, crosswalk_safety_config,
 )
@@ -45,6 +47,7 @@ class RealtimeInference:
         self.traffic = TrafficSignalPipeline(device=str(self.segmenter.device), **traffic_options)
         self.risk_settings = risk_config(config["risk"])
         self.tracking_settings = tracking_config(config["tracking"])
+        self.stop_proximity_settings = config.get("stop_proximity", {})
         self.crosswalk_settings = crosswalk_safety_config(config.get("crosswalk_safety"))
         self.walking_surface_settings = walking_surface_config(config.get("walking_surface"))
         self.reset()
@@ -54,6 +57,8 @@ class RealtimeInference:
         """위험·음성·신호등 추적 기록을 새 세션 기준으로 비운다."""
         self.risk = RiskEngine(self.risk_settings, self.tracking_settings)
         self.voice = WalkingVoice()
+        self.stop_proximity = StopProximity(self.stop_proximity_settings)
+        self.boarding = Boarding()
         self.crosswalk = CrosswalkSafetyEngine(self.crosswalk_settings)
         self.walking_surface = WalkingSurfaceEngine(self.walking_surface_settings)
         self.traffic.reset()
@@ -66,7 +71,14 @@ class RealtimeInference:
         class_map = self.segmenter.predict(frame)
         height, width = frame.shape[:2]
         risk = self.risk.update(frame, detections, captured_at_ms / 1000,
-                                True, class_map, self.segmenter.label_ids)
+                                True, class_map, self.segmenter.label_ids,
+                                suppress_stop_hazard=self.boarding.stationary)
+        camera_view = risk.get("camera_view") or {}
+        risk["stop_proximity"] = self.stop_proximity.update(
+            risk["detections"], frame.shape, captured_at_ms / 1000,
+            camera_view=camera_view.get("status", "clear"),
+            state_reset=risk.get("state_reset", False),
+        )
         self.risk.add_sidewalk_context(risk, class_map, self.segmenter.label_ids, frame.shape)
         signal = self.traffic.predict(frame, frame_id=frame_id,
                                       captured_at_ms=captured_at_ms)
@@ -84,6 +96,8 @@ class RealtimeInference:
             class_map, self.segmenter.label_ids, frame.shape, captured_at_ms / 1000,
             camera_stable=camera_stable, crosswalk_status=crosswalk["status"],
         )
+        risk["boarding"] = self.boarding.observe(
+            risk["stop_proximity"], crossing_active=crosswalk["crossing_active"])
         self.voice.observe(
             risk, width, captured_at_ms / 1000,
             crossing_active=crosswalk["crossing_active"],

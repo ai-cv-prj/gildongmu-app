@@ -13,9 +13,11 @@ import cv2
 import numpy as np
 import pytest
 import yaml
+from fastapi import HTTPException, UploadFile
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
-from backend.app import create_app
+from backend.app import ClientTimingRequest, RecordingEventRequest, create_app
 from backend.response import normalize_detections
 from backend.session import SessionManager
 from src.video_audio import ffmpeg_executable
@@ -48,6 +50,10 @@ class FakeModels:
             "camera_view": {"status": "clear"},
             "last_action": "straight",
             "voice_text": "직진.",
+            "stop_proximity": {"status": "candidate", "nearby": False,
+                               "newly_nearby": False, "observations": 1,
+                               "required_observations": 3, "confidence": 0.7,
+                               "xyxy": [0.1, 0.2, 0.6, 0.9], "track_id": 7},
         }
         signal = {
             "detections": [{"xyxy": [50, 5, 70, 30], "class_name": "pedestrian_signal",
@@ -97,15 +103,49 @@ def test_session_response_contains_crosswalk_event(tmp_path):
     result = manager.process(session["session_id"], 1, 1000, frame)
     assert result["crosswalk"]["event"]["status"] == "crossing"
     assert result["walking_surface"]["event"]["status"] == "inside"
+    assert result["stop_proximity"]["status"] == "candidate"
     folder = tmp_path / session["date"] / session["folder_name"]
     logged = json.loads((folder / "results.jsonl").read_text(encoding="utf-8"))
     assert logged["crosswalk"]["event"]["event_id"] == 4
     assert logged["walking_surface"]["event"]["event_id"] == 1
     assert logged["frame_file"] == "frames/000001.jpg"
+    assert logged["risk_diagnostics"][0]["track_id"] == 12
+    assert logged["server_timing"]["processing_ms"] >= 0
     assert result["frame_file"] == logged["frame_file"]
     saved = folder / logged["frame_file"]
     assert saved.is_file()
     assert cv2.imread(str(saved)).shape == frame.shape
+
+
+def test_client_timing_is_saved_with_frame_and_audio_events(tmp_path):
+    manager = SessionManager(tmp_path, model_factory=FakeModels)
+    app = create_app(manager)
+    route = next(route.endpoint for route in app.routes
+                 if getattr(route, "path", None) == "/api/sessions/{session_id}/timings")
+    session = manager.start("Phone")
+    session_id = session["session_id"]
+    records = [
+        {"kind": "frame", "frame_id": 1, "captured_at_ms": 1000,
+         "capture_ms": 12, "round_trip_ms": 140, "result_ms": 144},
+        {"kind": "overlay", "frame_id": 1, "captured_at_ms": 1000,
+         "overlay_delay_ms": 152, "status": "drawn"},
+        {"kind": "audio", "frame_id": 1, "captured_at_ms": 1000,
+         "source": "walking", "status": "started", "audio_delay_ms": 190,
+         "action": "straight"},
+    ]
+    assert route(session_id, ClientTimingRequest(records=records)) == {"saved": 3}
+    with pytest.raises(ValidationError):
+        ClientTimingRequest(records=[{**records[0], "round_trip_ms": -1}])
+    folder = tmp_path / session["date"] / session["folder_name"]
+    saved = [json.loads(line) for line in (folder / "client_timing.jsonl").read_text().splitlines()]
+    assert saved[0]["round_trip_ms"] == 140
+    assert saved[1]["overlay_delay_ms"] == 152
+    assert saved[2]["audio_delay_ms"] == 190
+    assert saved[2]["action"] == "straight"
+    manager.stop(session_id)
+    with pytest.raises(HTTPException) as error:
+        route(session_id, ClientTimingRequest(records=records))
+    assert error.value.status_code == 409
 
 
 # 실제 JPEG 디코딩부터 API 응답·로그까지 확인
@@ -143,6 +183,7 @@ def test_mobile_session_flow(tmp_path, recording_fps):
     assert body["walking"]["event"]["last_action"] == "straight"
     assert body["traffic"]["event"]["signal_state"] == "red"
     assert body["crosswalk"]["event"]["status"] == "crossing"
+    assert body["stop_proximity"]["status"] == "candidate"
     assert body["walking"]["detections"][0]["xyxy"] == [0.08, 0.125, 0.3, 0.5]
     assert body["walking"]["detections"][0]["track_id"] == 12
     assert body["walking"]["detections"][0]["event_id"] == 34
@@ -172,10 +213,15 @@ def test_mobile_session_flow(tmp_path, recording_fps):
     assert stopped.json()["storage_path"] == str(folder.resolve())
     logged = json.loads((folder / "results.jsonl").read_text(encoding="utf-8"))
     assert "mask_png" not in logged["walking"]
+    assert logged["stop_proximity"] == body["stop_proximity"]
     assert (folder / "frames" / "000001.jpg").is_file()
     assert logged["frame_file"] == "frames/000001.jpg"
     assert (folder / "camera_overlay.mp4").is_file()
     assert (folder / "camera.mp4").is_file()
+    events = [json.loads(line) for line in
+              (folder / "recording_events.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [(event["kind"], event["status"], event["source"]) for event in events] == [
+        ("overlay", "saved", "server"), ("camera", "saved", "server")]
     for name in ("camera.mp4", "camera_overlay.mp4"):
         capture = cv2.VideoCapture(str(folder / name))
         try:
@@ -270,3 +316,47 @@ def test_invalid_camera_frame(tmp_path):
     oversized = client.post(url, data={"frame_id": "1", "captured_at_ms": "1000"},
                             files={"image": ("frame.jpg", b"x" * 3_000_001, "image/jpeg")})
     assert oversized.status_code == 413
+
+
+def test_recording_failures_are_logged(tmp_path):
+    """브라우저의 빈 Blob과 서버의 빈·손상 업로드 사유를 세션에 남긴다."""
+    manager = SessionManager(tmp_path, model_factory=FakeModels)
+    app = create_app(manager)
+    started = manager.start("Phone")
+    session_id = started["session_id"]
+    folder = tmp_path / started["date"] / started["folder_name"]
+    routes = {route.path: route.endpoint for route in app.routes if hasattr(route, "endpoint")}
+
+    report = routes["/api/sessions/{session_id}/recording-events"]
+    assert report(session_id, RecordingEventRequest(
+        kind="overlay", status="empty", detail="녹화 파일이 비어 있습니다."
+    )) == {"recorded": True}
+    with pytest.raises(HTTPException) as empty:
+        routes["/api/sessions/{session_id}/camera"](
+            session_id, UploadFile(file=io.BytesIO(b""), filename="camera.webm")
+        )
+    assert empty.value.status_code == 422
+    with pytest.raises(HTTPException) as broken:
+        routes["/api/sessions/{session_id}/recording"](
+            session_id, UploadFile(file=io.BytesIO(b"invalid webm"), filename="recording.webm")
+        )
+    assert broken.value.status_code == 422
+
+    sample = tmp_path / "sample.webm"
+    subprocess.run([
+        ffmpeg_executable(), "-nostdin", "-y", "-v", "error", "-f", "lavfi",
+        "-i", "color=size=64x64:rate=10:duration=0.2", "-c:v", "libvpx", str(sample),
+    ], check=True, capture_output=True)
+    saved = routes["/api/sessions/{session_id}/camera"](
+        session_id, UploadFile(file=io.BytesIO(sample.read_bytes()), filename="camera.webm")
+    )
+    assert saved["saved"] is True
+
+    events = [json.loads(line) for line in
+              (folder / "recording_events.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [(event["kind"], event["status"], event["source"]) for event in events] == [
+        ("overlay", "empty", "browser"), ("camera", "empty", "server"),
+        ("overlay", "failed", "server"), ("camera", "saved", "server")]
+    assert all(event["detail"] and event["at"] for event in events)
+    assert not (folder / "camera.upload.webm").exists()
+    assert not (folder / "camera_overlay.upload.webm").exists()
