@@ -55,7 +55,7 @@ window.GOverlay = (() => {
         Number.isInteger(item.track_id) ? `T${item.track_id}` : null,
         Number.isInteger(item.event_id) ? `E${item.event_id}` : null,
       ].filter(Boolean) : [];
-      const name = identifiers.length ? `${baseName} · ${identifiers.join(" · ")}` : baseName;
+      const name = identifiers.length ? `${baseName} | ${identifiers.join(" · ")}` : baseName;
       ctx.font = `bold ${Math.max(13, canvas.width / 38)}px system-ui`;
       const textWidth = ctx.measureText(name).width + 12;
       const labelY = Math.max(2, y - 26);

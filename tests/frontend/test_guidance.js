@@ -14,7 +14,8 @@ const spoken = [];
 let now = 0;
 const cleared = [];
 const coordinator = {
-  PRIORITY: { trafficRed: 2, walking: 3, trafficChange: 4, traffic: 5 },
+  PRIORITY: { trafficRed: 2, walkingSurface: 3, walking: 4,
+    trafficChange: 5, traffic: 6 },
   request({ text }) {
     spoken.push(text);
     return true;
@@ -32,7 +33,7 @@ for (const [index, time] of [100, 1200, 2300].entries()) {
     detections: [{ track_id: 5 }],
     event: { type: "traffic_signal", selected_detection_index: 0, signal_state: "red" } }, time);
 }
-assert.equal(spoken.filter(text => text === "빨간불입니다.").length, 1);
+assert.equal(spoken.filter(text => text === "빨간불.").length, 1);
 
 // 새 위험 이벤트는 신호 안내와 독립적으로 수신
 const walking = context.window.GGuidance.create({ coordinator, now: () => now });
@@ -41,13 +42,23 @@ assert.equal(spoken.some(text => text.includes("안내를 시작합니다")), fa
 now = 2400;
 walking.accept({ session_id: "test", frame_id: 1,
   event: { type: "walking_warning", level: "danger",
-    voice_text: "오른쪽으로 이동하세요." } }, now);
-assert.ok(spoken.includes("오른쪽으로 이동하세요."));
+    voice_text: "오른쪽 이동." } }, now);
+assert.ok(spoken.includes("오른쪽 이동."));
 
 // 횡단 중 차량 행동이 없으면 진입 전에 재생하던 일반 장애물 음성을 중단
 now = 2500;
 walking.accept({ session_id: "test", frame_id: 2, crossing_active: true,
   event: { type: "walking_warning", level: "danger", last_action: "stop",
     voice_action: null } }, now);
+assert.equal(cleared.at(-1), "walking");
+
+// 횡단 접근 중 차량 행동이 없으면 기존 일반 장애물 음성을 중단
+now = 2600;
+const clearedBeforeApproach = cleared.length;
+walking.accept({ session_id: "test", frame_id: 3, crossing_active: false,
+  crosswalk_status: "approach",
+  event: { type: "walking_warning", level: "danger", last_action: "stop",
+    voice_action: null } }, now);
+assert.equal(cleared.length, clearedBeforeApproach + 1);
 assert.equal(cleared.at(-1), "walking");
 console.log("guidance: pass");

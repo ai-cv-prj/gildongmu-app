@@ -40,7 +40,7 @@ context.window.GOverlay.render({
     roi: { left: .46, right: .54, top: .88, bottom: .96 } } },
 });
 
-assert.ok(labels.includes("person · T12 · E34"));
+assert.ok(labels.includes("person | T12 · E34"));
 assert.ok(labels.includes("ACTION: left"));
 assert.ok(labels.includes("CROSSWALK: crossing"));
 assert.ok(labels.includes("WALKWAY: inside"));

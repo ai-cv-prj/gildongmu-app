@@ -309,6 +309,8 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
                     risk_result, output_width, processed_frames / fps,
                     crossing_active=bool(
                         crosswalk_result and crosswalk_result["crossing_active"]),
+                    signal=traffic_result,
+                    crosswalk_status=(crosswalk_result or {}).get("status"),
                 )
             if traffic_result is not None:
                 # 일반 장애물 모델의 traffic_light 박스와 대상 신호등 표시가 겹치지 않게 한다.
