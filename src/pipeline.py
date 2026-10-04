@@ -398,19 +398,26 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
     return processed_frames
 
 
-# 기존 영상과 위험 로그를 보존할 결과 경로 선택
+# 기존 영상을 보존할 결과 경로 선택
 def next_available_output(output_path, reserved=()):
-    """같은 이름의 결과가 있으면 (1), (2)를 붙인 새 MP4 경로를 반환한다."""
+    """같은 이름의 MP4가 있으면 번호를 올리고 고아 위험 로그는 오류로 알린다."""
     base = Path(output_path)
     reserved = set(reserved)
     number = 0
     while True:
         candidate = base if number == 0 else base.with_name(f"{base.stem}({number}){base.suffix}")
+        if candidate in reserved or candidate.exists():
+            number += 1
+            continue
+        paired_risk_path = risk_log_path(candidate)
         legacy_risk_path = candidate.with_suffix(".risk.jsonl")
-        if (candidate not in reserved and not candidate.exists()
-                and not risk_log_path(candidate).exists() and not legacy_risk_path.exists()):
-            return candidate
-        number += 1
+        existing_risk_paths = [path for path in (paired_risk_path, legacy_risk_path) if path.exists()]
+        if existing_risk_paths:
+            paths = ", ".join(str(path) for path in existing_risk_paths)
+            raise FileExistsError(
+                f"결과 MP4 없이 같은 이름의 위험 로그가 존재합니다: {candidate} / {paths}"
+            )
+        return candidate
 
 
 # 설정 및 명령어 옵션으로 추론 실행
@@ -493,7 +500,7 @@ def run_video_inference(
         if video.resolve() == output.resolve():
             raise ValueError(f"입력 영상을 결과 경로로 덮어쓸 수 없습니다: {video}")
 
-    # 사전 검증 뒤 같은 이름의 기존 결과와 로그를 피해 새 경로를 배정한다.
+    # 사전 검증 뒤 같은 이름의 기존 MP4를 피해 새 경로를 배정한다.
     allocated = []
     for output in outputs:
         allocated.append(next_available_output(output, allocated))
