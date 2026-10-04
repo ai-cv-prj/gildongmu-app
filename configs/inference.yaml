@@ -180,12 +180,6 @@ risk:
   prediction_horizon_s: 0.8
   # 안정적인 추적에서 장애물이 근접 경로에 들어올 때를 미리 위험으로 판단
   approach_danger_enabled: true
-  # 횡진입·잘림·추적 불안정 차량의 근접 위험을 별도로 유지
-  dynamic_vehicle_risk_enabled: true
-  vehicle_uncertain_near_y: 0.55
-  vehicle_uncertain_min_height: 0.18
-  vehicle_uncertain_min_width: 0.20
-  vehicle_uncertain_min_confidence: 0.50
   approach_danger_s: 1.2
   min_forward_speed: 0.05
   min_lateral_speed: 0.05

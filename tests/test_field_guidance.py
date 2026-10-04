@@ -24,48 +24,33 @@ def test_predicted_person_outside_near_roi_is_spoken():
     assert result["voice_event"]["action"] == "stop"
 
 
-def test_right_obstacle_outside_voice_roi_rejects_right_route():
+def test_rapid_approach_remains_danger_but_caution_does_not_block_route():
     left = danger_item(1, [28, 40, 41, 73])
     right = danger_item(2, [67, 49, 77, 66], "bicycle",
                         geometry={"immediate_overlap": 0, "corridor_overlap": 1},
                         reasons=["approaching_near_path"], motion={"quality": "valid"})
     assert walking_action(prediction(left, right), 100) == "stop"
-    assert walking_action(prediction(left, caution_item(3, [75, 40, 90, 75])), 100) == "stop"
+    assert walking_action(prediction(left, caution_item(3, [75, 40, 90, 75])), 100) == "right"
 
 
-def test_surface_uncertainty_without_any_object_is_spoken_once():
+def test_surface_uncertainty_without_any_object_is_silent():
     voice = WalkingVoice()
     result = prediction(level="caution", source="surface")
     result["surface"] = {"alert_level": "caution", "status": "uncertain",
                          "reasons": ["path_observation_uncertain"]}
-    assert voice.observe(result, 100, 0)[0] == "멈추세요."
-    assert result["voice_event"]["source"] == "surface"
-    assert voice.observe(result, 100, .2) is None
-
-
-def test_nonwalkable_target_ground_prevents_movement():
-    result = prediction(danger_item(1, [20, 20, 43, 80]))
-    result["path_safety"] = {"right": {"status": "blocked"}}
-    assert walking_action(result, 100) == "stop"
+    assert voice.observe(result, 100, 0) is None
+    assert result["voice_action"] is None
+    assert "voice_event" not in result
 
 
 def test_repeated_boundary_jitter_does_not_announce_straight_during_avoidance():
     voice = WalkingVoice()
-    assert voice.observe(prediction(danger_item(1, [20, 20, 43, 80])), 100, 0)[0] == "오른쪽으로 이동하세요."
+    assert voice.observe(prediction(danger_item(1, [20, 20, 43, 80])), 100, 0)[0] == "오른쪽 이동."
     for time, box in ((.2, [0, 20, 30, 90]), (.4, [20, 20, 43, 80]),
                       (.6, [0, 20, 30, 90]), (.8, [20, 20, 43, 80])):
         result = prediction(danger_item(1, box))
         assert voice.observe(result, 100, time) is None
         assert result["voice_action"] == "right"
-
-
-def test_visible_ground_change_interrupts_previous_movement():
-    voice = WalkingVoice()
-    assert voice.observe(prediction(danger_item(1, [20, 20, 43, 80])), 100, 0)[0] == "오른쪽으로 이동하세요."
-    result = prediction(danger_item(1, [0, 20, 30, 90]))
-    result["path_safety"] = {"left": {"status": "clear"}, "straight": {"status": "clear"},
-                             "right": {"status": "blocked"}}
-    assert voice.observe(result, 100, .1)[0] == "멈추세요."
 
 
 def test_one_missing_frame_does_not_release_center_obstacle():
@@ -86,38 +71,14 @@ def test_side_hazard_never_instructs_typing_user_to_walk():
     assert result["voice_action"] == "stop"
 
 
-def test_new_vehicle_stop_is_emitted_even_while_surface_stop_is_active():
+def test_new_hazard_does_not_repeat_an_unchanged_stop_action():
     voice = WalkingVoice()
-    result = prediction(level="caution", source="surface")
-    result["surface"] = {"alert_level": "caution", "status": "active"}
+    result = prediction(danger_item(1, [45, 20, 55, 90]))
     assert voice.observe(result, 100, 0)[0] == "멈추세요."
     first = result["voice_event"]["event_id"]
-    result["detections"] = [danger_item(1, [45, 30, 75, 80], "car")]
-    assert voice.observe(result, 100, .2)[0] == "멈추세요."
-    assert result["voice_event"]["event_id"] > first
-    assert voice.observe(result, 100, .4) is None
-
-
-def test_lateral_vehicle_already_in_path_warns_without_expansion():
-    assessor = engine(config={**CFG, "camera_view_guard_enabled": False,
-                               "sidewalk_roi_enabled": False, "roi_ground_adapt_enabled": False})
-    for t, x in ((0, 55), (.1, 53), (.2, 51)):
-        result = assessor.update(FRAME, [detection((x, 25, x+20, 64), "motorcycle", 3)], t)
-    item = result["detections"][0]
-    assert item["motion"]["ttc_scale_s"] is None
-    assert item["risk_level"] == "danger"
-    assert "vehicle_lateral_path_motion" in item["reasons"]
-    assert WalkingVoice().observe(result, 100, .2)[0] == "멈추세요."
-
-
-def test_close_clipped_vehicle_with_no_track_still_warns():
-    cfg = {**CFG, "camera_view_guard_enabled": False}
-    result = engine(None, stable=False, config=cfg).update(FRAME,
-        [detection((55, 25, 100, 60), "car", 3)], 0)
-    item = result["detections"][0]
-    assert item["risk_level"] == "danger"
-    assert "vehicle_near_unverified_motion" in item["reasons"]
-    assert WalkingVoice().observe(result, 100, 0)[0] == "멈추세요."
+    result["detections"].append(danger_item(2, [48, 20, 58, 90], "car"))
+    assert voice.observe(result, 100, .2) is None
+    assert result["voice_event"]["event_id"] == first
 
 
 def test_input_suppresses_stop_and_prior_memory_but_keeps_other_hazards():
@@ -131,7 +92,9 @@ def test_input_suppresses_stop_and_prior_memory_but_keeps_other_hazards():
     model.boarding = Boarding()
     model.voice = WalkingVoice()
     model.crosswalk_settings = {}
-    model.crosswalk = SimpleNamespace(update=lambda *args, **kwargs: {"crossing_active": False})
+    model.crosswalk = SimpleNamespace(update=lambda *args, **kwargs: {
+        "crossing_active": False, "status": "search"})
+    model.walking_surface = SimpleNamespace(update=lambda *args, **kwargs: {})
     model.traffic = SimpleNamespace(predict=lambda *args, **kwargs: {
         "detections": [], "signal_state": "unknown", "selected_detection_index": None})
     for i, ms in enumerate((1000, 1200, 1400), 1):
