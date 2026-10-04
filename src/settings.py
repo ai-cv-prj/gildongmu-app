@@ -119,6 +119,7 @@ def load_audio_settings(config_path=DEFAULT_AUDIO_CONFIG):
     number(audio, "sample_rate_hz", 8000, 192000, integer=True)
     number(audio, "bitrate_kbps", 8, 512, integer=True)
     number(audio, "volume", 0, 1)
+    number(audio, "playback_rate", 0.5, 2)
     for key in ("default_validity_ms", "playback_timeout_ms", "tick_ms", "crosswalk_max_age_ms",
                 "video_max_gap_ms", "realtime_max_gap_ms"):
         number(audio, key, 1, 300000, integer=True)
@@ -152,7 +153,7 @@ def browser_settings(app, audio):
             "fps", "max_side", "video_bits_per_second", "chunk_interval_ms",
         )},
         "audio": {key: audio[key] for key in (
-            "volume", "default_validity_ms", "playback_timeout_ms", "tick_ms",
+            "volume", "playback_rate", "default_validity_ms", "playback_timeout_ms", "tick_ms",
             "crosswalk_max_age_ms", "realtime_max_gap_ms", "guidance",
         )},
     })

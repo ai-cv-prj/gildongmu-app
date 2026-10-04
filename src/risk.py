@@ -4,7 +4,6 @@ file_path: src/risk.py
 Experimental obstacle risk assessment with preserved detections and optional IDs.
 """
 import math
-import numpy as np
 from copy import deepcopy
 from src.risk_config import risk_config
 from src.risk_geometry import geometry, sidewalk_context, surrounding_walkability
@@ -18,8 +17,6 @@ from src.warning_groups import group_warnings
 from src.hazard_labels import LabelMemory
 from src.warning_summary import WarningSelector
 from src.camera_view import CameraViewGuard
-
-VEHICLES = frozenset({"car", "bus", "truck", "motorcycle"})
 
 class VideoClock:
     """Use source PTS. Nominal FPS fallback is explicitly invalid for motion."""
@@ -221,34 +218,10 @@ class RiskEngine:
                     if item["risk_level"] == "monitor":
                         item["risk_level"] = "caution"
                     item["reasons"].append("approaching")
-            vehicle = detection["class_name"] in VEHICLES
-            if self.config["dynamic_vehicle_risk_enabled"] and vehicle:
-                entering = (m["quality"] == "valid" and m.get("time_to_path_s") is not None
-                            and g["point"][1] >= self.config["lateral_near_y"])
-                velocity = m.get("velocity_norm_per_s") or [0, 0]
-                lateral_in_path = (m["quality"] == "valid" and related
-                    and g["point"][1] >= self.config["vehicle_uncertain_near_y"]
-                    and abs(velocity[0]) >= self.config["min_lateral_speed"]
-                    and not ((g["point"][0] < self.config["central_danger_left"] and velocity[0] < 0)
-                             or (g["point"][0] > self.config["central_danger_right"] and velocity[0] > 0)))
-                uncertain_near = (
-                    g["point"][1] >= self.config["vehicle_uncertain_near_y"]
-                    and g["height"] >= self.config["vehicle_uncertain_min_height"]
-                    and g["width"] >= self.config["vehicle_uncertain_min_width"]
-                    and detection.get("confidence", 0) >= self.config["vehicle_uncertain_min_confidence"]
-                    and (g["clipped"] or m["quality"] != "valid")
-                    and g["box_norm"][0] < self.config["central_danger_right"]
-                    and g["box_norm"][2] > self.config["central_danger_left"])
-                if entering or lateral_in_path or uncertain_near:
-                    item["risk_level"] = "danger"
-                    item["reasons"].append("vehicle_predicted_entry" if entering
-                        else "vehicle_lateral_path_motion" if lateral_in_path
-                        else "vehicle_near_unverified_motion")
             surroundings = surrounding_walkability(g,class_map,label_ids,shape,self.config)
             item["surrounding_walkability"] = surroundings
             if (self.config["walkable_surroundings_filter_enabled"]
                     and item["risk_level"] == "danger"
-                    and not (self.config["dynamic_vehicle_risk_enabled"] and vehicle)
                     and m.get("time_to_near_s") is None
                     and surroundings["status"] == "available"
                     and surroundings["all_non_walkable"]):
@@ -347,26 +320,4 @@ class RiskEngine:
         for item in prediction["detections"]:
             if item["geometry"] is not None:
                 item["sidewalk"] = sidewalk_context(item["geometry"], class_map, label_ids, shape)
-        prediction["path_safety"] = self.path_safety(class_map, label_ids, shape,
-                                                    prediction.get("camera_view", {}))
         return prediction
-
-    @staticmethod
-    def path_safety(class_map, label_ids, shape, camera_view):
-        """Check visible near ground separately for each proposed movement."""
-        result = {action: {"status": "unknown", "walkable_fraction": None}
-                  for action in ("left", "straight", "right")}
-        if (class_map is None or class_map.shape != tuple(shape[:2]) or not label_ids
-                or not all(key in label_ids for key in ("walkable", "crosswalk"))
-                or camera_view.get("status", "clear") != "clear"):
-            return result
-        h, w = shape[:2]
-        walk = np.isin(class_map, [label_ids["walkable"], label_ids["crosswalk"]])
-        for action, (left, right) in {"left": (0.02, .35), "straight": (.35, .65),
-                                      "right": (.65, .98)}.items():
-            patch = walk[round(h * .70):h, round(w * left):round(w * right)]
-            if patch.size:
-                fraction = float(patch.mean())
-                result[action] = {"status": "clear" if fraction >= .65 else "blocked",
-                                  "walkable_fraction": fraction}
-        return result

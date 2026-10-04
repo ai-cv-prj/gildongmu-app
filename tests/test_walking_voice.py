@@ -118,16 +118,16 @@ class WalkingVoiceTests(unittest.TestCase):
                          "stop")
 
     # 동률에서 주의 객체로 좌우 비교
-    def test_center_danger_rejects_both_occupied_sides(self):
-        """주의 객체가 적은 쪽이라도 양쪽이 막혔으면 멈춘다."""
+    def test_center_danger_uses_caution_count_then_distance(self):
+        """위험 거리가 같으면 주의 개수와 가장 가까운 주의 거리를 차례로 비교한다."""
         center = danger_item(1, [45, 0, 55, 20])
         left_caution = caution_item(2, [5, 0, 15, 20])
         right_near = caution_item(3, [70, 0, 80, 20])
         right_far = caution_item(4, [88, 0, 98, 20])
         self.assertEqual(walking_action(
-            prediction(center, left_caution, right_near, right_far), 100), "stop")
+            prediction(center, left_caution, right_near, right_far), 100), "left")
         self.assertEqual(walking_action(
-            prediction(center, caution_item(5, [15, 0, 25, 20]), right_far), 100), "stop")
+            prediction(center, caution_item(5, [15, 0, 25, 20]), right_far), 100), "right")
 
     # 최종 행동 변경에만 음성 생성
     def test_only_changed_action_is_announced(self):
@@ -136,13 +136,11 @@ class WalkingVoiceTests(unittest.TestCase):
         left = danger_item(1, [5, 0, 15, 20])
         center = danger_item(2, [45, 0, 55, 20])
         self.assertEqual(voice.observe(prediction(left), 100, .2),
-                         ("직진.", "walking-straight.mp3"))
+                         ("서행하세요.", "walking-straight.mp3"))
         same = prediction(danger_item(3, [10, 0, 20, 20]))
         self.assertIsNone(voice.observe(same, 100, .3))
         self.assertEqual(same["last_action"], "straight")
-        # The previously selected straight path is now occupied: stop immediately.
-        self.assertEqual(voice.observe(prediction(left, center), 100, .4),
-                         ("멈추세요.", "walking-stop.mp3"))
+        self.assertIsNone(voice.observe(prediction(left, center), 100, .4))
         self.assertIsNone(voice.observe(prediction(left, center), 100, .5))
         self.assertEqual(voice.observe(prediction(left, center), 100, .86),
                          ("오른쪽 이동.", "walking-move-right.mp3"))
@@ -151,8 +149,8 @@ class WalkingVoiceTests(unittest.TestCase):
         self.assertIsNone(voice.observe(cleared, 100, 2.45))
         self.assertIsNone(cleared["last_action"])
         self.assertEqual(voice.observe(prediction(left), 100, 2.5),
-                         ("직진.", "walking-straight.mp3"))
-        self.assertEqual(len(voice.events), 4)
+                         ("서행하세요.", "walking-straight.mp3"))
+        self.assertEqual(len(voice.events), 3)
 
     # 비초록 신호의 횡단보도 대기 중 직진 음성 제외 확인
     def test_waiting_at_non_green_crosswalk_suppresses_only_straight(self):
@@ -187,7 +185,7 @@ class WalkingVoiceTests(unittest.TestCase):
         self.assertEqual(voice.observe(
             prediction(left), 100, .2,
             signal=crosswalk | {"signal_state": "green"},
-        ), ("직진.", "walking-straight.mp3"))
+        ), ("서행하세요.", "walking-straight.mp3"))
 
     # 전방 횡단보도 근거 없는 직진 음성 유지 확인
     def test_non_green_signal_without_front_crosswalk_keeps_straight(self):
@@ -204,7 +202,7 @@ class WalkingVoiceTests(unittest.TestCase):
                 self.assertEqual(
                     voice.observe(prediction(danger_item(1, [5, 0, 15, 20])),
                                   100, .1, signal=signal),
-                    ("직진.", "walking-straight.mp3"),
+                    ("서행하세요.", "walking-straight.mp3"),
                 )
 
     # 횡단 중 차량 외 장애물 음성 제외 확인
@@ -375,7 +373,7 @@ class WalkingVoiceTests(unittest.TestCase):
             capture.release()
             lines = risk_log_path(output).read_text(encoding="utf-8").splitlines()
             self.assertEqual(len(lines), 20)
-            self.assertEqual(json.loads(lines[0])["voice_text"], "직진.")
+            self.assertEqual(json.loads(lines[0])["voice_text"], "서행하세요.")
             self.assertEqual(json.loads(lines[0])["voice_clip"], "walking-straight.mp3")
             self.assertEqual(json.loads(lines[0])["last_action"], "straight")
             self.assertNotIn("voice_clip", json.loads(lines[1]))

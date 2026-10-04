@@ -2,8 +2,9 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
 const settings = require("./settings");
-let utterance, speechCancels = 0, cancelledAudio = 0, started = 0, finished = 0;
+let utterance, audioInstance, speechCancels = 0, cancelledAudio = 0, started = 0, finished = 0;
 class Audio {
+  constructor() { audioInstance = this; }
   pause() { cancelledAudio++; }
   removeAttribute() {}
   load() {}
@@ -26,6 +27,8 @@ utterance.onend();
 assert.equal(finished, 0);
 assert.equal(player.speak("멈추세요.", 1000, { onStart: () => started++ }), true);
 assert.equal(started, 2);
+assert.equal(audioInstance.playbackRate, 1.5);
+assert.equal(audioInstance.src, "/audio/walking-stop.mp3?v=walking-action-v3");
 player.cancel();
 assert.equal(cancelledAudio, 1);
 console.log("tts: pass");

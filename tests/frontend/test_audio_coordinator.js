@@ -31,7 +31,7 @@ coordinator.acceptCrosswalk({ status: "outside_left", repeat: true,
 assert.equal(cancelCount, 2);
 assert.equal(spoken.at(-1), "횡단보도 이탈! 오른쪽으로 이동하세요!");
 assert.equal(coordinator.request({ source: "walking", priority: 2,
-  text: "직진.", validUntil: 3000 }), false);
+  text: "서행하세요.", validUntil: 3000 }), false);
 // 보행 행동이 오른쪽으로 유지되거나 없어도 이탈 음성은 끊거나 재시작하지 않는다.
 const exitCount = spoken.length;
 assert.equal(coordinator.request({ source: "walking", priority: coordinator.PRIORITY.walking,
@@ -78,7 +78,7 @@ assert.equal(cancelCount, 3);
 
 // 장애물 안내 중 빨간불이 확정되면 즉시 중단하고 빨간불을 안내한다.
 coordinator.request({ source: "walking", priority: coordinator.PRIORITY.walking,
-  text: "직진.", validUntil: 4000 });
+  text: "서행하세요.", validUntil: 4000 });
 coordinator.request({ source: "traffic", priority: coordinator.PRIORITY.trafficRed,
   text: "빨간불.", validUntil: 4000 });
 assert.equal(spoken.at(-1), "빨간불.");

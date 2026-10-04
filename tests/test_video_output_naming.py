@@ -1,7 +1,7 @@
 """
 file_path: tests/test_video_output_naming.py
 
-영상 추론 결과 이름이 겹칠 때 기존 MP4와 위험 로그를 보존하는지 확인한다.
+영상 추론 결과 이름이 겹칠 때 기존 MP4를 기준으로 새 이름을 정하는지 확인한다.
 """
 
 import io
@@ -9,13 +9,15 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from src.pipeline import DEFAULT_CONFIG, load_config, next_available_output, run_video_inference
 from src.risk_log import risk_log_path
 
 
-# 기존 결과와 위험 로그의 이름 충돌 확인
-def test_next_available_output_keeps_video_and_risk_log(tmp_path):
-    """MP4나 짝 위험 로그가 있으면 둘 다 비어 있는 다음 번호를 선택한다."""
+# 기존 MP4의 이름 충돌 확인
+def test_next_available_output_uses_existing_mp4_names(tmp_path):
+    """현재 출력 폴더에 같은 MP4가 있을 때만 다음 번호를 선택한다."""
     base = tmp_path / "result_test.mp4"
     base.write_bytes(b"original video")
     risk_log_path(base).parent.mkdir()
@@ -23,6 +25,10 @@ def test_next_available_output_keeps_video_and_risk_log(tmp_path):
     first = tmp_path / "result_test(1).mp4"
     assert next_available_output(base) == first
     risk_log_path(first).write_text("orphan log", encoding="utf-8")
+    with pytest.raises(FileExistsError, match="결과 MP4 없이 같은 이름의 위험 로그"):
+        next_available_output(base)
+    risk_log_path(first).unlink()
+    first.write_bytes(b"first video")
     assert next_available_output(base) == tmp_path / "result_test(2).mp4"
     assert base.read_bytes() == b"original video"
     assert risk_log_path(base).read_text(encoding="utf-8") == "original log"

@@ -131,7 +131,6 @@ class SessionManager:
                 "walking": {key: value for key, value in result["walking"].items() if key != "mask_png"},
                 "traffic": result["traffic"],
                 "surface_diagnostics": risk.get("surface"),
-                "path_safety": risk.get("path_safety"),
                 "voice_diagnostics": risk.get("voice_diagnostics"),
                 "warning_diagnostics": risk.get("warning"),
                 "risk_diagnostics": [{

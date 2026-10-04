@@ -21,7 +21,7 @@ VOICE_IMMEDIATE_OVERLAP_RATIO = GUIDANCE["walking_voice_immediate_overlap_ratio"
 DISTANCE_TIE_RATIO = GUIDANCE["walking_distance_tie_ratio"]
 ACTION_MESSAGES = {
     "left": ("왼쪽 이동.", "walking-move-left.mp3"),
-    "straight": ("직진.", "walking-straight.mp3"),
+    "straight": ("서행하세요.", "walking-straight.mp3"),
     "right": ("오른쪽 이동.", "walking-move-right.mp3"),
     "stop": ("멈추세요.", "walking-stop.mp3"),
 }
@@ -137,40 +137,14 @@ def guidance_items(prediction, level, crossing_active=False):
             and not item.get("voice_suppressed_reason")
             and (not crossing_active or item.get("class_name") in VEHICLE_CLASSES)
             and not item.get("risk_suppressed_reason")
-            and (level != "danger" or inside_voice_roi(item) or predicted_voice_hazard(item))]
+            and (level != "danger" or inside_voice_roi(item) or rapid_approach_hazard(item))]
 
 
-def predicted_voice_hazard(item):
+def rapid_approach_hazard(item):
+    """안정적으로 확인된 빠른 접근·짧은 TTC 위험인지 반환한다."""
     reasons = item.get("reasons", [])
-    if "vehicle_near_unverified_motion" in reasons:
-        return True
     return ((item.get("motion") or {}).get("quality") == "valid"
-            and bool({"approaching_near_path", "short_ttc", "vehicle_predicted_entry", "vehicle_lateral_path_motion"}
-                     .intersection(reasons)))
-
-
-def path_blockers(prediction, crossing_active=False):
-    """주의·예측 위험도 선택한 방향을 막는 근거로 사용한다."""
-    return [item for item in prediction.get("detections", [])
-            if item.get("alert_level", item.get("risk_level")) in ("caution", "danger")
-            and not item.get("risk_suppressed_reason")
-            and not item.get("voice_suppressed_reason")
-            and (not crossing_active or item.get("class_name") in VEHICLE_CLASSES)
-            and (inside_voice_roi(item) or predicted_voice_hazard(item)
-                 or (item.get("geometry") or {}).get("close_candidate")
-                 or (item.get("geometry") or {}).get("corridor_overlap", 0) >= .20)]
-
-
-def available_actions(prediction, blockers, image_width):
-    occupied = {direction for item in blockers for direction in warning_directions(item, image_width)}
-    available = {"left", "straight", "right"}
-    for direction in occupied:
-        available.discard("straight" if direction == "center" else direction)
-    ground = prediction.get("path_safety")
-    if ground is not None:
-        available = {action for action in available
-                     if ground.get(action, {}).get("status") == "clear"}
-    return available
+            and bool({"approaching_near_path", "short_ttc"}.intersection(reasons)))
 
 
 # 후보 방향과 객체 박스 사이의 가로 거리 계산
@@ -218,34 +192,21 @@ def safer_side(dangers, cautions, image_width):
 def walking_action(prediction, image_width, crossing_active=False):
     """횡단 상태에 맞는 위험 분포와 좌우 안전도를 하나의 행동으로 바꾼다."""
     dangers = guidance_items(prediction, "danger", crossing_active)
-    surface = prediction.get("surface") or {}
-    if (surface.get("alert_level") and surface.get("status") in ("active", "uncertain", "held")
-            and not surface.get("suppressed_duplicate")):
-        return "stop"
-    if any("vehicle_near_unverified_motion" in item.get("reasons", []) or
-           "vehicle_predicted_entry" in item.get("reasons", []) or
-           "vehicle_lateral_path_motion" in item.get("reasons", []) for item in dangers):
-        return "stop"
     directions = {direction for item in dangers
                   for direction in warning_directions(item, image_width)}
     if not directions:
         return None
-    allowed = available_actions(prediction, path_blockers(prediction, crossing_active), image_width)
     if directions in ({"left"}, {"right"}, {"left", "right"}):
-        return "straight" if "straight" in allowed else "stop"
+        return "straight"
     if directions == {"left", "center"}:
-        return "right" if "right" in allowed else "stop"
+        return "right"
     if directions == {"center", "right"}:
-        return "left" if "left" in allowed else "stop"
+        return "left"
     if directions == {"left", "center", "right"}:
         return "stop"
     if directions == {"center"}:
         cautions = guidance_items(prediction, "caution", crossing_active)
-        sides = allowed & {"left", "right"}
-        if len(sides) == 1:
-            return next(iter(sides))
-        chosen = safer_side(dangers, cautions, image_width)
-        return chosen if chosen in sides else "stop"
+        return safer_side(dangers, cautions, image_width) or "stop"
     return "stop"
 
 
@@ -277,7 +238,6 @@ class WalkingVoice:
         self.previous_time = None
         self.epoch = None
         self.hazards = {}
-        self.last_hazard_ids = set()
         self.voice_event_id = 0
         self.change_confirm_s = GUIDANCE.get("walking_change_confirm_ms", 350) / 1000
         self.release_confirm_s = GUIDANCE.get("walking_release_confirm_ms", 600) / 1000
@@ -289,7 +249,6 @@ class WalkingVoice:
                 or timestamp - self.previous_time > 2.0)
                 or self.epoch is not None and self.epoch != prediction.get("state_epoch", 0)):
             self.hazards.clear()
-            self.last_hazard_ids.clear()
             self.last_action = self.pending_action = self.pending_since = self.clear_since = None
         self.previous_time = timestamp
         self.epoch = prediction.get("state_epoch", 0)
@@ -329,10 +288,6 @@ class WalkingVoice:
         display_action = walking_action(evidence, image_width)
         vehicle_only = crossing_active or crosswalk_status == "approach"
         raw_action = walking_action(evidence, image_width, vehicle_only)
-        blockers = path_blockers(evidence, vehicle_only)
-        allowed = available_actions(evidence, blockers, image_width)
-        if self.last_action in ("left", "right", "straight") and self.last_action not in allowed:
-            raw_action = "stop"
         if (prediction.get("boarding") or {}).get("assumed_stationary") and raw_action is not None:
             # Keep the user stopped during input even when a side hazard would
             # ordinarily allow straight movement.
@@ -344,12 +299,8 @@ class WalkingVoice:
                 self.clear_since = output_time_s
             if output_time_s - self.clear_since + 1e-6 >= self.release_confirm_s or crossing_active:
                 self.last_action = None
-                self.last_hazard_ids.clear()
         else:
             self.clear_since = None
-            # Never keep a previous movement into a newly blocked direction.
-            if self.last_action in ("left", "right", "straight") and self.last_action not in allowed:
-                voice_action = "stop"
             if voice_action == "stop" or self.last_action is None:
                 self.pending_action = self.pending_since = None
             elif voice_action != self.last_action:
@@ -374,12 +325,10 @@ class WalkingVoice:
         prediction["voice_diagnostics"] = {"raw_action": raw_action, "action": voice_action,
                                             "retained_hazards": retained,
                                             "pending_action": self.pending_action,
-                                            "available_actions": sorted(allowed),
-                                            "blocked_actions": sorted({"left", "right", "straight"} - allowed),
                                             "objects": [{"detection_index": item.get("detection_index"),
                                                 "hazard_id": item.get("hazard_id"),
                                                 "voice_eligible": id(item) in eligible_ids,
-                                                "predicted_hazard": predicted_voice_hazard(item),
+                                                "rapid_approach_hazard": rapid_approach_hazard(item),
                                                 "voice_suppressed_reason": item.get("voice_suppressed_reason"),
                                                 "risk_suppressed_reason": item.get("risk_suppressed_reason")}
                                                 for item in evidence.get("detections", [])]}
@@ -388,21 +337,14 @@ class WalkingVoice:
                 self.events.append((output_time_s, None))
             return None
         message = ACTION_MESSAGES[voice_action]
-        surface = prediction.get("surface") or {}
-        surface_stop = (voice_action == "stop" and surface.get("alert_level")
-                        and not surface.get("suppressed_duplicate"))
-        if surface_stop:
-            hazard_ids.add("surface")
-        changed = (voice_action != self.last_action or
-                   voice_action == "stop" and bool(hazard_ids - self.last_hazard_ids))
+        changed = voice_action != self.last_action
         if changed:
             self.voice_event_id += 1
         prediction["voice_event"] = {"action": voice_action, "text": message[0],
-                                     "source": "surface" if surface_stop else "object",
+                                     "source": "object",
                                      "event_id": self.voice_event_id,
                                      "hazard_ids": sorted(hazard_ids),
                                      "urgency": "emergency" if voice_action == "stop" else "walking"}
-        self.last_hazard_ids = hazard_ids
         if not changed:
             return None
         self.last_action = voice_action

@@ -5,6 +5,7 @@ audio:
   sample_rate_hz: 16000
   bitrate_kbps: 96
   volume: 1.0
+  playback_rate: 1.5
   default_validity_ms: 8000
   playback_timeout_ms: 15000
   tick_ms: 250
