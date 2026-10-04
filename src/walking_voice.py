@@ -21,7 +21,7 @@ VOICE_IMMEDIATE_OVERLAP_RATIO = GUIDANCE["walking_voice_immediate_overlap_ratio"
 DISTANCE_TIE_RATIO = GUIDANCE["walking_distance_tie_ratio"]
 ACTION_MESSAGES = {
     "left": ("왼쪽 이동.", "walking-move-left.mp3"),
-    "straight": ("직진.", "walking-straight.mp3"),
+    "straight": ("서행하세요.", "walking-straight.mp3"),
     "right": ("오른쪽 이동.", "walking-move-right.mp3"),
     "stop": ("멈추세요.", "walking-stop.mp3"),
 }

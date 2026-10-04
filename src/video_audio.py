@@ -33,6 +33,7 @@ def decode_clip(filename):
         raise FileNotFoundError(f"위험 안내 음원이 없습니다: {path}")
     result = subprocess.run(
         [ffmpeg_executable(), "-nostdin", "-v", "error", "-i", str(path),
+         "-filter:a", f"atempo={AUDIO_SETTINGS['playback_rate']}",
          "-f", "s16le", "-ac", "1", "-ar", str(SAMPLE_RATE), "pipe:1"],
         check=True, capture_output=True,
     )

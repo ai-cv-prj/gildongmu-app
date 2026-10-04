@@ -16,7 +16,7 @@
     ["오른쪽으로 이동하세요!", "crosswalk-align-right"],
     ["왼쪽으로 이동하세요!", "crosswalk-align-left"],
     ["왼쪽 이동.", "walking-move-left"],
-    ["직진.", "walking-straight"],
+    ["서행하세요.", "walking-straight"],
     ["오른쪽 이동.", "walking-move-right"],
     ["멈추세요.", "walking-stop"],
     ["보행로 이탈. 오른쪽 이동.", "walkway-exit-right"],
@@ -26,7 +26,7 @@
   const SPEECH_TEXT = "정류장 근처입니다. 탑승할 버스 번호를 입력해 주세요. 탑승하지 않으면 취소를 누르세요.";
   const source = name => `/audio/${name}.mp3${name.startsWith("walkway-")
     ? "?v=walkway-exit-v1" : name.startsWith("walking-")
-    ? "?v=walking-action-v2" : name.startsWith("crosswalk-")
+    ? "?v=walking-action-v3" : name.startsWith("crosswalk-")
       ? "?v=crosswalk-ava-v1" : "?v=signal-sunhi-v2"}`;
 
   function create({ onError = () => {}, onStatus = () => {}, now = () => performance.now() } = {}) {
@@ -173,8 +173,8 @@
         if (audioContext?.state === "suspended") {
           audioContext.resume().catch(() => onError("브라우저가 안내 음성 재생을 차단했습니다. 사이트 소리 허용을 확인하고 테스트를 다시 시작해 주세요."));
         }
-        // 모든 안내 음원은 파일에 저장된 원래 속도로 재생한다.
-        audio.playbackRate = 1;
+        // 원본 MP3는 유지하고 테스트 재생 단계에서만 설정 속도를 적용한다.
+        audio.playbackRate = settings.playback_rate;
         audio.src = source(clip);
         audio.load();
         // await 없이 클릭 처리 중 호출해야 모바일의 사용자 동작으로 인정된다.
