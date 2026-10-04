@@ -20,8 +20,11 @@ audio:
     walking_right_min_ratio: 0.65
     walking_center_intrusion_ratio: 0.05
     walking_side_intrusion_ratio: 0.10
-    walking_voice_immediate_overlap_ratio: 0.20
+    walking_voice_immediate_overlap_ratio: 0.10
     walking_distance_tie_ratio: 0.05
+    # 가운데 점유율이 45~55%이면 직전 걸음 수를 유지해 안내 흔들림을 막는다.
+    walking_two_step_enter_ratio: 0.55
+    walking_two_step_exit_ratio: 0.45
     walking_change_confirm_ms: 350
     walking_release_confirm_ms: 600
     walking_missing_hold_ms: 800

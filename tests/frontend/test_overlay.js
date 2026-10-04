@@ -35,7 +35,7 @@ context.window.GOverlay.render({
       xyxy: [.1, .2, .3, .6], display_label: "person", alert_level: "danger",
       track_id: 12, event_id: 34,
     }],
-    event: { roi: {}, last_action: "left" },
+    event: { roi: {}, last_action: "left", voice_action: "right" },
   },
   traffic: { detections: [] },
   crosswalk: { event: { status: "crossing" } },
@@ -47,11 +47,19 @@ context.window.GOverlay.render({
 
 assert.ok(labels.includes("person | T12 · E34"));
 assert.ok(labels.includes("ACTION: left"));
+assert.ok(labels.includes("VOICE: right"));
 assert.ok(labels.includes("CROSSWALK: crossing"));
 assert.ok(labels.includes("WALKWAY: inside"));
 assert.ok(strokeColors.includes("#50e65a"));
 assert.ok(labels.includes("정류장 후보 1/3"));
 assert.equal(drawState, "drawn");
+
+labels.length = 0;
+context.window.GOverlay.render({
+  image_width: 360, image_height: 640,
+  walking: { event: { roi: {}, last_action: "stop", voice_action: null } },
+});
+assert.ok(labels.includes("VOICE: muted"));
 
 labels.length = rectangles.length = 0;
 context.window.GOverlay.render({

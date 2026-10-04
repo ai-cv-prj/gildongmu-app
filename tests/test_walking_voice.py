@@ -21,9 +21,11 @@ import numpy as np
 from src.pipeline import process_video
 from src.risk_log import risk_log_path
 from src.video_audio import SAMPLE_RATE, ffmpeg_executable, render_voice_track
-from src.risk_visualization import risk_identity
+from src.risk_visualization import action_status_text, risk_identity
 from src.walking_voice import (
     WalkingVoice,
+    center_occupancy_ratio,
+    movement_steps,
     suppress_non_green_crosswalk_voice,
     walking_action,
     warning_directions,
@@ -79,11 +81,29 @@ class WalkingVoiceTests(unittest.TestCase):
         result = prediction(danger_item(1, [50, 0, 90, 20]))
         self.assertEqual(walking_action(result, 100), "left")
 
+    # 가운데 점유율의 중복 제거 확인
+    def test_center_occupancy_uses_union_of_overlapping_obstacles(self):
+        """겹치는 여러 객체의 가운데 점유 구간을 한 번만 계산한다."""
+        items = [danger_item(1, [35, 0, 50, 20]), danger_item(2, [45, 0, 55, 20])]
+        self.assertAlmostEqual(center_occupancy_ratio(items, 100), 2 / 3)
+
+    # 한 걸음·두 걸음 경계와 유지 구간 확인
+    def test_movement_steps_uses_center_occupancy_hysteresis(self):
+        """45% 이하는 한 걸음, 55% 이상은 두 걸음이며 중간 구간은 직전 값을 유지한다."""
+        one = [danger_item(1, [20, 0, 48.5, 20])]
+        middle = [danger_item(2, [20, 0, 50, 20])]
+        two = [danger_item(3, [20, 0, 51.5, 20])]
+        self.assertEqual(movement_steps(one, "right", 100), 1)
+        self.assertEqual(movement_steps(two, "right", 100), 2)
+        self.assertEqual(movement_steps(middle, "right", 100, previous_steps=1), 1)
+        self.assertEqual(movement_steps(middle, "right", 100, previous_steps=2), 2)
+        self.assertIsNone(movement_steps(two, "straight", 100))
+
     # 핑크 ROI 내부 위험만 음성 행동에 포함
     def test_only_danger_inside_pink_roi_triggers_guidance(self):
-        """위험이어도 핑크 ROI 겹침이 20% 미만이면 음성 행동을 만들지 않는다."""
-        outside = danger_item(1, [5, 0, 15, 20], geometry={"immediate_overlap": .19})
-        inside = danger_item(2, [5, 0, 15, 20], geometry={"immediate_overlap": .20})
+        """위험이어도 핑크 ROI 겹침이 10% 미만이면 음성 행동을 만들지 않는다."""
+        outside = danger_item(1, [5, 0, 15, 20], geometry={"immediate_overlap": .09})
+        inside = danger_item(2, [5, 0, 15, 20], geometry={"immediate_overlap": .10})
         self.assertIsNone(walking_action(prediction(outside), 100))
         self.assertEqual(walking_action(prediction(inside), 100), "straight")
 
@@ -100,12 +120,24 @@ class WalkingVoiceTests(unittest.TestCase):
             (prediction(left, center), "right"),
             (prediction(center, right), "left"),
             (prediction(left, right), "straight"),
-            (prediction(left, center, right), "stop"),
+            (prediction(left, center, right), "straight"),
             (prediction(center), "stop"),
         ]
         for result, expected in cases:
             with self.subTest(expected=expected):
                 self.assertEqual(walking_action(result, 100), expected)
+
+    # 세 방향 위험의 사람·장애물 구분 확인
+    def test_all_direction_people_slow_down_but_other_obstacles_stop(self):
+        """세 방향이 모두 막혀도 전부 사람이면 서행하고 다른 객체가 섞이면 정지한다."""
+        left = danger_item(1, [5, 0, 15, 20])
+        center = danger_item(2, [45, 0, 55, 20])
+        right_person = danger_item(3, [85, 0, 95, 20])
+        right_bollard = danger_item(4, [85, 0, 95, 20], "bollard")
+        self.assertEqual(
+            walking_action(prediction(left, center, right_person), 100), "straight")
+        self.assertEqual(
+            walking_action(prediction(left, center, right_bollard), 100), "stop")
 
     # 가운데 위험의 거리 우선 비교
     def test_center_danger_chooses_farther_side_after_five_percent_tie(self):
@@ -136,20 +168,21 @@ class WalkingVoiceTests(unittest.TestCase):
         left = danger_item(1, [5, 0, 15, 20])
         center = danger_item(2, [45, 0, 55, 20])
         self.assertEqual(voice.observe(prediction(left), 100, .2),
-                         ("서행하세요.", "walking-straight.mp3"))
+                         ("천천히 가세요.", "walking-straight.mp3"))
         same = prediction(danger_item(3, [10, 0, 20, 20]))
         self.assertIsNone(voice.observe(same, 100, .3))
         self.assertEqual(same["last_action"], "straight")
         self.assertIsNone(voice.observe(prediction(left, center), 100, .4))
         self.assertIsNone(voice.observe(prediction(left, center), 100, .5))
         self.assertEqual(voice.observe(prediction(left, center), 100, .86),
-                         ("오른쪽 이동.", "walking-move-right.mp3"))
+                         ("오른쪽으로 한 걸음",
+                          "walking-move-right-one.mp3"))
         cleared = prediction(level="monitor")
         self.assertIsNone(voice.observe(cleared, 100, 1.8))
         self.assertIsNone(voice.observe(cleared, 100, 2.45))
         self.assertIsNone(cleared["last_action"])
         self.assertEqual(voice.observe(prediction(left), 100, 2.5),
-                         ("서행하세요.", "walking-straight.mp3"))
+                         ("천천히 가세요.", "walking-straight.mp3"))
         self.assertEqual(len(voice.events), 3)
 
     # 비초록 신호의 횡단보도 대기 중 직진 음성 제외 확인
@@ -169,8 +202,29 @@ class WalkingVoiceTests(unittest.TestCase):
                 self.assertNotIn("voice_text", straight)
                 self.assertEqual(
                     voice.observe(prediction(left, center), 100, .2, signal=signal),
-                    ("오른쪽 이동.", "walking-move-right.mp3"),
+                    ("오른쪽으로 한 걸음",
+                     "walking-move-right-one.mp3"),
                 )
+
+    # 같은 방향에서 걸음 수 변경 안정화 확인
+    def test_step_count_change_is_announced_after_confirmation(self):
+        """같은 이동 방향이어도 점유율 변화가 유지되면 두 걸음 안내로 전환한다."""
+        voice = WalkingVoice()
+        one_step = prediction(danger_item(1, [20, 0, 48, 20]))
+        two_steps = prediction(danger_item(1, [20, 0, 55, 20]))
+        self.assertEqual(
+            voice.observe(one_step, 100, .1),
+            ("오른쪽으로 한 걸음", "walking-move-right-one.mp3"),
+        )
+        self.assertIsNone(voice.observe(two_steps, 100, .2))
+        self.assertEqual(two_steps["voice_steps"], 1)
+        confirmed = prediction(danger_item(1, [20, 0, 55, 20]))
+        self.assertEqual(
+            voice.observe(confirmed, 100, .56),
+            ("오른쪽으로 두 걸음", "walking-move-right-two.mp3"),
+        )
+        self.assertEqual(confirmed["voice_action"], "right")
+        self.assertEqual(confirmed["voice_steps"], 2)
 
     # 대기 해제 후 직진 음성 복구 확인
     def test_waiting_straight_is_announced_after_green_signal(self):
@@ -185,7 +239,7 @@ class WalkingVoiceTests(unittest.TestCase):
         self.assertEqual(voice.observe(
             prediction(left), 100, .2,
             signal=crosswalk | {"signal_state": "green"},
-        ), ("서행하세요.", "walking-straight.mp3"))
+        ), ("천천히 가세요.", "walking-straight.mp3"))
 
     # 전방 횡단보도 근거 없는 직진 음성 유지 확인
     def test_non_green_signal_without_front_crosswalk_keeps_straight(self):
@@ -202,7 +256,7 @@ class WalkingVoiceTests(unittest.TestCase):
                 self.assertEqual(
                     voice.observe(prediction(danger_item(1, [5, 0, 15, 20])),
                                   100, .1, signal=signal),
-                    ("서행하세요.", "walking-straight.mp3"),
+                    ("천천히 가세요.", "walking-straight.mp3"),
                 )
 
     # 횡단 중 차량 외 장애물 음성 제외 확인
@@ -222,7 +276,7 @@ class WalkingVoiceTests(unittest.TestCase):
                 result = prediction(danger_item(1, [45, 0, 55, 20], name))
                 self.assertEqual(
                     voice.observe(result, 100, .1, crossing_active=True),
-                    ("멈추세요.", "walking-stop.mp3"),
+                    ("멈추세요", "walking-stop.mp3"),
                 )
                 self.assertEqual(result["last_action"], "stop")
                 self.assertEqual(result["voice_action"], "stop")
@@ -245,7 +299,7 @@ class WalkingVoiceTests(unittest.TestCase):
                 result = prediction(danger_item(1, [45, 0, 55, 20], name))
                 self.assertEqual(
                     voice.observe(result, 100, .1, crosswalk_status="approach"),
-                    ("멈추세요.", "walking-stop.mp3"),
+                    ("멈추세요", "walking-stop.mp3"),
                 )
 
     # 횡단 접근 시 기존 비차량 음성 중단 확인
@@ -286,6 +340,7 @@ class WalkingVoiceTests(unittest.TestCase):
         config = {
             "non_green_obstacle_voice_suppression": True,
             "non_green_obstacle_crosswalk_threshold": .20,
+            "non_green_obstacle_nonwalkable_threshold": .20,
             "non_green_obstacle_contact_half_height": .02,
         }
         for state in ("red", "unknown"):
@@ -299,12 +354,36 @@ class WalkingVoiceTests(unittest.TestCase):
         self.assertNotIn("voice_suppressed_reason", outside)
         self.assertEqual(walking_action(result, 100), "straight")
 
+    # 비초록 신호의 보행불가 영역 장애물 음성 제외 확인
+    def test_non_green_signal_suppresses_nonwalkable_obstacle_voice(self):
+        """빨간불과 확인 중 신호에는 보행불가 영역 위 위험도 음성에서 제외한다."""
+        item = danger_item(1, [40, 20, 60, 80])
+        result = prediction(item)
+        class_map = np.zeros((100, 100), np.uint8)
+        class_map[76:84, 35:65] = 3
+        config = {
+            "non_green_obstacle_voice_suppression": True,
+            "non_green_obstacle_crosswalk_threshold": .20,
+            "non_green_obstacle_nonwalkable_threshold": .20,
+            "non_green_obstacle_contact_half_height": .02,
+        }
+        for state in ("red", "unknown"):
+            suppress_non_green_crosswalk_voice(
+                result, {"signal_state": state, "selected_detection_index": 0},
+                class_map, {"crosswalk": 2, "non_walkable": 3}, (100, 100, 3), config,
+            )
+            self.assertEqual(item["voice_suppressed_reason"],
+                             "non_green_signal_nonwalkable_obstacle")
+            self.assertEqual(item["nonwalkable_contact_fraction"], 1.0)
+            self.assertIsNone(walking_action(result, 100))
+
     # 초록불·신호 미선택·마스크 미확인 시 음성 유지 확인
     def test_voice_is_not_suppressed_without_selected_non_green_evidence(self):
         """초록불이거나 신호·횡단보도 근거가 없으면 위험 음성을 유지한다."""
         config = {
             "non_green_obstacle_voice_suppression": True,
             "non_green_obstacle_crosswalk_threshold": .20,
+            "non_green_obstacle_nonwalkable_threshold": .20,
             "non_green_obstacle_contact_half_height": .02,
         }
         cases = (
@@ -326,13 +405,24 @@ class WalkingVoiceTests(unittest.TestCase):
         """저장 영상 장애물 라벨에 추적 ID와 위험 이벤트 ID를 함께 표시한다."""
         self.assertEqual(risk_identity({"track_id": 12, "event_id": 34}), "T12 · E34")
 
+    # 저장 영상의 행동·음성 배지 문구 확인
+    def test_overlay_action_status_distinguishes_voice_and_muted(self):
+        """화면 행동과 선택 음성 또는 무음 상태를 서로 다른 줄로 표시한다."""
+        self.assertEqual(action_status_text(
+            {"last_action": "left", "voice_action": "right"}),
+            ("ACTION: left", "VOICE: right"))
+        self.assertEqual(action_status_text(
+            {"last_action": "stop", "voice_action": None}),
+            ("ACTION: stop", "VOICE: muted"))
+        self.assertEqual(action_status_text({}), ("ACTION: none", "VOICE: none"))
+
     # 새 이벤트가 이전 음성을 끊는 PCM 결과 확인
     def test_voice_track_starts_at_frame_time_and_is_video_length(self):
         """새 안내 시점에 이전 음성을 끊고 영상 끝에서 정확히 종료한다."""
         with tempfile.TemporaryDirectory() as folder:
             output = Path(folder) / "voice.wav"
-            events = [(0.5, "walking-move-left.mp3"),
-                      (0.6, "walking-move-right.mp3")]
+            events = [(0.5, "walking-move-left-one.mp3"),
+                      (0.6, "walking-move-right-one.mp3")]
             render_voice_track(events, 1.0, output)
             with wave.open(str(output), "rb") as sound:
                 self.assertEqual(sound.getframerate(), SAMPLE_RATE)
@@ -373,7 +463,7 @@ class WalkingVoiceTests(unittest.TestCase):
             capture.release()
             lines = risk_log_path(output).read_text(encoding="utf-8").splitlines()
             self.assertEqual(len(lines), 20)
-            self.assertEqual(json.loads(lines[0])["voice_text"], "서행하세요.")
+            self.assertEqual(json.loads(lines[0])["voice_text"], "천천히 가세요.")
             self.assertEqual(json.loads(lines[0])["voice_clip"], "walking-straight.mp3")
             self.assertEqual(json.loads(lines[0])["last_action"], "straight")
             self.assertNotIn("voice_clip", json.loads(lines[1]))

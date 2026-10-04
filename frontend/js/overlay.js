@@ -139,21 +139,24 @@ window.GOverlay = (() => {
     ctx.fillText(text, x + padding, y + height - 8);
   }
 
-  // 현재 장애물 이동 행동 표시
-  /** 모바일 화면 왼쪽 위에 마지막으로 판단한 이동 행동을 표시한다. */
+  // 현재 장애물 이동 행동과 음성 상태 표시
+  /** 모바일 화면 왼쪽 위에 판단한 행동과 장애물 음성 선택 상태를 표시한다. */
   function actionStatus(event) {
     const action = event?.last_action ?? "none";
-    const text = `ACTION: ${action}`;
+    const voice = event?.voice_action ?? (action === "none" ? "none" : "muted");
+    const lines = [`ACTION: ${action}`, `VOICE: ${voice}`];
     ctx.font = `bold ${Math.max(13, canvas.width / 38)}px system-ui`;
     const padding = 8;
-    const height = Math.max(26, canvas.height / 24);
-    const width = ctx.measureText(text).width + padding * 2;
+    const lineHeight = Math.max(26, canvas.height / 24);
+    const height = lineHeight * lines.length;
+    const width = Math.max(...lines.map(text => ctx.measureText(text).width)) + padding * 2;
     const x = 8;
     const y = 8;
     ctx.fillStyle = "rgba(24, 24, 24, 0.88)";
     ctx.fillRect(x, y, width, height);
     ctx.fillStyle = "#ffffff";
-    ctx.fillText(text, x + padding, y + height - 8);
+    lines.forEach((text, index) => ctx.fillText(
+      text, x + padding, y + lineHeight * (index + 1) - 8));
   }
 
   // 하단 횡단보도 판단 ROI 표시

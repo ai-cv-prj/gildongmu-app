@@ -140,7 +140,7 @@
       if (previous !== null && previous !== next) {
         text = next === "green" ? "초록불로 바뀜." : "빨간불로 바뀜.";
       } else if (next === "green") {
-        text = firstConfirmed ? "초록불. 다음 신호를 기다리세요."
+        text = firstConfirmed ? "초록불. 다음 신호까지 대기."
           : "초록불.";
       } else text = "빨간불.";
       if (lastAnnouncedTarget === target && lastAnnouncedColor === next && !recoveredAfterMissing) {

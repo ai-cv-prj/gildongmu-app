@@ -45,7 +45,7 @@ def test_surface_uncertainty_without_any_object_is_silent():
 
 def test_repeated_boundary_jitter_does_not_announce_straight_during_avoidance():
     voice = WalkingVoice()
-    assert voice.observe(prediction(danger_item(1, [20, 20, 43, 80])), 100, 0)[0] == "오른쪽 이동."
+    assert voice.observe(prediction(danger_item(1, [20, 20, 43, 80])), 100, 0)[0] == "오른쪽으로 한 걸음"
     for time, box in ((.2, [0, 20, 30, 90]), (.4, [20, 20, 43, 80]),
                       (.6, [0, 20, 30, 90]), (.8, [20, 20, 43, 80])):
         result = prediction(danger_item(1, box))
@@ -57,7 +57,8 @@ def test_one_missing_frame_does_not_release_center_obstacle():
     voice = WalkingVoice()
     side = danger_item(2, [5, 20, 15, 90])
     other_side = danger_item(3, [85, 20, 95, 90])
-    assert voice.observe(prediction(danger_item(1, [45, 20, 55, 90]), side, other_side), 100, 0)[0] == "멈추세요."
+    center = danger_item(1, [45, 20, 55, 90], "bollard")
+    assert voice.observe(prediction(center, side, other_side), 100, 0)[0] == "멈추세요"
     missing = prediction(side, other_side)
     assert voice.observe(missing, 100, .2) is None
     assert missing["voice_action"] == "stop"
@@ -67,14 +68,14 @@ def test_one_missing_frame_does_not_release_center_obstacle():
 def test_side_hazard_never_instructs_typing_user_to_walk():
     result = prediction(danger_item(1, [5, 20, 15, 90]))
     result["boarding"] = {"assumed_stationary": True}
-    assert WalkingVoice().observe(result, 100, 0)[0] == "멈추세요."
+    assert WalkingVoice().observe(result, 100, 0)[0] == "멈추세요"
     assert result["voice_action"] == "stop"
 
 
 def test_new_hazard_does_not_repeat_an_unchanged_stop_action():
     voice = WalkingVoice()
     result = prediction(danger_item(1, [45, 20, 55, 90]))
-    assert voice.observe(result, 100, 0)[0] == "멈추세요."
+    assert voice.observe(result, 100, 0)[0] == "멈추세요"
     first = result["voice_event"]["event_id"]
     result["detections"].append(danger_item(2, [48, 20, 58, 90], "car"))
     assert voice.observe(result, 100, .2) is None
