@@ -81,9 +81,9 @@ class WalkingVoiceTests(unittest.TestCase):
 
     # 핑크 ROI 내부 위험만 음성 행동에 포함
     def test_only_danger_inside_pink_roi_triggers_guidance(self):
-        """위험이어도 핑크 ROI 겹침이 20% 미만이면 음성 행동을 만들지 않는다."""
-        outside = danger_item(1, [5, 0, 15, 20], geometry={"immediate_overlap": .19})
-        inside = danger_item(2, [5, 0, 15, 20], geometry={"immediate_overlap": .20})
+        """위험이어도 핑크 ROI 겹침이 10% 미만이면 음성 행동을 만들지 않는다."""
+        outside = danger_item(1, [5, 0, 15, 20], geometry={"immediate_overlap": .09})
+        inside = danger_item(2, [5, 0, 15, 20], geometry={"immediate_overlap": .10})
         self.assertIsNone(walking_action(prediction(outside), 100))
         self.assertEqual(walking_action(prediction(inside), 100), "straight")
 
@@ -286,6 +286,7 @@ class WalkingVoiceTests(unittest.TestCase):
         config = {
             "non_green_obstacle_voice_suppression": True,
             "non_green_obstacle_crosswalk_threshold": .20,
+            "non_green_obstacle_nonwalkable_threshold": .20,
             "non_green_obstacle_contact_half_height": .02,
         }
         for state in ("red", "unknown"):
@@ -299,12 +300,36 @@ class WalkingVoiceTests(unittest.TestCase):
         self.assertNotIn("voice_suppressed_reason", outside)
         self.assertEqual(walking_action(result, 100), "straight")
 
+    # 비초록 신호의 보행불가 영역 장애물 음성 제외 확인
+    def test_non_green_signal_suppresses_nonwalkable_obstacle_voice(self):
+        """빨간불과 확인 중 신호에는 보행불가 영역 위 위험도 음성에서 제외한다."""
+        item = danger_item(1, [40, 20, 60, 80])
+        result = prediction(item)
+        class_map = np.zeros((100, 100), np.uint8)
+        class_map[76:84, 35:65] = 3
+        config = {
+            "non_green_obstacle_voice_suppression": True,
+            "non_green_obstacle_crosswalk_threshold": .20,
+            "non_green_obstacle_nonwalkable_threshold": .20,
+            "non_green_obstacle_contact_half_height": .02,
+        }
+        for state in ("red", "unknown"):
+            suppress_non_green_crosswalk_voice(
+                result, {"signal_state": state, "selected_detection_index": 0},
+                class_map, {"crosswalk": 2, "non_walkable": 3}, (100, 100, 3), config,
+            )
+            self.assertEqual(item["voice_suppressed_reason"],
+                             "non_green_signal_nonwalkable_obstacle")
+            self.assertEqual(item["nonwalkable_contact_fraction"], 1.0)
+            self.assertIsNone(walking_action(result, 100))
+
     # 초록불·신호 미선택·마스크 미확인 시 음성 유지 확인
     def test_voice_is_not_suppressed_without_selected_non_green_evidence(self):
         """초록불이거나 신호·횡단보도 근거가 없으면 위험 음성을 유지한다."""
         config = {
             "non_green_obstacle_voice_suppression": True,
             "non_green_obstacle_crosswalk_threshold": .20,
+            "non_green_obstacle_nonwalkable_threshold": .20,
             "non_green_obstacle_contact_half_height": .02,
         }
         cases = (

@@ -48,6 +48,7 @@ DEFAULT_CROSSWALK_SAFETY = {
     "outside_finish_walkable_fraction": 0.80,
     "non_green_obstacle_voice_suppression": True,
     "non_green_obstacle_crosswalk_threshold": 0.20,
+    "non_green_obstacle_nonwalkable_threshold": 0.20,
     "non_green_obstacle_contact_half_height": 0.02,
 }
 
@@ -75,7 +76,8 @@ def crosswalk_safety_config(value=None):
         "min_row_width", "finish_walkable_fraction", "roi_left",
         "roi_right", "roi_top", "roi_bottom", "roi_crosswalk_threshold",
         "roi_occlusion_threshold", "outside_finish_walkable_fraction",
-        "non_green_obstacle_crosswalk_threshold", "non_green_obstacle_contact_half_height",
+        "non_green_obstacle_crosswalk_threshold", "non_green_obstacle_nonwalkable_threshold",
+        "non_green_obstacle_contact_half_height",
     )
     for key in unit_keys:
         item = cfg[key]

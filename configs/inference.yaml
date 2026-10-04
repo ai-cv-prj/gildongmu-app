@@ -99,6 +99,7 @@ crosswalk_safety:
   # 빨간불·신호 미확인 중 장애물 음성 억제
   non_green_obstacle_voice_suppression: true
   non_green_obstacle_crosswalk_threshold: 0.20
+  non_green_obstacle_nonwalkable_threshold: 0.20
   non_green_obstacle_contact_half_height: 0.02
 
 # 보행로 이탈 안내
@@ -180,7 +181,7 @@ risk:
   prediction_horizon_s: 0.8
   # 안정적인 추적에서 장애물이 근접 경로에 들어올 때를 미리 위험으로 판단
   approach_danger_enabled: true
-  approach_danger_s: 1.2
+  approach_danger_s: 0.5
   min_forward_speed: 0.05
   min_lateral_speed: 0.05
   lateral_near_y: 0.42
