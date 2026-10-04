@@ -18,7 +18,7 @@ from src.risk_motion import MotionHistory
 from src.tracking import DetectionTracker
 from src.alert_policy import AlertPolicy
 from src.pipeline import process_video, publish_video_result
-from src.risk_log import RiskLog
+from src.risk_log import RiskLog, risk_log_path
 from src.risk_visualization import draw_risk
 
 FRAME = np.zeros((100,100,3),np.uint8)
@@ -301,7 +301,7 @@ class RiskPipelineTests(unittest.TestCase):
                 with redirect_stdout(io.StringIO()):
                     count=process_video(source,output,detector=detector,
                         risk_config={"enabled":True},tracking_config={"enabled":False})
-                rows=[json.loads(x) for x in output.with_suffix(".risk.jsonl").read_text().splitlines()]
+                rows=[json.loads(x) for x in risk_log_path(output).read_text().splitlines()]
                 self.assertEqual(count,3)
                 self.assertEqual(len(rows),3)
                 self.assertEqual(rows[0]["events"][0]["type"],"raised")
@@ -327,7 +327,7 @@ class RiskPipelineTests(unittest.TestCase):
             self.assertIs(draw_traffic.call_args.args[1],prediction)
             draw_objects.assert_not_called()
             np.testing.assert_array_equal(traffic.predict.call_args.args[0],FRAME)
-            rows=[json.loads(x) for x in output.with_suffix(".risk.jsonl").read_text().splitlines()]
+            rows=[json.loads(x) for x in risk_log_path(output).read_text().splitlines()]
             self.assertIsNone(rows[0]["detections"][1]["risk_level"])
 
     def test_disabled_risk_has_no_sidecar(self):
@@ -337,7 +337,7 @@ class RiskPipelineTests(unittest.TestCase):
             with redirect_stdout(io.StringIO()):
                 process_video(source,output,detector=SimpleNamespace(predict=lambda frame:[]),
                               risk_config={"enabled":False})
-            self.assertFalse(output.with_suffix(".risk.jsonl").exists())
+            self.assertFalse(risk_log_path(output).exists())
 
     # 완료된 결과로 기존 영상과 위험 로그 교체
     def test_existing_video_and_log_replaced(self):
@@ -347,13 +347,14 @@ class RiskPipelineTests(unittest.TestCase):
             output=Path(folder)/"out.mp4"
             self.make_video(source)
             output.write_bytes(b"old video")
-            output.with_suffix(".risk.jsonl").write_text("existing")
+            risk_log_path(output).parent.mkdir()
+            risk_log_path(output).write_text("existing")
             detector=SimpleNamespace(predict=Mock(return_value=[]))
             with redirect_stdout(io.StringIO()):
                 self.assertEqual(process_video(source,output,detector=detector,
                     risk_config={"enabled":True},tracking_config={"enabled":False}),3)
             self.assertNotEqual(output.read_bytes(),b"old video")
-            rows=[json.loads(line) for line in output.with_suffix(".risk.jsonl").read_text().splitlines()]
+            rows=[json.loads(line) for line in risk_log_path(output).read_text().splitlines()]
             self.assertEqual(len(rows),3)
 
     # 위험 기능을 끈 재실행에서 이전 로그 제거
@@ -363,11 +364,12 @@ class RiskPipelineTests(unittest.TestCase):
             source,output=Path(folder)/"input.mp4",Path(folder)/"out.mp4"
             self.make_video(source)
             output.write_bytes(b"old video")
-            output.with_suffix(".risk.jsonl").write_text("old log")
+            risk_log_path(output).parent.mkdir()
+            risk_log_path(output).write_text("old log")
             with redirect_stdout(io.StringIO()):
                 process_video(source,output,detector=SimpleNamespace(predict=lambda frame:[]),
                               risk_config={"enabled":False})
-            self.assertFalse(output.with_suffix(".risk.jsonl").exists())
+            self.assertFalse(risk_log_path(output).exists())
 
     # 추론 실패 시 이전 결과 보존
     def test_failed_rerun_preserves_existing_result(self):
@@ -376,13 +378,14 @@ class RiskPipelineTests(unittest.TestCase):
             source,output=Path(folder)/"input.mp4",Path(folder)/"out.mp4"
             self.make_video(source)
             output.write_bytes(b"old video")
-            output.with_suffix(".risk.jsonl").write_text("old log")
+            risk_log_path(output).parent.mkdir()
+            risk_log_path(output).write_text("old log")
             detector=SimpleNamespace(predict=Mock(side_effect=RuntimeError("broken")))
             with self.assertRaisesRegex(RuntimeError,"broken"),redirect_stdout(io.StringIO()):
                 process_video(source,output,detector=detector,risk_config={"enabled":True},
                               tracking_config={"enabled":False})
             self.assertEqual(output.read_bytes(),b"old video")
-            self.assertEqual(output.with_suffix(".risk.jsonl").read_text(),"old log")
+            self.assertEqual(risk_log_path(output).read_text(),"old log")
 
     # 공개 단계의 로그 교체 실패 시 이전 결과 복구
     def test_publish_failure_restores_existing_video_and_log(self):
@@ -391,7 +394,8 @@ class RiskPipelineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             output=Path(folder)/"out.mp4"
             output.write_bytes(b"old video")
-            risk_path=output.with_suffix(".risk.jsonl")
+            risk_path=risk_log_path(output)
+            risk_path.parent.mkdir()
             risk_path.write_text("old log")
             new_video=Path(folder)/"new.partial.mp4"
             new_video.write_bytes(b"new video")

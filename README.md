@@ -212,7 +212,7 @@ sudo mv /tmp/cloudflared /usr/local/bin/cloudflared
 data/samples/input/sample1/input.mp4
                          ↓
 data/samples/output/sample1/result_input.mp4
-data/samples/output/sample1/result_input.risk.jsonl
+data/samples/output/sample1/jsonl/result_input.risk.jsonl
 ```
 
 같은 결과 이름이 있으면 `(1)`, `(2)`를 붙여 기존 결과를 보존합니다. 추론에 실패하면 완성되지

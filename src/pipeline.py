@@ -21,7 +21,7 @@ from src.traffic import TrafficSignalPipeline, validate_traffic_config
 from src.risk import RiskEngine, VideoClock
 from src.risk_config import risk_config as normalize_risk, tracking_config as normalize_tracking
 from src.risk_visualization import draw_risk
-from src.risk_log import RiskLog
+from src.risk_log import RiskLog, risk_log_path
 from src.walking_voice import WalkingVoice, suppress_non_green_crosswalk_voice
 from src.traffic_voice import TrafficVoice
 from src.video_audio import render_voice_track, mux_voice
@@ -129,7 +129,7 @@ def find_sample_videos(sample_dir):
 # 완성된 결과 파일을 기존 결과와 교체
 def publish_video_result(video_source, output_path, risk_log=None):
     """MP4와 JSONL을 교체하고 공개 오류가 나면 이전 결과를 복구한다."""
-    risk_path = output_path.with_suffix(".risk.jsonl")
+    risk_path = risk_log.path if risk_log is not None else risk_log_path(output_path)
     targets = (output_path, risk_path)
     with tempfile.TemporaryDirectory(dir=output_path.parent, prefix=f".{output_path.stem}.backup.") as folder:
         backups = {}
@@ -406,8 +406,9 @@ def next_available_output(output_path, reserved=()):
     number = 0
     while True:
         candidate = base if number == 0 else base.with_name(f"{base.stem}({number}){base.suffix}")
+        legacy_risk_path = candidate.with_suffix(".risk.jsonl")
         if (candidate not in reserved and not candidate.exists()
-                and not candidate.with_suffix(".risk.jsonl").exists()):
+                and not risk_log_path(candidate).exists() and not legacy_risk_path.exists()):
             return candidate
         number += 1
 

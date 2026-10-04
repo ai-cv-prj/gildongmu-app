@@ -10,7 +10,7 @@ python -m scripts.run_video_inference --sample-dir data/samples/input/sample1
 
 [영상 테스트 결과물]
 data/samples/output/샘플폴더명/에 결과 MP4를 저장함
-위험 판정이 켜져 있으면 같은 폴더에 .risk.jsonl도 저장함
+위험 판정이 켜져 있으면 샘플폴더명/jsonl/에 .risk.jsonl을 저장함
 """
 
 import argparse

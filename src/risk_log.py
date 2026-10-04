@@ -9,15 +9,27 @@ import os
 from pathlib import Path
 import tempfile
 
+
+# 결과 영상에 대응하는 위험 로그 경로 계산
+def risk_log_path(video_output):
+    """
+    결과 MP4와 같은 샘플 폴더의 jsonl 하위 폴더에 위험 로그 경로를 만든다.
+    """
+    video_output = Path(video_output)
+    return video_output.parent / "jsonl" / f"{video_output.stem}.risk.jsonl"
+
+
 class RiskLog:
     """완료 전까지 위험 로그를 임시 파일에 보관한다."""
 
-    # 결과 영상 옆에 임시 위험 로그 만들기
+    # jsonl 하위 폴더에 임시 위험 로그 만들기
     def __init__(self, video_output, overwrite=False):
         """덮어쓰기 여부에 따라 기존 로그를 확인하고 임시 파일을 연다."""
-        self.path = Path(video_output).with_suffix(".risk.jsonl")
+        self.path = risk_log_path(video_output)
         if self.path.exists() and not overwrite:
             raise FileExistsError(f"Risk log already exists: {self.path}")
+        self.parent_created = not self.path.parent.exists()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         self.file = tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.path.parent,
                      prefix=f".{self.path.stem}.", suffix=".partial.jsonl", delete=False)
         self.temporary = Path(self.file.name)
@@ -48,3 +60,8 @@ class RiskLog:
         if self.published and not committed and self.path.exists() and os.path.samefile(self.path,self.temporary):
             self.path.unlink()
         self.temporary.unlink(missing_ok=True)
+        if self.parent_created:
+            try:
+                self.path.parent.rmdir()
+            except OSError:
+                pass

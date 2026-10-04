@@ -19,6 +19,7 @@ import cv2
 import numpy as np
 
 from src.pipeline import process_video
+from src.risk_log import risk_log_path
 from src.video_audio import SAMPLE_RATE, ffmpeg_executable, render_voice_track
 from src.risk_visualization import risk_identity
 from src.walking_voice import (
@@ -372,7 +373,7 @@ class WalkingVoiceTests(unittest.TestCase):
             capture = cv2.VideoCapture(str(output))
             self.assertEqual(int(capture.get(cv2.CAP_PROP_FRAME_COUNT)), 20)
             capture.release()
-            lines = output.with_suffix(".risk.jsonl").read_text(encoding="utf-8").splitlines()
+            lines = risk_log_path(output).read_text(encoding="utf-8").splitlines()
             self.assertEqual(len(lines), 20)
             self.assertEqual(json.loads(lines[0])["voice_text"], "직진.")
             self.assertEqual(json.loads(lines[0])["voice_clip"], "walking-straight.mp3")
@@ -401,5 +402,5 @@ class WalkingVoiceTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "합성 오류"):
                     process_video(source, output, detector=detector, risk_config={"enabled": True})
             self.assertFalse(output.exists())
-            self.assertFalse(output.with_suffix(".risk.jsonl").exists())
+            self.assertFalse(risk_log_path(output).exists())
             self.assertEqual(list(Path(folder).glob("*.partial.*")), [])
