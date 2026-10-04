@@ -212,9 +212,9 @@ class RiskTests(unittest.TestCase):
         self.assertIsNone(result["detections"][0]["risk_level"])
         self.assertEqual(result["events"],[])
         rendered=draw_risk(FRAME,result,risk_config({"draw_roi":False}))
-        # 일반 신호등 bbox는 제외하고 왼쪽 위 행동 상태 배지만 표시한다.
-        self.assertFalse(np.array_equal(rendered[:40],FRAME[:40]))
-        np.testing.assert_array_equal(rendered[40:],FRAME[40:])
+        # 일반 신호등 bbox는 제외하고 왼쪽 위 행동·음성 상태 배지만 표시한다.
+        self.assertFalse(np.array_equal(rendered[:64],FRAME[:64]))
+        np.testing.assert_array_equal(rendered[64:],FRAME[64:])
 
     # 처음 핑크 ROI에서 포착된 객체의 경고 복원 확인
     def test_first_obstacle_inside_immediate_roi_can_warn(self):

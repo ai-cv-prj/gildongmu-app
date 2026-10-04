@@ -46,8 +46,8 @@ now = 2400;
 walking.accept({ session_id: "test", frame_id: 1,
   captured_at_ms: 2400,
   event: { type: "walking_warning", level: "danger",
-    last_action: "right", voice_text: "오른쪽 이동." } }, now);
-assert.ok(spoken.includes("오른쪽 이동."));
+    last_action: "right", voice_text: "오른쪽으로 한 걸음" } }, now);
+assert.ok(spoken.includes("오른쪽으로 한 걸음"));
 assert.equal(requests.at(-1).metadata.action, "right");
 assert.equal(requests.at(-1).metadata.frame_id, 1);
 assert.equal(requests.at(-1).metadata.captured_at_ms, 2400);

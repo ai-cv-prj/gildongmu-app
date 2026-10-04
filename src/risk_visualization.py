@@ -13,21 +13,35 @@ NEAR_ROI_COLOR = (186, 136, 255)
 DARK_TEXT_COLOR = (31, 19, 8)
 
 
+# 장애물 행동과 음성 상태 문구 생성
+def action_status_text(prediction):
+    """화면 행동과 장애물 음성 선택 상태를 두 줄의 짧은 문구로 반환한다."""
+    action = prediction.get("last_action") or "none"
+    voice_action = prediction.get("voice_action")
+    voice = voice_action or ("muted" if action != "none" else "none")
+    return f"ACTION: {action}", f"VOICE: {voice}"
+
+
 # 현재 장애물 이동 행동 배지 표시
 def draw_action_status(frame, prediction):
-    """영상 왼쪽 위에 현재 장애물 이동 행동을 검은 배지로 표시한다."""
-    action = prediction.get("last_action") or "none"
-    text = f"ACTION: {action}"
+    """영상 왼쪽 위에 현재 장애물 이동 행동과 음성 상태를 검은 배지로 표시한다."""
+    lines = action_status_text(prediction)
     height, width = frame.shape[:2]
     font = cv2.FONT_HERSHEY_SIMPLEX
     scale, thickness, padding = max(.45, width / 760), 1, 8
-    (text_width, text_height), baseline = cv2.getTextSize(text, font, scale, thickness)
+    sizes = [cv2.getTextSize(text, font, scale, thickness) for text in lines]
+    text_width = max(size[0][0] for size in sizes)
+    text_height = max(size[0][1] for size in sizes)
+    baseline = max(size[1] for size in sizes)
+    line_height = text_height + baseline + padding
     left, top = 8, 8
     right = min(width - 1, left + text_width + padding * 2)
-    bottom = min(height - 1, top + text_height + baseline + padding * 2)
+    bottom = min(height - 1, top + line_height * len(lines) + padding)
     cv2.rectangle(frame, (left, top), (right, bottom), (24, 24, 24), -1)
-    cv2.putText(frame, text, (left + padding, bottom - baseline - padding),
-                font, scale, (255, 255, 255), thickness, cv2.LINE_AA)
+    for index, text in enumerate(lines):
+        y = top + padding + text_height + index * line_height
+        cv2.putText(frame, text, (left + padding, y), font, scale,
+                    (255, 255, 255), thickness, cv2.LINE_AA)
     return frame
 
 

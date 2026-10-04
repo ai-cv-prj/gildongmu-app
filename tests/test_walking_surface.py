@@ -38,7 +38,7 @@ def test_left_exit_guides_right_and_return_stops_repeat_immediately():
     assert engine.update(outside_left, LABELS, SHAPE, .1)["status"] == "exit_confirming"
     event = engine.update(outside_left, LABELS, SHAPE, .4)
     assert event["status"] == "outside_left"
-    assert event["voice_text"] == "보행로 이탈. 오른쪽 이동."
+    assert event["voice_text"] == "보행로 이탈 오른쪽 이동!"
     assert event["repeat"] is True
     returning = engine.update(inside, LABELS, SHAPE, .5)
     assert returning["status"] == "returning"
@@ -56,7 +56,7 @@ def test_right_exit_guides_left():
     engine.update(outside_right, LABELS, SHAPE, .1)
     event = engine.update(outside_right, LABELS, SHAPE, .4)
     assert event["status"] == "outside_right"
-    assert event["voice_text"] == "보행로 이탈. 왼쪽 이동."
+    assert event["voice_text"] == "보행로 이탈 왼쪽 이동!"
 
 
 # 방향 근거 없는 이탈 확인

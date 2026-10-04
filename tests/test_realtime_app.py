@@ -49,7 +49,7 @@ class FakeModels:
                     "immediate_polygon": [[0.2, 0.7], [0.8, 0.7], [0.8, 1], [0.2, 1]]},
             "camera_view": {"status": "clear"},
             "last_action": "straight",
-            "voice_text": "서행하세요.",
+            "voice_text": "천천히 가세요.",
             "stop_proximity": {"status": "candidate", "nearby": False,
                                "newly_nearby": False, "observations": 1,
                                "required_observations": 3, "confidence": 0.7,
@@ -179,7 +179,7 @@ def test_mobile_session_flow(tmp_path, recording_fps):
                          files={"image": ("frame.jpg", io.BytesIO(jpeg.tobytes()), "image/jpeg")})
     assert result.status_code == 200
     body = result.json()
-    assert body["walking"]["event"]["voice_text"] == "서행하세요."
+    assert body["walking"]["event"]["voice_text"] == "천천히 가세요."
     assert body["walking"]["event"]["last_action"] == "straight"
     assert body["traffic"]["event"]["signal_state"] == "red"
     assert body["crosswalk"]["event"]["status"] == "crossing"

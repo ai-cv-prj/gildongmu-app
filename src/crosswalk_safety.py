@@ -434,7 +434,7 @@ class CrosswalkSafetyEngine:
                 self._clear_pending()
                 self._transition(f"align_{move}")
                 result.update(status=self.phase, direction=move, repeat=True,
-                              voice_text=f"{korean}으로 이동하세요!",
+                              voice_text=f"{korean}으로 이동!",
                               voice_clip=f"crosswalk-align-{move}.mp3",
                               event_id=self.event_id, reasons=["entry_alignment"])
             else:
@@ -471,7 +471,7 @@ class CrosswalkSafetyEngine:
                 move = ("right" if self.phase == "outside_left" else
                         "left" if self.phase == "outside_right" else None)
                 korean = "오른쪽" if move == "right" else "왼쪽" if move == "left" else None
-                text = (f"횡단보도 이탈! {korean}으로 이동하세요!"
+                text = (f"횡단보도 이탈 {korean} 이동!"
                         if korean else "횡단보도 이탈!")
                 result.update(direction=move, repeat=True,
                               voice_text=text,
@@ -511,7 +511,7 @@ class CrosswalkSafetyEngine:
                 move = "right" if self.phase == "outside_left" else "left"
                 korean = "오른쪽" if move == "right" else "왼쪽"
                 result.update(direction=move, repeat=True,
-                              voice_text=f"횡단보도 이탈! {korean}으로 이동하세요!",
+                              voice_text=f"횡단보도 이탈 {korean} 이동!",
                               voice_clip=f"crosswalk-exit-{move}.mp3")
             return result
 
@@ -521,7 +521,7 @@ class CrosswalkSafetyEngine:
                 move = "right" if self.phase == "outside_left" else "left"
                 korean = "오른쪽" if move == "right" else "왼쪽"
                 result.update(status=self.phase, crossing_active=True, direction=move,
-                              voice_text=f"횡단보도 이탈! {korean}으로 이동하세요!",
+                              voice_text=f"횡단보도 이탈 {korean} 이동!",
                               voice_clip=f"crosswalk-exit-{move}.mp3", repeat=True,
                               event_id=self.event_id,
                               reasons=["return_confirming"])
