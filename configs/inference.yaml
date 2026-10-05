@@ -69,12 +69,20 @@ crosswalk_safety:
   roi_crosswalk_threshold: 0.05
   roi_occlusion_threshold: 0.08
 
+  # 횡단 중 보라색 ROI가 사라졌을 때 확인할 분홍색 즉시위험 ROI
+  exit_roi_left: 0.02
+  exit_roi_right: 0.98
+  exit_roi_top: 0.70
+  exit_roi_bottom: 1.00
+  exit_roi_crosswalk_threshold: 0.05
+
   # 상태 확정 시간(초)
   entry_confirm_s: 0.50
   geometry_entry_confirm_s: 0.30
   entry_occlusion_hold_s: 0.50
   edge_confirm_s: 0.20
   exit_confirm_s: 0.25
+  exit_candidate_hold_s: 0.50
   return_confirm_s: 0.40
   finish_confirm_s: 0.40
   outside_finish_confirm_s: 0.80

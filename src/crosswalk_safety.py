@@ -25,11 +25,17 @@ DEFAULT_CROSSWALK_SAFETY = {
     "roi_bottom": 1.00,
     "roi_crosswalk_threshold": 0.05,
     "roi_occlusion_threshold": 0.08,
+    "exit_roi_left": 0.02,
+    "exit_roi_right": 0.98,
+    "exit_roi_top": 0.70,
+    "exit_roi_bottom": 1.00,
+    "exit_roi_crosswalk_threshold": 0.05,
     "entry_confirm_s": 0.50,
     "geometry_entry_confirm_s": 0.30,
     "entry_occlusion_hold_s": 0.50,
     "edge_confirm_s": 0.20,
     "exit_confirm_s": 0.25,
+    "exit_candidate_hold_s": 0.50,
     "return_confirm_s": 0.40,
     "finish_confirm_s": 0.40,
     "outside_finish_confirm_s": 0.80,
@@ -76,6 +82,8 @@ def crosswalk_safety_config(value=None):
         "min_row_width", "finish_walkable_fraction", "roi_left",
         "roi_right", "roi_top", "roi_bottom", "roi_crosswalk_threshold",
         "roi_occlusion_threshold", "outside_finish_walkable_fraction",
+        "exit_roi_left", "exit_roi_right", "exit_roi_top", "exit_roi_bottom",
+        "exit_roi_crosswalk_threshold",
         "non_green_obstacle_crosswalk_threshold", "non_green_obstacle_nonwalkable_threshold",
         "non_green_obstacle_contact_half_height",
     )
@@ -88,7 +96,7 @@ def crosswalk_safety_config(value=None):
         "entry_confirm_s", "edge_confirm_s", "exit_confirm_s", "return_confirm_s",
         "finish_confirm_s", "uncertainty_hold_s", "max_gap_s", "boundary_smooth_s",
         "outside_finish_confirm_s", "geometry_entry_confirm_s", "entry_occlusion_hold_s",
-        "boundary_hold_s", "boundary_candidate_confirm_s",
+        "exit_candidate_hold_s", "boundary_hold_s", "boundary_candidate_confirm_s",
     )
     for key in time_keys:
         item = cfg[key]
@@ -102,6 +110,9 @@ def crosswalk_safety_config(value=None):
         raise ValueError("crosswalk exit margin must be below edge margin")
     if cfg["roi_left"] >= cfg["roi_right"] or cfg["roi_top"] >= cfg["roi_bottom"]:
         raise ValueError("crosswalk ROI bounds must increase from left/top to right/bottom")
+    if (cfg["exit_roi_left"] >= cfg["exit_roi_right"]
+            or cfg["exit_roi_top"] >= cfg["exit_roi_bottom"]):
+        raise ValueError("crosswalk exit ROI bounds must increase from left/top to right/bottom")
     return cfg
 
 
@@ -150,6 +161,30 @@ def crosswalk_roi_semantics(class_map, label_ids, shape, cfg):
                                  if crosswalk_id is not None else None)
     roi["walkable_fraction"] = (float(np.mean(patch == walkable_id))
                                 if walkable_id is not None else None)
+    return roi
+
+
+# 분홍색 즉시위험 ROI의 횡단보도 비율 계산
+def crosswalk_exit_roi_semantics(class_map, label_ids, shape, cfg):
+    """화면 하단의 분홍색 ROI에서 횡단보도 마스크 비율을 계산한다."""
+    roi = {
+        "left": cfg["exit_roi_left"], "right": cfg["exit_roi_right"],
+        "top": cfg["exit_roi_top"], "bottom": cfg["exit_roi_bottom"],
+        "crosswalk_fraction": None,
+    }
+    if class_map is None or not label_ids or class_map.shape != tuple(shape[:2]):
+        return roi
+    height, width = shape[:2]
+    x1 = round(cfg["exit_roi_left"] * width)
+    x2 = round(cfg["exit_roi_right"] * width)
+    y1 = round(cfg["exit_roi_top"] * height)
+    y2 = round(cfg["exit_roi_bottom"] * height)
+    patch = class_map[max(0, y1):min(height, y2), max(0, x1):min(width, x2)]
+    if patch.size == 0:
+        return roi
+    crosswalk_id = label_ids.get("crosswalk")
+    roi["crosswalk_fraction"] = (float(np.mean(patch == crosswalk_id))
+                                 if crosswalk_id is not None else None)
     return roi
 
 
@@ -243,6 +278,7 @@ class CrosswalkSafetyEngine:
         self.crossing_active = False
         self.pending_kind = None
         self.pending_since = None
+        self.pending_last_seen = None
         self.last_timestamp = None
         self.left_x = None
         self.right_x = None
@@ -263,7 +299,9 @@ class CrosswalkSafetyEngine:
         if self.pending_kind != kind:
             self.pending_kind = kind
             self.pending_since = timestamp
+            self.pending_last_seen = timestamp
             return False
+        self.pending_last_seen = timestamp
         return timestamp - self.pending_since + 1e-9 >= duration
 
     # 대기 중인 상태 전환 취소
@@ -271,6 +309,7 @@ class CrosswalkSafetyEngine:
         """현재 조건과 맞지 않는 이전 상태 전환 후보를 지운다."""
         self.pending_kind = None
         self.pending_since = None
+        self.pending_last_seen = None
 
     # 크게 이동한 새 경계 후보 제거
     def _clear_boundary_candidate(self):
@@ -311,6 +350,8 @@ class CrosswalkSafetyEngine:
         roi["occlusion_fraction"] = crosswalk_roi_occlusion(
             detections, shape, self.config)
         result["crosswalk_roi"] = roi
+        exit_roi = crosswalk_exit_roi_semantics(class_map, label_ids, shape, self.config)
+        result["exit_crosswalk_roi"] = exit_roi
         geometry = crosswalk_geometry(class_map, label_ids, shape, self.config)
         if not camera_stable:
             result.update(status="uncertain", crossing_active=self.crossing_active,
@@ -483,6 +524,38 @@ class CrosswalkSafetyEngine:
                 self._clear_pending()
                 result.update(status="uncertain", crossing_active=True,
                               event_id=self.event_id, reasons=["crosswalk_roi_occluded"])
+                return result
+            exit_roi_fraction = exit_roi["crosswalk_fraction"]
+            exit_roi_visible = bool(
+                exit_roi_fraction is not None
+                and exit_roi_fraction >= self.config["exit_roi_crosswalk_threshold"]
+            )
+            pending_outside = self.pending_kind in ("outside_left", "outside_right")
+            if exit_roi_visible and pending_outside:
+                outside = self.pending_kind
+                if self._confirmed(outside, timestamp, self.config["exit_confirm_s"]):
+                    self._transition(outside)
+                    self._clear_pending()
+                result.update(status=self.phase, crossing_active=True,
+                              event_id=self.event_id,
+                              reasons=["lateral_exit_with_bottom_roi_loss"])
+                if self.phase in ("outside_left", "outside_right"):
+                    move = "right" if self.phase == "outside_left" else "left"
+                    korean = "오른쪽" if move == "right" else "왼쪽"
+                    result.update(direction=move, repeat=True,
+                                  voice_text=f"횡단보도 이탈 {korean} 이동!",
+                                  voice_clip=f"crosswalk-exit-{move}.mp3")
+                return result
+            hold_pending_exit = bool(
+                pending_outside
+                and self.pending_last_seen is not None
+                and timestamp - self.pending_last_seen
+                <= self.config["exit_candidate_hold_s"]
+            )
+            if hold_pending_exit:
+                result.update(status="uncertain", crossing_active=True,
+                              event_id=self.event_id,
+                              reasons=["pending_exit_roi_missing"])
                 return result
             self._clear_pending()
             result.update(status="uncertain", crossing_active=True, event_id=self.event_id,
