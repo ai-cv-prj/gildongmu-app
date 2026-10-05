@@ -110,9 +110,9 @@ walking_surface:
   foot_y: 0.92
   foot_half_width: 0.04
   foot_half_height: 0.04
-  exit_fraction: 0.40
+  exit_fraction: 0.50
   inside_fraction: 0.60
-  exit_confirm_s: 0.30
+  exit_confirm_s: 0.60
   return_confirm_s: 0.50
   max_gap_s: 2.00
   stale_after_s: 1.50
