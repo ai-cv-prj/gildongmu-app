@@ -240,6 +240,41 @@ def test_crosswalk_roi_loss_is_uncertain_without_unknown_exit_warning():
     assert result["status"] == "crossing"
 
 
+# 횡단 중 하단 ROI 소실 뒤 이탈 확정 확인
+def test_confirmed_crossing_uses_pink_roi_to_finish_pending_exit():
+    """정상 진입 뒤 보라색 ROI가 사라져도 분홍색 ROI와 직전 방향으로 이탈을 확정한다."""
+    item = engine()
+    item.update(mask(), LABELS, SHAPE, SIGNAL, 0)
+    item.update(mask(), LABELS, SHAPE, SIGNAL, .2)
+    visible_exit = mask(left=.58, right=.95, top=.70, bottom=1.0)
+    pink_only_exit = mask(left=.58, right=.95, top=.70, bottom=.89)
+    confirming = item.update(visible_exit, LABELS, SHAPE, SIGNAL, .3)
+    missing = np.full(SHAPE[:2], LABELS["non_walkable"], np.uint8)
+    held = item.update(missing, LABELS, SHAPE, SIGNAL, .5)
+    result = item.update(pink_only_exit, LABELS, SHAPE, SIGNAL, .71)
+    assert confirming["status"] == "crossing"
+    assert held["status"] == "uncertain"
+    assert held["reasons"] == ["pending_exit_roi_missing"]
+    assert held["voice_text"] is None
+    assert result["crosswalk_roi"]["crosswalk_fraction"] == 0
+    assert result["exit_crosswalk_roi"]["crosswalk_fraction"] >= .05
+    assert result["status"] == "outside_left"
+    assert result["direction"] == "right"
+    assert result["voice_text"] == "횡단보도 이탈 오른쪽 이동!"
+
+
+# 진입 전 분홍색 ROI 단독 마스크 무음 확인
+def test_pink_roi_alone_never_creates_exit_before_crossing_entry():
+    """정상 횡단 진입 이력이 없으면 분홍색 ROI만으로 이탈 음성을 만들지 않는다."""
+    item = engine()
+    pink_only = mask(left=.58, right=.95, top=.70, bottom=.89)
+    item.update(pink_only, LABELS, SHAPE, SIGNAL, 0)
+    result = item.update(pink_only, LABELS, SHAPE, SIGNAL, .3)
+    assert not result["crossing_active"]
+    assert result["voice_text"] is None
+    assert result["voice_clip"] is None
+
+
 # 객체 가림 중 ROI 손실 보류 확인
 def test_crosswalk_roi_loss_is_uncertain_when_object_occludes_roi():
     """차량 박스가 하단 ROI를 가리면 핑크 마스크 손실만으로 이탈을 확정하지 않는다."""
