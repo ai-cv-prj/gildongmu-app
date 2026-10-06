@@ -38,6 +38,7 @@
     const audio = window.Audio ? new window.Audio() : null;
     let audioContext = null, recordingDestination = null;
     let current = null, timer = null;
+    let rate = Math.min(2, Math.max(0.75, Number(settings.playback_rate) || 1));
     const queue = [];
     if (audio) {
       audio.preload = "auto";
@@ -82,10 +83,11 @@
     }
 
     function speak(text, validUntil = now() + settings.default_validity_ms,
-                   { onEnd = () => {}, onStart = () => {}, onFailure = () => {} } = {}) {
+                   { onEnd = () => {}, onStart = () => {}, onFailure = () => {}, dynamic = false } = {}) {
       const synthesized = text === SPEECH_TEXT;
-      const supported = synthesized ? window.speechSynthesis && window.SpeechSynthesisUtterance : audio;
-      if (!supported || (!synthesized && !CLIPS.has(text))) {
+      const canSynthesize = window.speechSynthesis && window.SpeechSynthesisUtterance;
+      const supported = synthesized ? canSynthesize : audio || (dynamic && canSynthesize);
+      if (!supported || (!synthesized && !dynamic && !CLIPS.has(text))) {
         const message = synthesized
           ? "버스 번호 질문 음성을 지원하지 않는 브라우저입니다. 화면에서 입력하거나 취소해 주세요."
           : !audio ? "이 브라우저는 음성 재생을 지원하지 않습니다." : "안내 음원이 없습니다. 페이지를 새로고침해 주세요.";
@@ -93,10 +95,10 @@
         onError(message);
         return false;
       }
-      if (now() >= validUntil) return false;
+      if (typeof text !== "string" || !text.trim() || text.length > 200 || now() >= validUntil) return false;
       // 안내 간 우선순위와 취소는 전역 음성 관리자가 결정한다.
       // 음원 로딩 제한 시간은 앞선 안내가 끝난 뒤 재생을 시도할 때부터 센다.
-      queue.push({ text, onEnd, onStart, onFailure, synthesized,
+      queue.push({ text, onEnd, onStart, onFailure, synthesized, dynamic,
         startTimeoutMs: validUntil - now(), started: false });
       return current ? true : playNext();
     }
@@ -109,8 +111,8 @@
       onStatus("음성 재생을 준비하고 있습니다.");
       const fail = message => {
         if (current !== request) return;
-        request.onFailure(message);
         cancel();
+        request.onFailure(message);
         onStatus(message);
         onError(message);
       };
@@ -126,71 +128,91 @@
         onStatus("음성 재생 중입니다. 들리지 않으면 미디어 음량과 연결된 이어폰을 확인해 주세요.");
         timer = setTimeout(() => fail("음성 재생이 끝나지 않아 중단했습니다. 다시 시작해 주세요."), settings.playback_timeout_ms);
       };
+      const finish = () => {
+        if (current !== request || !request.started) return;
+        clearTimeout(timer);
+        timer = null;
+        current = null;
+        if (audio) audio.onplaying = audio.onended = audio.onerror = null;
+        onStatus("음성 재생이 끝났습니다.");
+        request.onEnd();
+        playNext();
+      };
+      const synthesize = (releaseAudio = true) => {
+        if (current !== request || request.fallbackAttempted || now() >= validUntil
+            || !window.speechSynthesis || !window.SpeechSynthesisUtterance) return false;
+        request.fallbackAttempted = true;
+        request.synthesized = true;
+        if (audio && releaseAudio) {
+          audio.onplaying = audio.onended = audio.onerror = null;
+          audio.pause();
+          audio.removeAttribute("src");
+          audio.load();
+        }
+        const utterance = new window.SpeechSynthesisUtterance(request.text);
+        utterance.lang = "ko-KR";
+        utterance.volume = settings.volume;
+        utterance.rate = rate;
+        const korean = window.speechSynthesis.getVoices().find(voice => voice.lang.startsWith("ko"));
+        if (korean) utterance.voice = korean;
+        utterance.onstart = started;
+        utterance.onerror = () => fail("안내 음성을 재생하지 못했습니다. 화면의 안내를 확인해 주세요.");
+        utterance.onend = finish;
+        try { window.speechSynthesis.speak(utterance); return true; }
+        catch (_) { return false; }
+      };
       const rejected = error => {
+        if (current !== request) return;
+        // 서버 MP3를 사용할 수 없을 때 같은 우선순위 요청 안에서 한국어 합성을 시도한다.
+        if (request.dynamic && !request.started && synthesize()) return true;
         const messages = {
           NotAllowedError: "브라우저가 음성 재생을 차단했습니다. 사이트 소리 허용을 확인하고 테스트를 다시 시작해 주세요.",
           NotSupportedError: "안내 음원을 불러오거나 재생할 수 없습니다. 페이지를 새로고침해 주세요.",
         };
         fail(messages[error?.name] || "음성을 재생하지 못했습니다. 연결 상태와 소리 설정을 확인해 주세요.");
+        return false;
       };
-      audio.onplaying = started;
-      audio.onended = () => {
-        if (current !== request || !request.started || !audio.ended) return;
-        clearTimeout(timer);
-        timer = null;
-        current = null;
-        audio.onplaying = audio.onended = audio.onerror = null;
-        onStatus("음성 재생이 끝났습니다.");
-        request.onEnd();
-        playNext();
-      };
-      audio.onerror = () => {
-        if (!audio.error) return;
-        fail(audio.error.code === 2
-          ? "안내 음원을 불러오지 못했습니다. 서버 연결 상태를 확인해 주세요."
-          : "안내 음원 파일을 재생할 수 없습니다. 페이지를 새로고침해 주세요.");
-      };
+      if (audio) {
+        audio.onplaying = started;
+        audio.onended = () => { if (audio.ended) finish(); };
+        audio.onerror = () => { if (audio.error) rejected({ name: "NotSupportedError" }); };
+      }
       timer = setTimeout(() => fail("음성 재생이 지연되어 안내를 중단했습니다. 연결 상태를 확인하고 다시 시작해 주세요."),
         Math.max(0, validUntil - now()));
       try {
         if (request.synthesized) {
-          const utterance = new window.SpeechSynthesisUtterance(request.text);
-          utterance.lang = "ko-KR";
-          utterance.volume = settings.volume;
-          const korean = window.speechSynthesis.getVoices().find(voice => voice.lang.startsWith("ko"));
-          if (korean) utterance.voice = korean;
-          utterance.onstart = started;
-          utterance.onerror = () => fail("버스 번호 질문 음성을 재생하지 못했습니다. 화면에서 입력하거나 취소해 주세요.");
-          utterance.onend = () => {
-            if (current !== request || !request.started) return;
-            clearTimeout(timer);
-            timer = null;
-            current = null;
-            request.onEnd();
-            playNext();
-          };
-          window.speechSynthesis.speak(utterance);
-          return true;
+          // 기존 번호 입력 질문은 브라우저 합성을 그대로 사용한다.
+          // MP3를 재생하지 않았으므로 합성 시작 때 불필요한 pause를 피한다.
+          if (audio) audio.onplaying = audio.onended = audio.onerror = null;
+          return synthesize(false);
         }
+        if (!audio) return synthesize();
         const clip = CLIPS.get(request.text);
         if (audioContext?.state === "suspended") {
           audioContext.resume().catch(() => onError("브라우저가 안내 음성 재생을 차단했습니다. 사이트 소리 허용을 확인하고 테스트를 다시 시작해 주세요."));
         }
         // 원본 MP3는 유지하고 테스트 재생 단계에서만 설정 속도를 적용한다.
-        audio.playbackRate = settings.playback_rate;
-        audio.src = source(clip);
+        audio.playbackRate = rate;
+        audio.src = request.dynamic && !clip
+          ? `/api/bus-arrival-speech?text=${encodeURIComponent(request.text)}` : source(clip);
         audio.load();
         // await 없이 클릭 처리 중 호출해야 모바일의 사용자 동작으로 인정된다.
         const playing = audio.play();
         playing?.then(started, rejected);
         return true;
       } catch (error) {
-        rejected(error);
-        return false;
+        return rejected(error);
       }
     }
 
-    return { speak, cancel, recordingStream };
+    function setRate(value) {
+      const next = Number(value);
+      if (Number.isFinite(next)) rate = Math.min(2, Math.max(0.75, next));
+      if (audio) audio.playbackRate = rate;
+      return rate;
+    }
+
+    return { speak, cancel, recordingStream, setRate, getRate: () => rate };
   }
   window.GTts = { create };
 })();

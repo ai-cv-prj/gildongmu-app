@@ -13,6 +13,7 @@ window.GCamera = (() => {
   let videoFrameFailed = false;
   let captureId = 0, cameraVersion = 0, lastBackend = "canvas";
   let capturing = false;
+  let cancelVideoReady = null;
 
   // 인코더 종료 및 대기 요청 해제
   /** Worker를 종료하고 진행 중인 캡처가 영원히 기다리지 않도록 한다. */
@@ -75,13 +76,20 @@ window.GCamera = (() => {
       throw new Error("이 브라우저는 카메라를 지원하지 않습니다. HTTPS 주소로 접속했는지 확인하세요.");
     }
     stop();
+    const startingVersion = cameraVersion;
     try {
       const settings = window.GConfig.get().camera;
-      stream = await navigator.mediaDevices.getUserMedia({
+      const acquired = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: settings.facing_mode }, width: { ideal: settings.width }, height: { ideal: settings.height } },
         audio: false,
       });
+      if (startingVersion !== cameraVersion) {
+        acquired.getTracks().forEach(track => track.stop());
+        throw Object.assign(new Error("카메라 시작이 취소되었습니다."), { name: "AbortError" });
+      }
+      stream = acquired;
     } catch (e) {
+      if (e.name === "AbortError") throw e;
       if (e.name === "NotAllowedError") throw new Error("카메라 권한이 거부되었습니다. 브라우저 설정에서 허용해주세요.");
       if (e.name === "NotFoundError" || e.name === "OverconstrainedError") throw new Error("후면 카메라를 찾지 못했습니다.");
       throw new Error(`카메라를 열 수 없습니다: ${e.message || e.name}`);
@@ -89,11 +97,24 @@ window.GCamera = (() => {
     const track = stream.getVideoTracks()[0];
     track.addEventListener("ended", () => { if (onEnded) onEnded(); });
     video.srcObject = stream;
-    await new Promise((resolve) => {
+    await new Promise((resolve, reject) => {
       if (video.readyState >= 2) return resolve();
-      video.onloadedmetadata = () => resolve();
+      const finish = error => {
+        clearTimeout(timeout);
+        video.removeEventListener("loadedmetadata", loaded);
+        if (cancelVideoReady === cancel) cancelVideoReady = null;
+        error ? reject(error) : resolve();
+      };
+      const loaded = () => finish();
+      const cancel = () => finish(Object.assign(new Error("카메라 시작이 취소되었습니다."), { name: "AbortError" }));
+      const timeout = setTimeout(() => finish(new Error("카메라 영상 준비 시간이 초과되었습니다.")), 10000);
+      cancelVideoReady = cancel;
+      video.addEventListener("loadedmetadata", loaded);
     });
     try { await video.play(); } catch (_) { /* 자동 재생 정책 */ }
+    if (startingVersion !== cameraVersion) {
+      throw Object.assign(new Error("카메라 시작이 취소되었습니다."), { name: "AbortError" });
+    }
     getEncoder(); // 테스트 시작 전에 Worker 로딩을 시작한다.
     return { width: video.videoWidth, height: video.videoHeight, label: track.label };
   }
@@ -102,6 +123,7 @@ window.GCamera = (() => {
   /** 진행 중인 캡처를 무효화하고 카메라 트랙과 Worker 자원을 해제한다. */
   function stop() {
     cameraVersion += 1;
+    cancelVideoReady?.();
     closeEncoder(new Error("카메라 종료"));
     if (stream) {
       stream.getTracks().forEach((t) => t.stop());
@@ -167,5 +189,9 @@ window.GCamera = (() => {
   /** VideoFrame Worker, ImageBitmap Worker, 기존 canvas 중 실제 사용 경로를 반환한다. */
   function captureBackend() { return lastBackend; }
 
-  return { start, stop, active, capture, video, captureBackend, setOnEnded: (fn) => { onEnded = fn; } };
+  function pause() { stream?.getVideoTracks().forEach(track => { track.enabled = false; }); }
+  function resume() { stream?.getVideoTracks().forEach(track => { track.enabled = true; }); }
+
+  return { start, stop, active, capture, video, captureBackend, pause, resume,
+    setOnEnded: (fn) => { onEnded = fn; } };
 })();

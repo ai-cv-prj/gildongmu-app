@@ -258,9 +258,10 @@ def test_configured_session_directory_and_upload_limit(tmp_path, monkeypatch):
     app_file.write_text(yaml.safe_dump(settings), encoding="utf-8")
 
     # 실제 세션 저장 로직을 쓰되 모델 가중치 로딩만 대체한다.
-    def manager_factory(output_dir, session_settings):
+    def manager_factory(output_dir, session_settings, bus_config):
         """설정된 저장 위치와 시간대를 유지하는 테스트 세션 관리자를 만든다."""
-        return SessionManager(output_dir, model_factory=FakeModels, session_settings=session_settings)
+        return SessionManager(output_dir, model_factory=FakeModels,
+                              session_settings=session_settings, bus_config=bus_config)
 
     monkeypatch.setattr("backend.app.SessionManager", manager_factory)
     client = TestClient(create_app(app_config=app_file, paths_config=paths_file))

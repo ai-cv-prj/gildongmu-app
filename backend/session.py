@@ -15,8 +15,9 @@ from zoneinfo import ZoneInfo
 
 import cv2
 
-from backend.inference import RealtimeInference
 from backend.boarding import Boarding
+from backend.bus.config import load_bus_config
+from backend.bus.recognition import BusRecognizer
 from backend.response import make_response
 from src.settings import load_app_config
 
@@ -40,11 +41,13 @@ class SessionManager:
     """한 서버에서 한 휴대폰 테스트를 순서대로 처리한다."""
 
     # 모델 저장소와 출력 폴더 준비
-    def __init__(self, output_dir, model_factory=RealtimeInference, session_settings=None):
+    def __init__(self, output_dir, model_factory=None, session_settings=None,
+                 bus_recognizer=None, bus_config=None):
         """모델은 첫 세션 시작 시에만 로딩하고 이후 세션에서 재사용한다."""
         self.output_dir = Path(output_dir)
         self.settings = session_settings if session_settings is not None else load_app_config()["session"]
         self.model_factory = model_factory
+        self.bus_recognizer = bus_recognizer or BusRecognizer(bus_config or load_bus_config())
         self.models = None
         self.session = None
         self.lock = threading.Lock()
@@ -56,10 +59,14 @@ class SessionManager:
             if self.session is not None:
                 raise SessionError("이미 진행 중인 테스트가 있습니다. 먼저 종료하세요.")
             if self.models is None:
+                if self.model_factory is None:
+                    from backend.inference import RealtimeInference
+                    self.model_factory = RealtimeInference
                 self.models = self.model_factory()
             else:
                 self.models.reset()
             self.models.boarding = Boarding()
+            self.bus_recognizer.set_target(None, None)
             session_id = uuid4().hex
             safe_device = safe_folder_part(device_name, "기종미상")
             safe_note = safe_folder_part(note, max_length=self.settings["folder_note_max_length"])
@@ -107,11 +114,20 @@ class SessionManager:
             risk, signal, crosswalk, walking_surface, class_map, label_ids, elapsed = self.models.predict(
                 frame, frame_id, captured_at_ms,
             )
+            session["crossing_active"] = bool(crosswalk.get("crossing_active", False))
             risk["boarding"] = self.models.boarding.observe(
                 risk.get("stop_proximity"), crossing_active=crosswalk.get("crossing_active", False))
             result = make_response(session_id, frame_id, captured_at_ms, frame,
                                    risk, signal, crosswalk, walking_surface,
                                    class_map, label_ids, elapsed)
+            # OCR runs on a separate newest-frame worker. Its own source timestamp
+            # stays attached to cached results, and it cannot fail walking guidance.
+            try:
+                result["bus"] = self.bus_recognizer.observe(session_id, frame, frame_id, captured_at_ms)
+            except Exception as error:
+                result["bus"] = {"status": "error", "event": None, "detections": [],
+                                 "captured_at_ms": None, "frame_id": None,
+                                 "error": f"bus_recognition_unavailable:{type(error).__name__}"}
             frame_name = f"{frame_id:06d}.jpg"
             frame_file = Path("frames") / frame_name
             encoded, jpeg = cv2.imencode(".jpg", frame)
@@ -160,18 +176,38 @@ class SessionManager:
                 raise SessionError("진행 중인 세션이 없습니다.")
             return self.models.boarding.snapshot()
 
-    def update_boarding(self, session_id, action, arrival_event_id, bus_number=None):
+    def update_boarding(self, session_id, action, arrival_event_id=None, bus_number=None):
         with self.lock:
             if self.session is None or self.session["id"] != session_id:
                 raise SessionError("진행 중인 세션이 없습니다.")
             previous = self.models.boarding.snapshot()
-            result = self.models.boarding.act(action, arrival_event_id, bus_number)
+            result = self.models.boarding.act(action, arrival_event_id, bus_number,
+                                              crossing_active=self.session.get("crossing_active", False))
+            if result != previous and action in ("arrive", "cancel", "reopen", "submit"):
+                target = result["bus_number"] if action == "submit" else None
+                self.bus_recognizer.set_target(session_id if target else None, target)
             if result != previous:
                 record = {"at": datetime.now(timezone.utc).isoformat(),
                           "action": action, **result}
                 with (self.session["folder"] / "boarding_events.jsonl").open("a", encoding="utf-8") as file:
                     file.write(json.dumps(record, ensure_ascii=False) + "\n")
             return result
+
+    def record_bus_events(self, session_id, events):
+        """Append bounded client GPS/OCR guidance events to this live session."""
+        with self.lock:
+            if self.session is None or self.session["id"] != session_id:
+                raise SessionError("진행 중인 세션이 없습니다.")
+            path = self.session["folder"] / "bus_events.jsonl"
+            with path.open("a", encoding="utf-8") as file:
+                for event in events:
+                    record = {**event, "session_id": session_id,
+                              "server_at": datetime.now(timezone.utc).isoformat()}
+                    file.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n")
+
+    def close(self):
+        """Release the optional OCR worker during server shutdown."""
+        self.bus_recognizer.close()
 
     def record_client_timings(self, session_id, records):
         """브라우저의 동일 시계 기준 지연과 실제 음성 시작 이벤트를 저장한다."""
@@ -200,6 +236,7 @@ class SessionManager:
                 json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8",
             )
             self.session = None
+            self.bus_recognizer.set_target(None, None)
             return summary
 
     # 원본 카메라 영상의 세션별 경로 확인

@@ -144,7 +144,7 @@ class TrackingTests(unittest.TestCase):
         with patch('src.visualization.cv2.putText', wraps=cv2.putText) as text:
             rendered = draw_traffic(FRAME, result)
         labels = [call.args[1] for call in text.call_args_list]
-        self.assertEqual(labels.count('SIGNAL CANDIDATE'), 2)
+        self.assertEqual(labels.count('신호 후보'), 2)
         self.assertFalse(any('CROSSWALK' in label or 'LINK:' in label for label in labels))
         np.testing.assert_array_equal(rendered[200:], FRAME[200:])
         self.assertEqual(rendered[100, 600].tolist(), list(TRAFFIC_COLORS["candidate"]))

@@ -90,5 +90,18 @@ module.exports = (async () => {
   guide.accept({ session_id: "session", boarding: server, stop_proximity: { nearby: true } }, now - 1500);
   assert.equal(current, null);
   guide.stop();
+  // A manually confirmed stop can reopen without another visual stop detection.
+  server = { status: "submitted", arrival_event_id: 2, revision: ++version,
+    arrival_source: "user_confirmed", bus_number: "143" };
+  guide.start("session");
+  accept(server, { stop_proximity: { nearby: false } });
+  assert.equal(await guide.reopen(), true);
+  guide.tick();
+  assert.equal(current.text, "멈추세요.");
+  finish(); await flush();
+  assert.equal(view.status, "pending");
+  assert.equal(await guide.submit("271"), true);
+  assert.equal(view.bus_number, "271");
+  guide.stop();
   console.log("boarding: pass");
 })();

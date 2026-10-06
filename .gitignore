@@ -1,5 +1,6 @@
 # Python 가상환경
 .venv/
+.python-runtime/
 venv/
 obs_env/
 env/

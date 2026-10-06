@@ -1,0 +1,418 @@
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const vm = require("node:vm");
+const test = require("node:test");
+
+const match = (station = "station-a", state = "approaching", vehicle = "vehicle-1") => ({
+  station: { station_id: station, station_name: station, latitude: 37.5, longitude: 127,
+    distance_m: 0 }, bus_route_id: "route-id",
+  arrival: { route_id: "route-id", direction: "종점", station_order: 1,
+    first_arrival: state === "arriving" ? "곧 도착" : "3분 후",
+    first_arrival_state: state, first_vehicle_id: vehicle },
+  announcement: `${station} 정류장에 143번 버스가 ${state === "arriving" ? "곧 도착합니다" : "3분 후 도착합니다"}.`,
+});
+const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
+
+function harness({ deferred = false, supplemental = false, watch = true } = {}) {
+  let clock = 100000, nextId = 0, playback = null;
+  let reply = { matches: [match()] };
+  const watches = new Map(), intervals = new Map(), calls = [], requests = [], spoken = [], events = [], polls = [], statuses = [];
+  const geo = { watchPosition(success, error) {
+    const id = ++nextId;
+    watches.set(id, { success, error });
+    return id;
+  }, clearWatch(id) { watches.delete(id); } };
+  if (!watch) delete geo.watchPosition;
+  if (supplemental) geo.getCurrentPosition = (success, error, options) => polls.push({ success, error, options });
+  const api = { nearbyBusArrival(args) {
+    calls.push(args);
+    if (deferred) return new Promise((resolve, reject) => requests.push({ resolve, reject }));
+    return reply instanceof Error ? Promise.reject(reply) : Promise.resolve(reply);
+  } };
+  const player = { speak(text, deadline, callbacks) {
+    playback = callbacks;
+    spoken.push({ text, deadline, dynamic: callbacks.dynamic });
+    callbacks.onStart?.();
+    return true;
+  }, cancel() { playback = null; } };
+  const context = { window: { GConfig: { get: () => ({ audio: { crosswalk_max_age_ms: 1500,
+    playback_timeout_ms: 15000 } }) } }, navigator: { geolocation: geo }, AbortController,
+    performance: { now: () => clock - 100000 },
+    setInterval(callback) { const id = ++nextId; intervals.set(id, callback); return id; },
+    clearInterval(id) { intervals.delete(id); } };
+  vm.createContext(context);
+  for (const name of ["gps-motion", "gps-stop-select", "audio_coordinator", "bus-journey"]) {
+    vm.runInContext(fs.readFileSync(`frontend/js/${name}.js`, "utf8"), context);
+  }
+  const coordinator = context.window.GAudioCoordinator.create({ player, now: () => clock - 100000 });
+  coordinator.start();
+  const journey = context.window.GBusJourney.create({ api, coordinator, now: () => clock,
+    monotonicNow: () => clock - 100000, onEvent: event => events.push(event),
+    onStatus: message => statuses.push(message) });
+  const position = (options = {}) => ({ timestamp: clock, coords: { latitude: 37.5,
+    longitude: 127, accuracy: 5, ...options } });
+  return { journey, coordinator, spoken, calls, requests, watches, intervals, events, polls, statuses, position,
+    now: () => clock, setReply(value) { reply = value; },
+    step(ms) { clock += ms; for (const tick of intervals.values()) tick(); coordinator.tick(); },
+    tick() { for (const tick of intervals.values()) tick(); },
+    locate(options) { [...watches.values()].at(-1).success(position(options)); },
+    deny() { [...watches.values()].at(-1).error({ code: 1 }); },
+    finish() { const ending = playback; playback = null; ending?.onEnd(); },
+    detect({ route = "143", state = "recognized_single", capturedAt = clock, id = 4 } = {}) {
+      journey.accept({ captured_at_ms: capturedAt, event: { target_route: route,
+        matches: [{ route_number: route, state, track_id: id, token_score: .99 }] } }, capturedAt);
+    },
+  };
+}
+
+test("GPS 권한 거절 후에도 번호를 안내하며 같은 차량의 확인 단계는 중복 발화하지 않는다", () => {
+  const app = harness();
+  app.journey.start("143");
+  app.deny();
+  assert.equal(app.journey.snapshot().gps.status, "denied");
+  assert.equal(app.watches.size, 0);
+  app.detect();
+  assert.match(app.spoken.at(-1).text, /143번으로 보이는/);
+  assert.equal(app.spoken.at(-1).dynamic, true);
+  assert.equal(app.journey.snapshot().ocr.confirmed, false);
+  app.finish();
+  app.detect({ state: "matched_candidate" });
+  assert.equal(app.journey.snapshot().ocr.confirmed, true);
+  assert.equal(app.spoken.length, 1);
+  assert.equal(app.journey.snapshot().gps.status, "denied");
+  app.detect({ id: 5, state: "matched_candidate" });
+  assert.equal(app.spoken.length, 2);
+  app.journey.stop();
+});
+
+test("OCR 장애는 GPS 조회와 정류장 도착정보를 중단하지 않는다", async () => {
+  const app = harness();
+  app.journey.start("143");
+  app.locate();
+  await flush();
+  assert.equal(app.journey.snapshot().gps.status, "ready");
+  app.finish();
+  app.journey.accept({ status: "unavailable", event: { matches: [] } }, app.now());
+  assert.equal(app.journey.snapshot().ocr.status, "error");
+  assert.equal(app.journey.snapshot().gps.status, "ready");
+  assert.equal(app.watches.size, 1);
+  assert.match(app.spoken[0].text, /3분 후/);
+  app.journey.stop();
+});
+
+test("번호가 안 읽힌 한 프레임은 최근 번호 안내를 자르지 않으며 3초가 지나면 지운다", () => {
+  const app = harness();
+  app.journey.start("143");
+  app.detect({ state: "matched_candidate" });
+  app.step(500);
+  app.journey.accept({ event: { matches: [] } }, app.now());
+  assert.equal(app.journey.snapshot().ocr.confirmed, true);
+  app.finish();
+  app.detect({ state: "matched_candidate" });
+  assert.equal(app.spoken.length, 1);
+  app.step(3001);
+  assert.equal(app.journey.snapshot().ocr.status, "stale");
+  assert.equal(app.journey.snapshot().ocr.confirmed, false);
+  app.journey.stop();
+});
+
+test("노선 변경은 이전 요청을 취소하고 늦은 응답 및 GPS 콜백을 무시한다", async () => {
+  const app = harness({ deferred: true });
+  app.journey.start("143");
+  const oldWatch = [...app.watches.values()][0];
+  app.locate();
+  assert.equal(app.calls.length, 1);
+  app.journey.start("271");
+  assert.equal(app.calls[0].signal.aborted, true);
+  oldWatch.success(app.position());
+  app.requests[0].resolve({ matches: [match("old-stop")] });
+  await flush();
+  assert.equal(app.journey.snapshot().route, "271");
+  assert.equal(app.journey.snapshot().gps.selected, null);
+  assert.equal(app.calls.length, 1);
+  app.detect({ route: "143" });
+  assert.equal(app.spoken.length, 0);
+  app.locate();
+  assert.equal(app.calls.at(-1).busNumber, "271");
+  app.requests[1].resolve({ matches: [match("new-stop")] });
+  await flush();
+  assert.equal(app.journey.snapshot().gps.selected.station.station_id, "new-stop");
+  app.journey.stop();
+});
+
+test("일시중지와 재개는 이전 위치·카메라 결과를 재사용하지 않고 모든 자원을 정리한다", async () => {
+  const app = harness({ deferred: true });
+  app.journey.start("143");
+  app.locate();
+  const beforePause = app.now();
+  app.journey.pause();
+  assert.equal(app.calls[0].signal.aborted, true);
+  assert.equal(app.watches.size, 0);
+  assert.equal(app.intervals.size, 0);
+  app.step(500);
+  app.journey.resume();
+  app.detect({ capturedAt: beforePause });
+  app.requests[0].resolve({ matches: [match()] });
+  await flush();
+  assert.equal(app.spoken.length, 0);
+  assert.equal(app.journey.snapshot().gps.selected, null);
+  assert.equal(app.journey.snapshot().ocr.status, "searching");
+  app.detect();
+  assert.equal(app.spoken.length, 1);
+  app.journey.stop();
+  assert.equal(app.watches.size, 0);
+  assert.equal(app.intervals.size, 0);
+});
+
+test("10초가 지난 GPS와 3초가 지난 OCR 결과는 안내·다시 듣기에 사용하지 않는다", async () => {
+  const app = harness();
+  app.journey.start("143");
+  const capturedAt = app.now();
+  app.locate();
+  await flush();
+  app.finish();
+  app.step(3001);
+  app.detect({ capturedAt });
+  assert.equal(app.journey.snapshot().ocr.status, "stale");
+  assert.equal(app.spoken.length, 1);
+  app.step(7000);
+  assert.equal(app.journey.snapshot().gps.status, "stale");
+  assert.equal(app.journey.repeat(), false);
+  app.detect();
+  assert.equal(app.spoken.length, 2);
+  assert.equal(app.journey.snapshot().gps.status, "stale");
+  app.journey.stop();
+});
+
+test("긴급·신호 안내가 버스 음성보다 우선하며 버스 안내는 최신일 때만 재시도한다", () => {
+  const app = harness();
+  app.journey.start("143");
+  app.coordinator.request({ source: "walking", priority: app.coordinator.PRIORITY.emergency,
+    text: "멈추세요.", validUntil: 15000 });
+  app.detect();
+  assert.deepEqual(app.spoken.map(item => item.text), ["멈추세요."]);
+  app.finish();
+  app.step(1000);
+  assert.match(app.spoken.at(-1).text, /143번으로 보이는/);
+  app.coordinator.request({ source: "traffic", priority: app.coordinator.PRIORITY.trafficRed,
+    text: "빨간불.", validUntil: 15000 });
+  assert.equal(app.spoken.at(-1).text, "빨간불.");
+  app.step(3001);
+  app.finish();
+  app.tick();
+  assert.equal(app.spoken.at(-1).text, "빨간불.");
+  app.journey.stop();
+});
+
+test("같은 차량의 같은 도착 단계는 반복하지 않고 도착 임박과 새 차량은 다시 안내한다", async () => {
+  const app = harness();
+  app.journey.start("143");
+  app.locate();
+  await flush();
+  app.finish();
+  for (const [phase, vehicle, expectedCount] of [["approaching", "vehicle-1", 1],
+    ["arriving", "vehicle-1", 2], ["approaching", "vehicle-2", 3]]) {
+    app.step(20000);
+    app.setReply({ matches: [match("station-a", phase, vehicle)] });
+    app.locate();
+    await flush();
+    assert.equal(app.spoken.length, expectedCount);
+    app.finish();
+  }
+  app.journey.stop();
+});
+
+test("GPS 오차 30m 초과는 조회를 보류하며 API 오류도 20초 갱신 간격을 지킨다", async () => {
+  const app = harness();
+  app.journey.start("143");
+  app.locate({ accuracy: 31 });
+  assert.equal(app.calls.length, 0);
+  assert.equal(app.journey.snapshot().gps.status, "inaccurate");
+  const error = new Error("서울 버스 API 키가 필요합니다.");
+  error.code = "bus_api_key_missing";
+  app.setReply(error);
+  app.locate({ accuracy: 30 });
+  await flush();
+  assert.equal(app.calls.length, 1);
+  assert.match(app.journey.snapshot().gps.message, /API 키/);
+  for (let i = 0; i < 19; i++) { app.step(1000); app.locate(); await flush(); }
+  assert.equal(app.calls.length, 1);
+  app.step(1000);
+  await flush();
+  assert.equal(app.calls.length, 2);
+  app.journey.stop();
+});
+
+test("다른 방향의 정류장을 직접 선택하면 이후 같은 위치 갱신에도 선택을 유지한다", async () => {
+  const app = harness();
+  app.setReply({ matches: [match("east"), match("west")] });
+  app.journey.start("143");
+  app.locate();
+  await flush();
+  app.finish();
+  const west = app.journey.snapshot().gps.candidates.find(item => item.station.station_id === "west");
+  assert.equal(app.journey.selectStop(west.key), true);
+  assert.equal(app.journey.snapshot().gps.selected.station.station_id, "west");
+  app.step(1000);
+  app.locate();
+  assert.equal(app.journey.snapshot().gps.selected.station.station_id, "west");
+  app.journey.stop();
+});
+
+test("일시중지 후 새 GPS로 재개해도 선택한 방향과 완료한 차량 안내 이력을 유지한다", async () => {
+  const app = harness();
+  app.setReply({ matches: [match("east"), match("west")] });
+  app.journey.start("143");
+  app.locate();
+  await flush();
+  app.finish();
+  app.journey.selectStop(app.journey.snapshot().gps.candidates[1].key);
+  app.finish();
+  assert.equal(app.spoken.length, 2);
+  app.journey.pause();
+  app.step(1000);
+  app.journey.resume();
+  assert.equal(app.journey.snapshot().gps.selected, null);
+  app.locate();
+  await flush();
+  assert.equal(app.journey.snapshot().gps.selected.station.station_id, "west");
+  assert.equal(app.spoken.length, 2);
+  app.journey.stop();
+});
+
+test("선택한 정류장 ETA가 잠시 빠져도 반대 방향으로 바꾸지 않고 대기한다", async () => {
+  const app = harness();
+  app.setReply({ matches: [match("east"), match("west")] });
+  app.journey.start("143");
+  app.locate();
+  await flush();
+  app.finish();
+  app.journey.selectStop(app.journey.snapshot().gps.candidates[1].key);
+  app.finish();
+  app.step(20000);
+  app.setReply({ matches: [match("east", "arriving")] });
+  app.locate();
+  await flush();
+  assert.equal(app.journey.snapshot().gps.status, "waiting");
+  assert.equal(app.journey.snapshot().gps.selected.station.station_id, "west");
+  assert.equal(app.spoken.length, 2);
+  assert.equal(app.journey.repeat(), false);
+  app.step(20000);
+  app.setReply({ matches: [match("east", "arriving"), match("west", "arriving")] });
+  app.locate();
+  await flush();
+  assert.equal(app.journey.snapshot().gps.status, "ready");
+  assert.match(app.spoken.at(-1).text, /west 정류장/);
+  app.journey.stop();
+});
+
+test("ETA 없는 정류장도 직접 선택할 수 있고 새 도착정보가 생기면 그 정류장을 안내한다", async () => {
+  const app = harness();
+  app.setReply({ matches: [{ ...match("west"), arrival: null, announcement: "도착정보 없음" }] });
+  app.journey.start("143");
+  app.locate();
+  await flush();
+  assert.equal(app.journey.snapshot().gps.candidates.length, 1);
+  assert.equal(app.journey.selectStop(app.journey.snapshot().gps.candidates[0].key), true);
+  assert.equal(app.journey.snapshot().gps.status, "waiting");
+  app.step(20000);
+  app.setReply({ matches: [match("east"), match("west")] });
+  app.locate();
+  await flush();
+  assert.equal(app.journey.snapshot().gps.selected.station.station_id, "west");
+  assert.equal(app.journey.snapshot().gps.status, "ready");
+  assert.equal(app.spoken.length, 1);
+  assert.match(app.spoken[0].text, /west 정류장/);
+  app.journey.stop();
+});
+
+test("지연된 도착 조회는 취소하고 다음 갱신이 복구되며 이전 응답은 사용하지 않는다", async () => {
+  const app = harness({ deferred: true });
+  app.journey.start("143");
+  app.locate();
+  app.step(10001);
+  assert.equal(app.calls[0].signal.aborted, true);
+  app.locate();
+  app.step(20000);
+  app.locate();
+  assert.equal(app.calls.length, 2);
+  app.requests[0].resolve({ matches: [match("old-stop")] });
+  await flush();
+  assert.equal(app.journey.snapshot().gps.selected, null);
+  app.requests[1].resolve({ matches: [match("new-stop")] });
+  await flush();
+  assert.equal(app.journey.snapshot().gps.selected.station.station_id, "new-stop");
+  app.journey.stop();
+});
+
+test("다시 듣기는 최신 OCR 문장을 처음부터 재생하고 오류로 표기된 캐시 번호는 안내하지 않는다", () => {
+  const app = harness();
+  app.journey.start("143");
+  app.detect();
+  assert.equal(app.journey.repeat(), true);
+  assert.equal(app.spoken.length, 2);
+  app.finish();
+  app.journey.accept({ status: "error", event: { matches: [{ route_number: "143", track_id: 5,
+    state: "matched_candidate" }] } }, app.now());
+  assert.equal(app.journey.snapshot().ocr.status, "error");
+  assert.equal(app.spoken.length, 2);
+  app.journey.stop();
+});
+
+test("정류장에서 watch 갱신이 멈춰도 5초 간격 보조 GPS 조회로 도착정보를 계속 갱신한다", async () => {
+  const app = harness({ supplemental: true });
+  app.journey.start("143");
+  assert.equal(app.polls.length, 1);
+  assert.equal(app.polls[0].options.maximumAge, 0);
+  assert.equal(app.polls[0].options.timeout, 4000);
+  app.polls[0].success(app.position());
+  await flush();
+  app.finish();
+  for (let i = 0; i < 6; i++) {
+    app.step(5000);
+    app.polls.at(-1).success(app.position());
+    await flush();
+    assert.equal(app.journey.snapshot().gps.status, "ready");
+  }
+  assert.equal(app.polls.length, 7);
+  assert.equal(app.calls.length, 2);
+  app.journey.stop();
+});
+
+test("보조 GPS는 한 요청만 기다리며 일시중지 전 늦은 콜백을 재개 후 무시한다", async () => {
+  const app = harness({ supplemental: true });
+  app.journey.start("143");
+  const old = app.polls[0];
+  for (let i = 0; i < 4; i++) app.step(1000);
+  assert.equal(app.polls.length, 1);
+  app.journey.pause();
+  app.step(1000);
+  app.journey.resume();
+  assert.equal(app.polls.length, 2);
+  old.success(app.position());
+  old.error({ code: 1 });
+  await flush();
+  assert.equal(app.calls.length, 0);
+  assert.equal(app.journey.snapshot().gps.status, "locating");
+  app.polls[1].success(app.position());
+  await flush();
+  assert.equal(app.calls.length, 1);
+  assert.equal(app.journey.snapshot().gps.status, "ready");
+  app.journey.stop();
+});
+
+test("watch 미지원 환경은 보조 GPS로 시작하고 GPS 오류 복구를 상단 상태에도 알린다", async () => {
+  const app = harness({ supplemental: true, watch: false });
+  app.journey.start("143");
+  app.polls[0].error({ code: 2 });
+  assert.equal(app.journey.snapshot().gps.status, "error");
+  app.step(5000);
+  app.polls[1].success(app.position());
+  await flush();
+  assert.equal(app.journey.snapshot().gps.status, "ready");
+  assert.match(app.statuses.at(-1), /현재 위치와 정류장을 확인했습니다/);
+  app.step(5000);
+  app.polls[2].error({ code: 3 });
+  assert.equal(app.journey.snapshot().gps.status, "ready", "최근 정상 위치가 있으면 보조 조회 시간 초과로 지우지 않는다");
+  app.journey.stop();
+});

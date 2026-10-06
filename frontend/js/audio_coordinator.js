@@ -6,7 +6,8 @@
  */
 (() => {
   const PRIORITY = Object.freeze({ emergency: 0, crosswalk: 1, trafficRed: 2,
-    walkingSurface: 3, walking: 4, trafficChange: 5, traffic: 6, boarding: 7 });
+    walkingSurface: 3, walking: 4, trafficChange: 5, traffic: 6, boarding: 7,
+    busOcr: 8, busArrival: 9 });
 
   // 전체 안내에서 하나뿐인 음성 재생 관리자 생성
   /** 단일 플레이어의 취소와 반복을 안내 우선순위에 맞춰 제어한다. */
@@ -24,8 +25,11 @@
       }
       const version = generation;
       const accepted = player.speak(request.text, request.validUntil, {
+        dynamic: request.dynamic,
         onStart: () => {
+          if (!active || version !== generation || current !== request) return;
           request.started = true;
+          request.onStart();
           onDiagnostic({ ...request.metadata, source: request.source, status: "started", at_ms: now() });
         },
         onFailure: () => {
@@ -47,8 +51,8 @@
 
     // 일반 안내 재생 요청
     /** 더 높은 우선순위만 현재 음성을 중단하며 나머지는 대기시키지 않고 폐기한다. */
-    function request({ source, priority, text, validUntil, repeat = false,
-      kind = null, metadata = {}, onComplete = () => {}, onCancel = () => {} }) {
+    function request({ source, priority, text, validUntil, repeat = false, dynamic = false,
+      kind = null, metadata = {}, onStart = () => {}, onComplete = () => {}, onCancel = () => {} }) {
       if (!active || !text || !Number.isFinite(validUntil) || now() >= validUntil) {
         onDiagnostic({ ...metadata, source, status: "stale", at_ms: now() });
         return false;
@@ -74,8 +78,8 @@
         player.cancel();
         previous.onCancel();
       }
-      current = { source, priority, text, validUntil, repeat, kind, finishing: false,
-        metadata, onComplete, onCancel, started: false };
+      current = { source, priority, text, validUntil, repeat, dynamic, kind, finishing: false,
+        metadata, onStart, onComplete, onCancel, started: false };
       return play(current);
     }
 

@@ -5,12 +5,17 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 if [ ! -x .venv/bin/python ]; then
+  if ! command -v python3.12 >/dev/null 2>&1; then
+    echo "[run] Python 3.12를 찾지 못했습니다. Python 3.12와 venv 지원을 설치하세요." >&2
+    echo "[run] python3.12 --version 명령이 성공한 뒤 ./scripts/run.sh 를 다시 실행하세요." >&2
+    exit 1
+  fi
   python3.12 -m venv .venv
   .venv/bin/python -m pip install -r requirements.txt
 fi
 
 if ! .venv/bin/python -c 'import fastapi, uvicorn, multipart, yaml' >/dev/null 2>&1; then
-  .venv/bin/python -m pip install 'fastapi>=0.110,<1' 'uvicorn[standard]>=0.29,<1' 'python-multipart>=0.0.9,<1' 'PyYAML==6.0.3'
+  .venv/bin/python -m pip install -r requirements.txt
 fi
 
 if [ -f .env ]; then

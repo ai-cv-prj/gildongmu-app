@@ -88,3 +88,19 @@ context.window.GOverlay.render({ image_width: 360, image_height: 640, captured_a
 }, state => { drawState = state; });
 assert.equal(drawState, "stale");
 assert.equal(rectangles.length, 0);
+
+// Independent OCR may finish on the next frame, but its own capture must still be fresh.
+function busFrame(capturedAt) {
+  labels.length = 0;
+  context.window.GOverlay.render({ image_width: 360, image_height: 640,
+    frame_id: 2, captured_at_ms: 1950,
+    bus: { frame_id: 1, captured_at_ms: capturedAt,
+      detections: [{ box: { x1: .1, y1: .2, x2: .3, y2: .4 }, extra: { text: "143" } }] },
+  });
+}
+busFrame(1700);
+assert.ok(labels.includes("143"));
+busFrame(1500);
+assert.ok(!labels.includes("143"));
+busFrame(2100);
+assert.ok(!labels.includes("143"));

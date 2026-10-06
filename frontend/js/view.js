@@ -1,0 +1,285 @@
+/** Accessible view only; the application owns camera, session and bus state. */
+(() => {
+  const CAMERA_SCREENS = new Set(["walk", "signal", "search", "approach", "arrived"]);
+  const BUS_SCREENS = new Set(["search", "approach", "arrived"]);
+  const SCREENS = new Set(["home", "input", "confirm", ...CAMERA_SCREENS]);
+  const DEFAULT_CUES = {
+    walk: { label: "이동 안내", title: "주변을 살피며 이동해 주세요.", copy: "보행 위험과 신호를 확인하고 있어요.", icon: "walk", tone: "walk" },
+    signal: { label: "보행자 신호", title: "신호를 확인하고 있어요.", copy: "주변과 보행자 신호를 확인해 주세요.", icon: "hand", tone: "signal" },
+    search: { label: "목표 버스 탐색", title: "버스를 찾고 있어요.", copy: "버스가 오는 쪽을 바라보세요.", icon: "scan", tone: "search" },
+    approach: { label: "버스 도착정보", title: "버스가 곧 도착할 예정이에요.", copy: "카메라로 목표 버스 번호를 확인하고 있어요.", icon: "bus", tone: "approach" },
+    arrived: { label: "버스 도착정보", title: "도착으로 표시됩니다.", copy: "카메라로 버스 번호와 주변을 확인해 주세요. 탑승 후 종료를 눌러 주세요.", icon: "check", tone: "arrived" },
+  };
+  const $ = id => document.getElementById(id);
+  const all = selector => [...document.querySelectorAll(selector)];
+  const updateText = (element, value) => { if (element.textContent !== value) element.textContent = value; };
+
+  function create({ onAction = () => {}, onSubmitRoute = () => {}, onRateChange = () => {},
+    onTextScaleChange = () => {}, onStationChange = () => {} } = {}) {
+    let screen = "home", paused = false, busy = false;
+    let bus = {}, lastResult = null, currentCue = DEFAULT_CUES.walk;
+    let micMode = null, destroyed = false, stationCount = 0, speechSession = false;
+    const listeners = [];
+    const cameraPanel = document.querySelector('[data-panel="camera"]');
+    function bind(element, event, callback) {
+      element.addEventListener(event, callback);
+      listeners.push(() => element.removeEventListener(event, callback));
+    }
+    function invoke(callback, ...args) {
+      try {
+        const result = callback(...args);
+        if (result && typeof result.catch === "function") result.catch(error => setStatus(error.message || "요청을 완료하지 못했어요."));
+      } catch (error) { setStatus(error.message || "요청을 완료하지 못했어요."); }
+    }
+    function announce(message) { updateText($("announcer"), String(message || "")); }
+    function setStatus(message) {
+      const value = String(message || "");
+      updateText($("app-status"), value);
+      updateText($("status"), value);
+    }
+    function setRoute(value) {
+      const route = String(value || "").slice(0, 30);
+      $("bus-number").value = route;
+      all("[data-route]").forEach(element => updateText(element, route || "—"));
+    }
+    function readRoute() { return $("bus-number").value.trim(); }
+    function routeError(message) {
+      updateText($("route-error"), String(message || ""));
+      $("route-error").hidden = !message;
+      $("bus-number").setAttribute("aria-invalid", String(Boolean(message)));
+    }
+    function paintCue(cue) {
+      currentCue = cue;
+      updateText($("guidance-label"), cue.label);
+      updateText($("guidance-title"), cue.title);
+      updateText($("guidance-copy"), cue.copy);
+      $("guidance-icon").setAttribute("href", `#icon-${cue.icon}`);
+      $("guidance-card").dataset.tone = cue.tone;
+    }
+    function hazardCue(result) {
+      if (!result) return null;
+      const age = Date.now() - result.captured_at_ms;
+      if (!Number.isFinite(age) || age < -1000 || age >= 1500) return null;
+      const walking = result.walking?.event || {};
+      const crosswalk = result.crosswalk?.event || {};
+      const surface = result.walking_surface?.event || {};
+      const signal = result.traffic?.event || {};
+      const walkingText = walking.voice_event?.text || walking.voice_text;
+      const action = walking.voice_event?.action || walking.voice_action || walking.last_action;
+      if (walking.level === "danger" && action === "stop" && walkingText) {
+        return { label: "보행 위험", title: walkingText, copy: "잠시 멈추고 주변을 확인해 주세요.", icon: "alert", tone: "walk" };
+      }
+      if (crosswalk.voice_text && (crosswalk.repeat || /^(outside|align)_/.test(crosswalk.status || ""))) {
+        return { label: "횡단보도 안내", title: crosswalk.voice_text, copy: "횡단보도 안에서 주변을 확인해 주세요.", icon: "alert", tone: "walk" };
+      }
+      if (signal.signal_state === "red" && Number.isInteger(signal.selected_detection_index)) {
+        return { label: "보행자 신호", title: "빨간불입니다.", copy: "횡단보도 앞에서 기다려 주세요.", icon: "hand", tone: "signal" };
+      }
+      if (surface.voice_text && (surface.repeat || /^outside_/.test(surface.status || ""))) {
+        return { label: "보행로 안내", title: surface.voice_text, copy: "주변을 확인하며 보행로 안으로 이동해 주세요.", icon: "alert", tone: "walk" };
+      }
+      if (walking.level === "danger" && walkingText) {
+        return { label: "보행 장애물", title: walkingText, copy: "이동 방향과 주변을 확인해 주세요.", icon: "alert", tone: "walk" };
+      }
+      if (!BUS_SCREENS.has(screen) && signal.signal_state === "green" && Number.isInteger(signal.selected_detection_index)) {
+        return { label: "보행자 신호", title: "초록불입니다.", copy: "음성 안내와 주변 상황을 함께 확인해 주세요.", icon: "walk", tone: "signal" };
+      }
+      return null;
+    }
+    function render(result) {
+      lastResult = result || null;
+      if (!CAMERA_SCREENS.has(screen) || paused) return;
+      paintCue(hazardCue(lastResult) || DEFAULT_CUES[screen]);
+    }
+    function updateControls() {
+      all("[data-action], [data-mic], #route-form input, button[form='route-form']").forEach(element => {
+        const action = element.dataset.action;
+        const canCancel = action === "end" || action === "back";
+        element.disabled = (busy && !canCancel) || (paused && action === "manual-arrival") || (paused && action === "locate");
+      });
+      $("bus-stations").disabled = busy || paused || stationCount === 0;
+      $("app").setAttribute("aria-busy", String(busy));
+    }
+    function setBusy(value) { busy = Boolean(value); updateControls(); }
+    function setPaused(value) {
+      paused = Boolean(value);
+      if (paused) speech.stop();
+      cameraPanel.classList.toggle("is-paused", paused);
+      $("pause-card").hidden = !paused;
+      $("guidance-card").hidden = paused;
+      $("bus-target").hidden = paused || !BUS_SCREENS.has(screen);
+      $("pause-button").setAttribute("aria-pressed", String(paused));
+      $("pause-icon").setAttribute("href", paused ? "#icon-play" : "#icon-pause");
+      updateText($("pause-label"), paused ? "재개" : "일시중지");
+      updateControls();
+      if (!paused) render(lastResult);
+    }
+    function show(next, { focus = true } = {}) {
+      if (!SCREENS.has(next)) throw new Error(`지원하지 않는 화면: ${next}`);
+      const previous = screen;
+      screen = next;
+      if (previous !== next) speech.stop();
+      const panelName = CAMERA_SCREENS.has(screen) ? "camera" : screen;
+      all("[data-panel]").forEach(panel => { panel.hidden = panel.dataset.panel !== panelName; });
+      const busScreen = BUS_SCREENS.has(screen);
+      $("app").dataset.screen = screen;
+      updateText($("camera-title"), busScreen ? "버스 탐색" : "이동 안내");
+      $("bus-target").hidden = !busScreen || paused;
+      $("stage-button").dataset.action = busScreen ? "end" : "manual-arrival";
+      $("stage-icon").setAttribute("href", busScreen ? "#icon-power" : "#icon-pin");
+      updateText($("stage-label"), busScreen ? "종료" : "정류장 도착");
+      $("walk-end").hidden = busScreen;
+      if (screen === "input") routeError("");
+      render(lastResult);
+      updateControls();
+      // Automatic OCR/GPS updates must not move keyboard or screen reader focus.
+      if (focus && previous !== screen && !(CAMERA_SCREENS.has(previous) && CAMERA_SCREENS.has(screen))) {
+        document.querySelector(`[data-panel="${panelName}"] h1`)?.focus({ preventScroll: false });
+      }
+    }
+    function setBus(value = {}) {
+      bus = { ...bus, ...value };
+      if (Object.prototype.hasOwnProperty.call(value, "route")) setRoute(value.route);
+      updateText($("bus-station-name"), String(bus.station || "정류장 확인 중"));
+      updateText($("bus-arrival-text"), String(bus.arrivalText || "도착정보를 확인하고 있어요."));
+      for (const [key, id] of [["message", "bus-message"], ["gpsMessage", "bus-gps-message"], ["ocrMessage", "bus-ocr-message"]]) {
+        updateText($(id), String(bus[key] || ""));
+        $(id).hidden = !bus[key] || (key === "message" && [bus.gpsMessage, bus.ocrMessage].includes(bus[key]));
+      }
+      if (bus.status) $("bus-target").dataset.status = String(bus.status);
+    }
+    function setStations(stations = [], selectedId = null) {
+      const select = $("bus-stations"), previous = select.value;
+      const fragment = document.createDocumentFragment();
+      stationCount = stations.length;
+      if (!stations.length) {
+        const option = document.createElement("option");
+        option.value = ""; option.textContent = "가까운 정류장 확인 중";
+        fragment.appendChild(option);
+      }
+      for (const station of stations) {
+        const option = document.createElement("option");
+        option.value = String(station.key ?? station.id ?? station.station_id ?? station.node_id ?? "");
+        const distance = Number.isFinite(station.distance_m) ? ` · ${Math.round(station.distance_m)}m` : "";
+        const direction = station.direction ? ` · ${station.direction}` : "";
+        option.textContent = `${station.name || station.station_name || station.node_name || "정류장"}${direction}${distance}`;
+        fragment.appendChild(option);
+      }
+      select.replaceChildren(fragment);
+      const selected = selectedId === null ? previous : String(selectedId);
+      if ([...select.options].some(option => option.value === selected)) select.value = selected;
+      $("station-picker").hidden = stationCount === 0;
+      updateControls();
+    }
+    function setSettings({ rate, textScale } = {}) {
+      if (Number.isFinite(rate)) {
+        const value = Math.max(.75, Math.min(2, rate));
+        $("voice-rate").value = String(value);
+        $("voice-rate").setAttribute("aria-valuetext", `${value}배`);
+        updateText($("voice-rate-label"), `${Number.isInteger(value) ? value.toFixed(1) : value}배`);
+      }
+      if (Number.isFinite(textScale)) {
+        const value = [1, 1.2, 2].includes(textScale) ? textScale : 1;
+        $("text-scale").value = String(value);
+        $("app").style.setProperty("--text-scale", String(value));
+        $("app").classList.toggle("is-enlarged", value > 1);
+      }
+    }
+    function getGuidance() {
+      if (paused) return "안내를 잠시 멈췄어요. 촬영과 자동 안내가 중지됩니다.";
+      if (screen === "input") return "버스 번호를 입력하거나 마이크를 눌러 말해 주세요.";
+      if (screen === "confirm") return `${readRoute()}번이 맞습니까?`;
+      if (screen === "home") return "길동무가 정류장까지 함께합니다. 선택한 속도로 안내해 드릴게요.";
+      render(lastResult);
+      return [currentCue.title, currentCue.copy].filter(Boolean).join(" ");
+    }
+    const speech = window.GSpeechInput.create({
+      onState(active, mode) {
+        if (active) micMode = mode;
+        all("[data-mic]").forEach(button => button.setAttribute("aria-pressed", String(active && button.dataset.mic === micMode)));
+        if (active) {
+          const message = mode === "confirm" ? "음성 답변 대기 · 맞아요 또는 다시 입력이라고 말해 주세요." : "음성 입력 중 · 탈 버스 번호를 말해 주세요.";
+          if (mode === "input") updateText($("route-hint"), message);
+          else updateText($("confirm-voice-text"), message);
+          announce(message);
+        }
+        if (!active && speechSession) {
+          speechSession = false;
+          invoke(onAction, "speech-end");
+        }
+        if (!active && $("route-hint").textContent.startsWith("음성 입력 중")) {
+          updateText($("route-hint"), "다시 말하려면 마이크를 누르거나 번호를 직접 입력해 주세요.");
+        }
+        if (!active && $("confirm-voice-text").textContent.startsWith("음성 답변 대기")) {
+          updateText($("confirm-voice-text"), "맞아요 또는 다시 입력 버튼을 눌러 주세요.");
+        }
+      },
+      onResult({ mode, value }) {
+        if (destroyed) return;
+        if (mode === "input" && screen === "input") {
+          setRoute(value);
+          routeError("");
+          updateText($("route-hint"), `${value}번을 입력했어요. 번호를 확인하고 버스 찾기를 눌러 주세요.`);
+          announce($("route-hint").textContent);
+        } else if (mode === "confirm" && screen === "confirm") {
+          invoke(onAction, value);
+        }
+      },
+      onError(message) {
+        if (micMode === "input") updateText($("route-hint"), message);
+        else if (micMode === "confirm") updateText($("confirm-voice-text"), message);
+        announce(message);
+      },
+    });
+    if (!speech.supported) {
+      updateText($("route-hint"), "음성 입력을 지원하지 않는 브라우저입니다. 번호를 직접 입력해 주세요.");
+      updateText($("confirm-voice-text"), "아래 버튼으로 번호를 확인해 주세요.");
+    }
+    all("[data-action]").forEach(button => bind(button, "click", () => {
+      speech.stop();
+      invoke(onAction, button.dataset.action);
+    }));
+    all("[data-mic]").forEach(button => bind(button, "click", () => {
+      if (speech.isActive()) { speech.stop(); return; }
+      micMode = button.dataset.mic;
+      // start() first resets any previous recognizer; signal the audio owner only
+      // after that reset so it stays silent throughout this microphone session.
+      if (speech.start(micMode)) {
+        speechSession = true;
+        invoke(onAction, "speech-start");
+      }
+    }));
+    bind($("route-form"), "submit", event => {
+      event.preventDefault();
+      if (busy) return;
+      const route = readRoute();
+      if (!route) { routeError("버스 번호를 먼저 입력해 주세요."); $("bus-number").focus(); return; }
+      speech.stop();
+      routeError("");
+      setRoute(route);
+      invoke(onSubmitRoute, route);
+    });
+    bind($("bus-number"), "input", () => routeError(""));
+    bind($("voice-rate"), "input", event => {
+      const rate = Number(event.target.value);
+      setSettings({ rate });
+      invoke(onRateChange, rate);
+    });
+    bind($("text-scale"), "change", event => {
+      const textScale = Number(event.target.value);
+      setSettings({ textScale });
+      invoke(onTextScaleChange, textScale);
+      announce(`글자 크기를 ${Math.round(20 * textScale)}픽셀로 변경했습니다.`);
+    });
+    bind($("bus-stations"), "change", event => invoke(onStationChange, event.target.value));
+    function destroy() {
+      destroyed = true;
+      speech.destroy();
+      listeners.forEach(remove => remove());
+    }
+    show("home", { focus: false });
+    return { show, render, setBus, setStations, setPaused, setBusy, setStatus, setRoute, readRoute,
+      setSettings, announce, getScreen: () => screen, getGuidance, destroy };
+  }
+  window.GView = { create };
+})();

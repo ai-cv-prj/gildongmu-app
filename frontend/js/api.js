@@ -8,7 +8,13 @@ window.GApi = (() => {
   /** 서버가 반환한 오류 본문을 검사한다. */
   async function result(response) {
     const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(typeof body.detail === "string" ? body.detail : `서버 오류 (${response.status})`);
+    if (!response.ok) {
+      const error = new Error(typeof body.detail === "string" ? body.detail
+        : body.error?.message || `서버 오류 (${response.status})`);
+      error.code = body.error?.code || body.detail?.code;
+      error.status = response.status;
+      throw error;
+    }
     return body;
   }
 
@@ -67,6 +73,23 @@ window.GApi = (() => {
     }).then(result);
   }
 
+  function nearbyBusArrival({ busNumber, latitude, longitude, accuracyM, signal }) {
+    const query = new URLSearchParams({ bus_number: busNumber, latitude, longitude });
+    if (Number.isFinite(accuracyM)) query.set("accuracy_m", accuracyM);
+    return fetch(`/api/nearby-bus-arrival?${query}`, { signal, cache: "no-store" }).then(result);
+  }
+
+  function busStatus() {
+    return fetch("/api/bus/status", { cache: "no-store" }).then(result);
+  }
+
+  function busEvents(sessionId, events) {
+    return fetch(`/api/sessions/${sessionId}/bus-events`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ events }),
+    }).then(result);
+  }
+
   // 테스트 종료
   /** 파일로 저장된 프레임 수를 포함한 요약을 받는다. */
   function stop(sessionId) {
@@ -74,5 +97,6 @@ window.GApi = (() => {
       body: JSON.stringify({ session_id: sessionId }) }).then(result);
   }
 
-  return { start, frame, recording, camera, recordingEvent, timings, boarding, stop };
+  return { start, frame, recording, camera, recordingEvent, timings, boarding, stop,
+    nearbyBusArrival, busStatus, busEvents };
 })();

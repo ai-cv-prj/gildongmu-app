@@ -16,6 +16,12 @@ Pillow==12.3.0
 scipy==1.18.1
 imageio-ffmpeg==0.6.0
 
+# Optional bus route OCR (the PARSeq source and weights stay in weights/bus/).
+timm==0.9.16
+pytorch-lightning==2.5.1
+nltk==3.10.3
+lmdb==1.8.1
+
 # 설정 파일
 PyYAML==6.0.3
 

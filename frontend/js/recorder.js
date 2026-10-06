@@ -203,6 +203,20 @@ window.GRecorder = (() => {
     return recorder?.state === "recording";
   }
 
+  function pause() {
+    for (const current of [recorder, rawRecorder]) {
+      if (current?.state === "recording") current.pause();
+    }
+    stopPreview();
+  }
+
+  function resume() {
+    startPreview();
+    for (const current of [recorder, rawRecorder]) {
+      if (current?.state === "paused") current.resume();
+    }
+  }
+
   return { prepareAudio, cancelPreparedAudio, startPreview, stopPreview,
-    startRaw, stopRaw, start, stop, active };
+    startRaw, stopRaw, start, stop, active, pause, resume };
 })();

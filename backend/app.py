@@ -5,19 +5,24 @@ file_path: backend/app.py
 """
 
 from pathlib import Path
+from contextlib import asynccontextmanager
+import json
 import subprocess
 import time
 from typing import Literal
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from backend.session import SessionError, SessionManager
 from backend.boarding import BoardingError
+from backend.bus.arrival import BusArrivalError, BusArrivalService
+from backend.bus.config import BusServiceSettings, load_bus_config
+from backend.bus.speech import BusSpeechError, BusSpeechService
 from src.audio_config import audio_directory
 from src.settings import (
     DEFAULT_APP_CONFIG, DEFAULT_AUDIO_CONFIG, DEFAULT_PATHS_CONFIG,
@@ -43,8 +48,8 @@ class StopRequest(BaseModel):
 
 
 class BoardingRequest(BaseModel):
-    action: Literal["stop_announced", "submit", "cancel", "reopen"]
-    arrival_event_id: int = Field(ge=1)
+    action: Literal["arrive", "stop_announced", "submit", "cancel", "reopen"]
+    arrival_event_id: int | None = Field(default=None, ge=1)
     bus_number: str | None = Field(default=None, max_length=30)
 
 
@@ -78,18 +83,43 @@ class ClientTimingRequest(BaseModel):
 
 # FastAPI 앱과 테스트용 세션 저장소 생성
 def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT_PATHS_CONFIG,
-               audio_config=DEFAULT_AUDIO_CONFIG):
+               audio_config=DEFAULT_AUDIO_CONFIG, bus_config=None):
     """테스트에서는 모델 저장소를 교체할 수 있는 API 앱을 반환한다."""
-    app = FastAPI(title="길동무 실시간 테스트")
+    @asynccontextmanager
+    async def lifespan(_app):
+        try:
+            yield
+        finally:
+            sessions.close()
+
+    app = FastAPI(title="길동무 실시간 테스트", lifespan=lifespan)
     settings = load_app_config(app_config)
     audio = load_audio_settings(audio_config)
     paths = load_paths(paths_config)
     frontend = resolve_path(paths["frontend_dir"])
     upload = settings["upload"]
     recording_settings = settings["recording"]
+    bus_settings = bus_config or load_bus_config()
+    bus_arrivals = BusArrivalService(BusServiceSettings.from_config(bus_settings))
+    bus_speech = BusSpeechService(bus_settings.speech_timeout_sec)
     if manager is None:
-        manager = SessionManager(resolve_path(paths["session_dir"]), session_settings=settings["session"])
+        manager = SessionManager(resolve_path(paths["session_dir"]), session_settings=settings["session"],
+                                 bus_config=bus_settings)
     sessions = manager
+    app.state.bus_arrivals = bus_arrivals
+    app.state.bus_speech = bus_speech
+
+    @app.exception_handler(BusArrivalError)
+    async def bus_arrival_error(_request: Request, error: BusArrivalError):
+        return JSONResponse(status_code=error.status_code,
+                            content={"error": {"code": error.code, "message": error.message},
+                                     "detail": error.message})
+
+    @app.exception_handler(BusSpeechError)
+    async def bus_speech_error(_request: Request, error: BusSpeechError):
+        return JSONResponse(status_code=error.status_code,
+                            content={"error": {"code": error.code, "message": error.message},
+                                     "detail": error.message})
 
     @app.middleware("http")
     async def disable_frontend_cache(request, call_next):
@@ -114,6 +144,24 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
     def health():
         """터널 스크립트가 서버 작동 여부를 확인한다."""
         return {"ok": True}
+
+    @app.get("/api/bus/status")
+    def bus_status():
+        return bus_settings.readiness(api_key_configured=bool(bus_arrivals.service_key))
+
+    @app.get("/api/nearby-bus-arrival")
+    def nearby_bus_arrival(
+        bus_number: str = Query(..., min_length=1, max_length=20),
+        latitude: float = Query(..., ge=-90, le=90),
+        longitude: float = Query(..., ge=-180, le=180),
+        accuracy_m: float | None = Query(None, ge=0, le=5000),
+    ):
+        return bus_arrivals.lookup_nearby(bus_number, latitude, longitude, accuracy_m)
+
+    @app.get("/api/bus-arrival-speech")
+    def bus_arrival_speech(text: str = Query(..., min_length=1, max_length=200)):
+        return Response(content=bus_speech.synthesize(text), media_type="audio/mpeg",
+                        headers={"Cache-Control": "public, max-age=3600"})
 
     # 휴대폰 화면 제공
     @app.get("/")
@@ -180,6 +228,32 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
             raise HTTPException(409, str(error)) from error
         except BoardingError as error:
             raise HTTPException(422, str(error)) from error
+
+    @app.post("/api/sessions/{session_id}/bus-events")
+    async def bus_events(session_id: str, request: Request):
+        """Store at most 25 small GPS/OCR guidance events per request."""
+        raw = bytearray()
+        async for chunk in request.stream():
+            if len(raw) + len(chunk) > 64 * 1024:
+                raise HTTPException(413, "버스 이벤트 요청은 64KB 이하여야 합니다.")
+            raw.extend(chunk)
+        try:
+            payload = json.loads(raw, parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
+            # Reject overflowed JSON numbers (for example 1e999) before writing
+            # any event so malformed batches cannot partially reach the log.
+            json.dumps(payload, allow_nan=False)
+        except (ValueError, UnicodeDecodeError, RecursionError) as error:
+            raise HTTPException(422, "버스 이벤트 JSON이 올바르지 않습니다.") from error
+        events = payload.get("events") if isinstance(payload, dict) else None
+        if (not isinstance(events, list) or not 1 <= len(events) <= 25
+                or any(not isinstance(event, dict) or not isinstance(event.get("type"), str)
+                       or not 1 <= len(event["type"]) <= 80 for event in events)):
+            raise HTTPException(422, "버스 이벤트 형식이 올바르지 않습니다.")
+        try:
+            sessions.record_bus_events(session_id, events)
+        except SessionError as error:
+            raise HTTPException(409, str(error)) from error
+        return {"saved": len(events)}
 
     # 브라우저 녹화물을 MP4로 변환해 저장
     def save_video(session_id, kind, video, path, include_audio):

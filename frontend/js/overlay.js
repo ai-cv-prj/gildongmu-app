@@ -36,11 +36,12 @@ window.GOverlay = (() => {
   /** 보행 장애물과 신호등을 색상과 짧은 이름으로 구분한다. */
   function boxes(items, kind) {
     for (const item of items || []) {
-      const [x1, y1, x2, y2] = item.xyxy || [];
+      const box = item.box;
+      const [x1, y1, x2, y2] = item.xyxy || (box ? [box.x1, box.y1, box.x2, box.y2] : []);
       if (![x1, y1, x2, y2].every(Number.isFinite)) continue;
       const selected = item.selection_status === "selected";
       const level = item.alert_level || item.risk_level;
-      const color = kind === "crosswalk" ? "#d965cc" : kind === "traffic"
+      const color = kind === "bus" ? "#ffd21c" : kind === "crosswalk" ? "#d965cc" : kind === "traffic"
         ? selected ? item.signal_state === "green" ? "#38db77" : item.signal_state === "red" ? "#ff6172" : "#f5d66d" : "#69b0ff"
         : level === "danger" ? "#ff6571" : level === "caution" ? "#ffb766" : "#b4b4b4";
       ctx.strokeStyle = color;
@@ -48,7 +49,8 @@ window.GOverlay = (() => {
       const x = x1 * canvas.width, y = y1 * canvas.height;
       const w = (x2 - x1) * canvas.width, h = (y2 - y1) * canvas.height;
       ctx.strokeRect(x, y, w, h);
-      const baseName = kind === "crosswalk" ? "횡단보도" : kind === "traffic"
+      const baseName = kind === "bus" ? (item.extra?.text || item.extra?.route_number || "버스")
+        : kind === "crosswalk" ? "횡단보도" : kind === "traffic"
         ? selected ? `신호 ${item.signal_state || "확인 중"}` : "신호 후보"
         : item.display_label || item.class_name || "장애물";
       const identifiers = kind === "walking" ? [
@@ -223,6 +225,11 @@ window.GOverlay = (() => {
       walkingSurfaceRoi(result.walking_surface?.event);
       boxes(result.walking?.detections, "walking");
       boxes(result.traffic?.detections, "traffic");
+      // OCR finishes independently; only boxes from a recent capture belong on the live camera.
+      const busAge = typeof performance !== "undefined" && Number.isFinite(performance.timeOrigin)
+        ? performance.timeOrigin + performance.now() - result.bus?.captured_at_ms : Infinity;
+      if (Number.isFinite(result.bus?.captured_at_ms) && busAge >= 0 && busAge <= 400)
+        boxes(result.bus?.detections, "bus");
       crosswalkSafety(result.crosswalk?.event);
       actionStatus(result.walking?.event);
       crosswalkStatus(result.crosswalk?.event);

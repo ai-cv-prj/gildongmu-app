@@ -1,0 +1,18 @@
+# Optional bus features. Model files are local assets and are not committed.
+models:
+  route_display: weights/bus/route-display-b.pt
+  bus_detector: weights/bus/yolo11n.pt
+  parseq_weights: weights/bus/parseq-bb5792a6.pt
+  parseq_source: weights/bus/parseq-src
+
+recognition:
+  interval_ms: 500
+  max_result_age_ms: 3000
+
+arrivals:
+  station_radius_m: 30
+  max_station_distance_m: 30
+  timeout_sec: 8
+
+speech:
+  timeout_sec: 10

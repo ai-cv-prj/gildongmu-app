@@ -23,7 +23,7 @@ mask2former_weights: weights/walking/mask2former
 yolo_weights: weights/walking/yolo/yolo26n_pedestrian29_stop_v1.pt
 
 # 신호등·횡단보도 검출 가중치
-traffic_weights: weights/traffic/best_YOLO.pt
+traffic_weights: weights/traffic/best_YOLO_v2.pt
 
 # 신호등 색상 분류 가중치
 traffic_classifier_weights: weights/traffic/best_MobileNet.pt

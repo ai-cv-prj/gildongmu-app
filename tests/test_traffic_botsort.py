@@ -215,7 +215,7 @@ class BOTSORTTests(unittest.TestCase):
         with patch('src.visualization.cv2.putText', wraps=cv2.putText) as draw:
             draw_traffic(FRAME, result)
         labels = [call.args[1] for call in draw.call_args_list]
-        self.assertEqual(labels.count('SIGNAL CANDIDATE'), 2)
+        self.assertEqual(labels.count('신호 후보'), 2)
 
     def test_reset_restarts_ids_for_new_video(self):
         pipe = fake_pipeline([(NEAR, .8, 0)])

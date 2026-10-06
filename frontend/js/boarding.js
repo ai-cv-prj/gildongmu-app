@@ -6,7 +6,7 @@
     now = () => performance.now() }) {
     let sessionId = null, generation = 0, state = null, busy = false;
     let resultAt = null, canStop = false, audioPending = false, audioToken = 0;
-    let promptFinished = false;
+    let promptFinished = false, suspended = false;
     let frameMetadata = {};
     const emit = () => onChange(state ? { ...state, busy } : null);
 
@@ -25,14 +25,15 @@
     }
 
     async function act(action, busNumber = null) {
-      if (!sessionId || !state?.arrival_event_id || busy) return false;
+      if (!sessionId || (action !== "arrive" && !state?.arrival_event_id) || busy) return false;
       const version = generation, id = sessionId;
       busy = true;
       emit();
       try {
-        const next = await api.boarding(id, action, state.arrival_event_id, busNumber);
+        const next = await api.boarding(id, action, state?.arrival_event_id ?? null, busNumber);
         if (generation !== version || sessionId !== id) return false;
         apply(next);
+        if (action === "arrive") { resultAt = now(); canStop = true; }
         return true;
       } catch (error) {
         if (generation === version) onError(error.message);
@@ -43,17 +44,18 @@
     }
 
     function tick() {
-      if (!sessionId || !state || busy || audioPending || resultAt === null
-          || now() - resultAt >= 1500) return;
+      const manual = state?.arrival_source === "user_confirmed";
+      if (!sessionId || !state || busy || suspended || audioPending
+          || (!manual && (resultAt === null || now() - resultAt >= 1500))) return;
       const awaiting = state.status === "awaiting_stop";
-      if ((!awaiting && (state.status !== "pending" || promptFinished)) || (awaiting && !canStop)) return;
+      if ((!awaiting && (state.status !== "pending" || promptFinished)) || (awaiting && !manual && !canStop)) return;
       const version = generation, token = ++audioToken;
       audioPending = true;
       const accepted = coordinator.request({ source: awaiting ? "boarding-stop" : "boarding",
         priority: awaiting ? coordinator.PRIORITY.emergency : coordinator.PRIORITY.boarding,
         text: awaiting ? "멈추세요." : PROMPT,
         metadata: { ...frameMetadata, action: awaiting ? "stop" : null },
-        validUntil: awaiting ? resultAt + 1500 : now() + 8000,
+        validUntil: awaiting && !manual ? resultAt + 1500 : now() + 8000,
         kind: "bus-input", onCancel: () => {
           if (version === generation && token === audioToken) audioPending = false;
         }, onComplete: () => {
@@ -68,11 +70,13 @@
     function start(id) {
       stop();
       sessionId = id;
+      suspended = false;
     }
     function stop() {
       generation++;
       sessionId = state = resultAt = null;
       canStop = audioPending = busy = promptFinished = false;
+      suspended = false;
       frameMetadata = {};
       audioToken++;
       coordinator.clear("boarding-stop");
@@ -88,8 +92,21 @@
       apply(result.boarding);
       tick();
     }
+    function pause() {
+      suspended = true;
+      audioToken++;
+      audioPending = false;
+      coordinator.clear("boarding-stop");
+      coordinator.clear("boarding");
+    }
+    function resume() {
+      suspended = false;
+      resultAt = null;
+      tick();
+    }
     return { start, stop, accept, tick, submit: number => act("submit", number),
-      cancel: () => act("cancel"), reopen: () => act("reopen") };
+      cancel: () => act("cancel"), reopen: () => act("reopen"),
+      arrive: () => act("arrive"), pause, resume };
   }
   window.GBoarding = { create, PROMPT };
 })();
