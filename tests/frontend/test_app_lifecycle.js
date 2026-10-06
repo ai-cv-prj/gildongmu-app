@@ -87,7 +87,8 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
       async stopRaw() { if (!recording) return null; recording = false; recordStops++;
         return { blob: { size: 12, type: "video/webm" }, started_at_ms: recordingStartedAt,
           ended_at_ms: Math.min(100000 + now, recordingStartedAt + 30000) }; } },
-    GOverlay: { size() {}, clear() {}, render(_result, done) { done("drawn"); } },
+    GOverlay: { size() {}, clear() {}, snapshot: () => "cG5n",
+      render(_result, done) { done("drawn"); } },
     fetch: async () => ({}), addEventListener() {},
     queueMicrotask,
   };
@@ -130,9 +131,13 @@ test("정류장 수동 확인과 번호 확정은 서버 boarding을 거쳐 GPS/
   const app = await harness();
   await app.action("start");
   await app.action("manual-arrival");
-  await app.finishVoice();
-  assert.equal(app.screen(), "input");
+  assert.equal(app.screen(), "input", "멈춤 안내와 동시에 번호 입력 화면을 연다");
   await app.confirmRoute("143");
+  assert.equal(app.screen(), "confirm");
+  assert.deepEqual(app.journeyStarts, [], "멈춤 안내 중에는 버스 찾기를 시작하지 않는다");
+  await app.finishVoice();
+  assert.equal(app.screen(), "confirm", "멈춤 안내가 끝나도 작성 중인 확인 화면을 유지한다");
+  await app.action("confirm-route");
   assert.equal(app.screen(), "search");
   assert.deepEqual(app.journeyStarts, ["143"]);
   await app.action("end");
@@ -311,6 +316,8 @@ test("녹화는 기본 꺼짐이며 선택한 두 구간을 세션 종료 후 �
     [[1], [2]]);
   assert.strictEqual(app.uploads[0].frames[0].image, app.frames[0].blob,
     "라이브 추론에 보낸 동일한 JPEG를 사후 업로드한다");
+  assert.equal(app.uploads[0].frames[0].overlay_png, "cG5n",
+    "화면에 실제 그린 오버레이도 같은 프레임과 함께 업로드한다");
   assert.ok(app.uploads.every(clip => clip.ended_at_ms - clip.started_at_ms <= 30000));
   assert.match(app.statuses.at(-1), /원본·추론 영상 저장이 완료/);
 });

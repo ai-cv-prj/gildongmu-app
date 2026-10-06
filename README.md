@@ -391,8 +391,8 @@ data/samples/output/sample1/jsonl/result_input.risk.jsonl
 test-result/YYYYMMDD/<기종명_촬영시각_테스트메모>/
 ├── clips/
 │   ├── clip_001/
-│   │   ├── original.webm   # 선택 구간의 카메라 연속 원본 (.mp4 가능)
-│   │   ├── inference.mp4  # 같은 구간의 서버 추론 결과
+│   │   ├── original.webm   # 선택 구간의 카메라와 실제 재생 안내 음성 (.mp4 가능)
+│   │   ├── inference.mp4  # 화면 오버레이와 안내 음성이 포함된 추론 결과
 │   │   └── manifest.json  # 저장 상태·촬영 구간·추론 프레임 시각/해시
 │   └── clip_002/          # 이어서 기록한 다음 구간
 ├── results.jsonl          # 프레임별 추론 결과

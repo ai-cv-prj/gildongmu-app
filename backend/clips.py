@@ -115,7 +115,8 @@ class ClipStore:
         for clip in (folder / "clips").glob("clip_*/*"):
             if clip.is_file() and clip.name in ("original.webm", "original.mp4"):
                 total += clip.stat().st_size
-        for pattern in ("clip_*/chunks/*.part", "clip_*/frames/*.jpg", "clip_*/masks/*.png"):
+        for pattern in ("clip_*/chunks/*.part", "clip_*/frames/*.jpg", "clip_*/masks/*.png",
+                        "clip_*/overlays/*.png"):
             total += sum(path.stat().st_size for path in (folder / "clips").glob(pattern))
         return total
 
@@ -172,7 +173,8 @@ class ClipStore:
             _write_bytes(path, data)
             return {"saved": True, "clip_id": clip_id, "chunk_index": index, "bytes": len(data)}
 
-    def add_frame(self, session_id, clip_id, frame_id, captured_at_ms, image, mask_png=None):
+    def add_frame(self, session_id, clip_id, frame_id, captured_at_ms, image, mask_png=None,
+                  overlay_png=None):
         if frame_id < 1 or captured_at_ms <= 0:
             raise ClipError("프레임 번호나 촬영 시각이 올바르지 않습니다.")
         if not image or len(image) > self.max_jpeg_bytes:
@@ -188,6 +190,18 @@ class ClipStore:
             raise ClipError("분할 마스크 형식이 올바르지 않습니다.") from error
         if mask is not None and (len(mask) > MAX_MASK_BYTES or not mask.startswith(b"\x89PNG\r\n\x1a\n")):
             raise ClipError("분할 마스크 형식이나 크기가 올바르지 않습니다.", 413)
+        if overlay_png and len(overlay_png) > (MAX_MASK_BYTES * 4 // 3 + 8):
+            raise ClipError("화면 오버레이가 너무 큽니다.", 413)
+        try:
+            overlay = base64.b64decode(overlay_png, validate=True) if overlay_png else None
+        except (ValueError, base64.binascii.Error) as error:
+            raise ClipError("화면 오버레이 형식이 올바르지 않습니다.") from error
+        if overlay is not None and (len(overlay) > MAX_MASK_BYTES or not overlay.startswith(b"\x89PNG\r\n\x1a\n")):
+            raise ClipError("화면 오버레이 형식이나 크기가 올바르지 않습니다.", 413)
+        if overlay is not None:
+            decoded = cv2.imdecode(np.frombuffer(overlay, np.uint8), cv2.IMREAD_UNCHANGED)
+            if decoded is None or decoded.ndim != 3 or decoded.shape[2] != 4:
+                raise ClipError("화면 오버레이에 투명 채널이 없습니다.")
         with self.lock:
             folder = self._session(session_id, require_idle=True)
             proof = self._proof(folder, frame_id)
@@ -198,6 +212,7 @@ class ClipStore:
             path = clip / "frames" / f"{frame_id:06d}.jpg"
             meta = path.with_suffix(".json")
             mask_path = clip / "masks" / f"{frame_id:06d}.png"
+            overlay_path = clip / "overlays" / f"{frame_id:06d}.png"
             if path.exists() and meta.exists():
                 previous = json.loads(meta.read_text(encoding="utf-8"))
                 if previous.get("sha256") == digest and previous.get("captured_at_ms") == captured_at_ms:
@@ -210,28 +225,36 @@ class ClipStore:
                 raise ClipError("완료된 클립에 새 선택 프레임을 추가할 수 없습니다.", 409)
             # The metadata is written last. A restart between those writes may
             # leave JPEG/mask files with no committed frame; retry replaces them.
-            if path.exists() or meta.exists() or mask_path.exists():
+            if path.exists() or meta.exists() or mask_path.exists() or overlay_path.exists():
                 path.unlink(missing_ok=True)
                 mask_path.unlink(missing_ok=True)
+                overlay_path.unlink(missing_ok=True)
                 meta.unlink(missing_ok=True)
             frame_paths = list((clip / "frames").glob("*.jpg"))
             if len(frame_paths) >= MAX_FRAMES_PER_CLIP:
                 raise ClipError("클립당 선택 프레임 300개 한도를 넘었습니다.", 413)
             stored_frame_bytes = sum(item.stat().st_size for item in frame_paths)
             stored_frame_bytes += sum(item.stat().st_size for item in (clip / "masks").glob("*.png"))
-            if stored_frame_bytes + len(image) + len(mask or b"") > MAX_FRAME_BYTES_PER_CLIP:
+            stored_frame_bytes += sum(item.stat().st_size for item in (clip / "overlays").glob("*.png"))
+            frame_bytes = len(image) + len(mask or b"") + len(overlay or b"")
+            if stored_frame_bytes + frame_bytes > MAX_FRAME_BYTES_PER_CLIP:
                 raise ClipError("클립당 선택 프레임 32MiB 한도를 넘었습니다.", 413)
-            if self._input_size(folder) + len(image) + len(mask or b"") > MAX_TOTAL_BYTES:
+            if self._input_size(folder) + frame_bytes > MAX_TOTAL_BYTES:
                 raise ClipError("세션의 선택 영상·프레임 120MiB 저장 한도를 넘었습니다.", 413)
             try:
                 _write_bytes(path, image)
                 if mask is not None:
                     _write_bytes(mask_path, mask)
+                if overlay is not None:
+                    overlay_path.parent.mkdir(exist_ok=True)
+                    _write_bytes(overlay_path, overlay)
                 _write_json(meta, {"frame_id": frame_id, "captured_at_ms": captured_at_ms,
-                                   "sha256": digest, "mask": mask is not None})
+                                   "sha256": digest, "mask": mask is not None,
+                                   "overlay": overlay is not None})
             except OSError:
                 path.unlink(missing_ok=True)
                 mask_path.unlink(missing_ok=True)
+                overlay_path.unlink(missing_ok=True)
                 meta.unlink(missing_ok=True)
                 raise
             return {"saved": True, "clip_id": clip_id, "frame_id": frame_id}
@@ -377,8 +400,18 @@ class ClipStore:
     def _point(point, width, height):
         return (int(float(point[0]) * width), int(float(point[1]) * height))
 
-    def _draw(self, frame, row, mask_path):
+    def _draw(self, frame, row, mask_path, overlay_path=None):
         height, width = frame.shape[:2]
+        if overlay_path is not None and overlay_path.is_file():
+            overlay = cv2.imdecode(np.frombuffer(overlay_path.read_bytes(), np.uint8), cv2.IMREAD_UNCHANGED)
+            if overlay is None or overlay.ndim != 3 or overlay.shape[2] != 4:
+                raise ValueError("저장된 화면 오버레이를 읽을 수 없습니다.")
+            alpha = overlay[:, :, 3:4].astype(np.float32) / 255
+            color = overlay[:, :, :3].astype(np.float32) * alpha
+            if overlay.shape[:2] != (height, width):
+                color = cv2.resize(color, (width, height), interpolation=cv2.INTER_AREA)
+                alpha = cv2.resize(alpha, (width, height), interpolation=cv2.INTER_AREA)[:, :, None]
+            return np.uint8(frame.astype(np.float32) * (1 - alpha) + color)
         if mask_path.is_file():
             mask = cv2.imdecode(np.frombuffer(mask_path.read_bytes(), np.uint8), cv2.IMREAD_UNCHANGED)
             if mask is not None and mask.ndim == 3 and mask.shape[2] == 4:
@@ -471,7 +504,8 @@ class ClipStore:
                         raise ValueError(f"선택 프레임 {frame_id}을 읽을 수 없습니다.")
                     if frame.shape[:2] != (height, width):
                         frame = cv2.resize(frame, (width, height))
-                    rendered = self._draw(frame, row, clip / "masks" / f"{frame_id:06d}.png")
+                    rendered = self._draw(frame, row, clip / "masks" / f"{frame_id:06d}.png",
+                                          clip / "overlays" / f"{frame_id:06d}.png")
                     name = f"{index:08d}.png"
                     if not cv2.imwrite(str(work / name), rendered):
                         raise RuntimeError("추론 프레임을 임시 저장하지 못했습니다.")
@@ -485,13 +519,18 @@ class ClipStore:
                                      "sha256": meta["sha256"],
                                      "clip_offset_ms": meta["captured_at_ms"] - manifest["started_at_ms"],
                                      "video_pts_ms": meta["captured_at_ms"] - first_at,
-                                     "duration_ms": duration_ms, "mask": meta.get("mask", False)})
+                                     "duration_ms": duration_ms, "mask": meta.get("mask", False),
+                                     "overlay": meta.get("overlay", False)})
                 concat.extend([f"file '{len(entries)-1:08d}.png'", "option framerate 1000"])
                 (work / "input.ffconcat").write_text("\n".join(concat) + "\n", encoding="utf-8")
                 temporary = work / "inference.mp4"
+                original = folder / manifest["original_path"]
+                audio_offset = max(0, first_at - manifest["started_at_ms"]) / 1000
                 command = [ffmpeg_executable(), "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
                            "-f", "concat", "-safe", "0", "-i", str(work / "input.ffconcat"),
-                           "-fps_mode", "vfr", "-c:v", "libx264", "-threads", "2",
+                           "-ss", f"{audio_offset:.3f}", "-i", str(original),
+                           "-map", "0:v:0", "-map", "1:a:0?", "-fps_mode", "vfr",
+                           "-c:v", "libx264", "-c:a", "aac", "-threads", "2",
                            "-preset", "veryfast", "-pix_fmt", "yuv420p",
                            "-video_track_timescale", "1000000", "-movflags", "+faststart", str(temporary)]
                 encoded = subprocess.run(command, capture_output=True, text=True, timeout=300)

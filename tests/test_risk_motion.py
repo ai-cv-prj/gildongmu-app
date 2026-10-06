@@ -7,6 +7,7 @@ file_path: tests/test_risk_motion.py
 
 import cv2
 import numpy as np
+import cv2
 import pytest
 
 from src.risk_config import risk_config
@@ -105,6 +106,18 @@ def test_ransac_requires_thirty_percent_and_twelve_points():
         np.asarray([[1]] * 11 + [[0]] * 19, dtype=np.uint8), config)
     assert not camera_motion_inliers_valid(
         np.asarray([[1]] * 12 + [[0]] * 38, dtype=np.uint8), config)
+
+
+def test_stable_camera_exposes_normalized_background_transform():
+    frame = np.random.default_rng(42).integers(0, 256, (180, 320, 3), dtype=np.uint8)
+    moved = cv2.warpAffine(frame, np.asarray([[1, 0, 6], [0, 1, 3]], np.float32),
+                           (320, 180))
+    guard = CameraMotionGuard(risk_config())
+    assert guard.update(frame, 0.0)
+    assert guard.last_transform_norm is None
+    assert guard.update(moved, 0.2)
+    np.testing.assert_allclose(guard.last_transform_norm[:, 2],
+                               [6 / 320, 3 / 180], atol=0.002)
 
 
 # RANSAC 설정 범위 확인

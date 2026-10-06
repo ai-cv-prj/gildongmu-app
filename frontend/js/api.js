@@ -116,6 +116,7 @@ window.GApi = (() => {
       body.append("captured_at_ms", String(frame.captured_at_ms));
       body.append("image", frame.image, `frame_${frame.frame_id}.jpg`);
       if (frame.mask_png) body.append("mask_png", frame.mask_png);
+      if (frame.overlay_png) body.append("overlay_png", frame.overlay_png);
       await retryUpload(`${base}/frames/${frame.frame_id}`, { method: "POST", body });
       onProgress(++done, total);
     }

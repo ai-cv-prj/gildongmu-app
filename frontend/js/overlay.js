@@ -102,17 +102,20 @@ window.GOverlay = (() => {
   }
 
   // 현장 테스트용 정류장 판정. 캔버스에 그리므로 오버레이 영상에도 남는다.
-  function stopDiagnostic(event) {
+  function stopDiagnostic(event, crosswalk, walkingSurface) {
     const state = event?.status || "unavailable";
+    const recordedUndetected = state === "not_detected" && event?.arrival_recorded;
     const basis = { left: "좌측", right: "우측", bottom: "하단" }[event?.basis];
     const position = basis ? `${basis} ` : "";
     const color = state === "nearby" ? "#57d7ab"
       : state === "candidate" ? "#ffce73" : "#c2ceda";
     const label = state === "nearby" ? `${position}정류장 ${event.held ? "근접 유지 · 재확인 중" : "근접 추정"}`
-      : event?.arrival_recorded ? "정류장 확인 기록 · 재확인 중"
-      : state === "candidate" ? event.held ? `${position}정류장 후보 유지`
-        : `${position}정류장 후보 ${event.observations}/${event.required_observations}`
+      : state === "candidate" ? event?.arrival_recorded ? "정류장 후보 재확인 중"
+        : event.held ? `${position}정류장 후보 유지`
+          : `${position}정류장 후보 ${event.observations}/${event.required_observations}`
+      : recordedUndetected ? "정류장 도착 기록 있음 · 현재 화면에서 미검출"
       : state === "not_detected" ? "정류장 미검출" : "정류장 판정 보류";
+    const lines = recordedUndetected ? ["정류장 도착 기록 있음 ·", "현재 화면에서 미검출"] : [label];
     const box = event?.xyxy;
     ctx.save();
     if (!event?.held && ["nearby", "candidate"].includes(state) && Array.isArray(box)
@@ -123,16 +126,22 @@ window.GOverlay = (() => {
         (box[2] - box[0]) * canvas.width, (box[3] - box[1]) * canvas.height);
     }
     ctx.font = `bold ${Math.max(14, Math.min(20, canvas.width / 32))}px system-ui`;
-    const bannerWidth = Math.min(canvas.width - 16, ctx.measureText(label).width + 22);
+    const bannerWidth = Math.min(canvas.width - 16,
+      Math.max(...lines.map(line => ctx.measureText(line).width)) + 22);
     const x = canvas.width - bannerWidth - 8;
-    const y = 52;
+    const bannerHeight = lines.length === 2 ? 54 : 36;
+    const statusHeight = Math.max(26, canvas.height / 24);
+    const rightBadges = [crosswalk?.status, walkingSurface?.status]
+      .filter(status => status && status !== "disabled").length;
+    const actionHeight = Math.max(26, canvas.height / 24) * 2;
+    const y = 8 + Math.max(actionHeight, rightBadges * (statusHeight + 8)) + 8;
     ctx.fillStyle = "#08131feb";
-    ctx.fillRect(x, y, bannerWidth, 36);
+    ctx.fillRect(x, y, bannerWidth, bannerHeight);
     ctx.strokeStyle = color;
     ctx.lineWidth = 2;
-    ctx.strokeRect(x, y, bannerWidth, 36);
+    ctx.strokeRect(x, y, bannerWidth, bannerHeight);
     ctx.fillStyle = color;
-    ctx.fillText(label, x + 11, y + 24);
+    lines.forEach((line, index) => ctx.fillText(line, x + 11, y + 21 + index * 19));
     ctx.restore();
   }
 
@@ -270,7 +279,8 @@ window.GOverlay = (() => {
       if (obstacles) actionStatus(result.walking?.event);
       crosswalkStatus(result.crosswalk?.event);
       walkingSurfaceStatus(result.walking_surface?.event);
-      if (obstacles) stopDiagnostic(result.stop_proximity);
+      if (obstacles) stopDiagnostic(result.stop_proximity,
+        result.crosswalk?.event, result.walking_surface?.event);
       onDrawn("drawn");
     };
     if (!result.walking?.mask_png) return draw(null);
@@ -287,5 +297,10 @@ window.GOverlay = (() => {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
   }
 
-  return { size, render, clear };
+  /** 저장할 추론 프레임에 화면과 같은 오버레이 픽셀을 사용한다. */
+  function snapshot() {
+    return canvas.toDataURL("image/png").split(",", 2)[1];
+  }
+
+  return { size, render, clear, snapshot };
 })();

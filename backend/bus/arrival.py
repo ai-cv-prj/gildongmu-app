@@ -407,6 +407,8 @@ class BusArrivalService:
         result_code = self._text(header, "headerCd")
         if result_code and result_code != "0":
             message = self._text(header, "headerMsg") or "알 수 없는 오류"
+            if result_code == "4" and message.strip().rstrip(".") == "결과가 없습니다":
+                return []
             raise BusArrivalError(502, "bus_api_error", f"서울시 {service_name} 서비스 오류({result_code}): {message}")
         return list(root.findall(".//itemList"))
 

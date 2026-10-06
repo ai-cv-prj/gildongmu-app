@@ -13,12 +13,14 @@ const rectangles = [];
 const dashedLines = [];
 let currentPoint = null;
 let dashPattern = [];
+const filledRects = [];
 const context2d = {
   beginPath() { currentPoint = null; }, moveTo(...args) { currentPoint = args; },
   lineTo(...args) { if (dashPattern.length) dashedLines.push([currentPoint, args]); currentPoint = args; },
   closePath() {}, fill() {}, stroke() {}, setLineDash(value) { dashPattern = value; },
   strokeRect(...args) { strokeColors.push(this.strokeStyle); rectangles.push(args); },
-  fillRect() {}, clearRect() {}, drawImage() {}, arc() {},
+  fillRect(...args) { filledRects.push({ color: this.fillStyle, args }); },
+  clearRect() {}, drawImage() {}, arc() {},
   save() {}, restore() {},
   measureText(text) { return { width: text.length * 8 }; },
   fillText(text) { labels.push(text); },
@@ -60,6 +62,9 @@ assert.ok(labels.includes("WALKWAY: inside"));
 assert.ok(strokeColors.includes("#50e65a"));
 assert.ok(labels.includes("정류장 후보 1/3"));
 assert.deepEqual(dashedLines.at(-1), [[7.2, 544], [352.8, 544]]);
+const stopBanner = filledRects.find(rect => rect.color === "#08131feb");
+assert.ok(stopBanner.args[1] >= 8 + 2 * (Math.max(26, 640 / 24) + 8),
+  "정류장 배지는 횡단보도·보행로 배지 아래에 놓인다");
 assert.equal(drawState, "drawn");
 
 labels.length = 0;
@@ -85,7 +90,16 @@ context.window.GOverlay.render({
   walking: { event: { roi: {} } },
   stop_proximity: { status: "not_detected", arrival_recorded: true },
 });
-assert.ok(labels.includes("정류장 확인 기록 · 재확인 중"));
+assert.ok(labels.includes("정류장 도착 기록 있음 ·"));
+assert.ok(labels.includes("현재 화면에서 미검출"));
+labels.length = 0;
+context.window.GOverlay.render({
+  image_width: 360, image_height: 640,
+  walking: { event: { roi: {} } },
+  stop_proximity: { status: "candidate", arrival_recorded: true,
+    observations: 1, required_observations: 3 },
+});
+assert.ok(labels.includes("정류장 후보 재확인 중"));
 console.log("overlay ids: pass");
 
 // Results older than 400ms must not leave a person box on a newer camera frame.

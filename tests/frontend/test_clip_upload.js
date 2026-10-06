@@ -30,7 +30,8 @@ test("원본 청크와 추론에 쓴 동일 JPEG를 종료 후 순서대로 전�
   const progress = [];
   await api.uploadClip("session-1", { index: 2, blob: original, started_at_ms: 100,
     ended_at_ms: 30100, frames: [{ frame_id: 17, captured_at_ms: 200,
-      image, mask_png: "cG5n" }] }, (done, total) => progress.push([done, total]));
+      image, mask_png: "cG5n", overlay_png: "b3ZlcmxheQ==" }] },
+    (done, total) => progress.push([done, total]));
   assert.deepEqual(requests.map(request => request.path), [
     "/api/sessions/session-1/clips/2/chunks/0",
     "/api/sessions/session-1/clips/2/chunks/1",
@@ -42,6 +43,7 @@ test("원본 청크와 추론에 쓴 동일 JPEG를 종료 후 순서대로 전�
   assert.equal(requests[2].options.body.get("image").size, image.size);
   assert.equal(requests[2].options.body.get("captured_at_ms"), "200");
   assert.equal(requests[2].options.body.get("mask_png"), "cG5n");
+  assert.equal(requests[2].options.body.get("overlay_png"), "b3ZlcmxheQ==");
   assert.deepEqual(JSON.parse(requests[3].options.body), { mime_type: "video/webm",
     chunk_count: 2, size_bytes: original.size, started_at_ms: 100, ended_at_ms: 30100 });
   assert.deepEqual(progress, [[1, 4], [2, 4], [3, 4], [4, 4]]);
