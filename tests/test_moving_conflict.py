@@ -12,7 +12,8 @@ from test_walking_voice import danger_item, prediction
 from test_risk import FRAME, FixedTracker, detection
 
 
-CFG = risk_config(yaml.safe_load(open("configs/inference.yaml"))["risk"])
+CFG = risk_config({**yaml.safe_load(open("configs/inference.yaml"))["risk"],
+                   "moving_conflict_enabled": True})
 GEOMETRY = {
     "clipped": False, "point": [0.5, 0.6], "footprint": [0.42, 0.58, 0.58, 0.6],
     "immediate_top_y": 0.7, "corridor_overlap": 0.5,
