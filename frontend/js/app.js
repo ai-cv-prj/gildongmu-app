@@ -447,7 +447,8 @@
     if (!running || starting || stopping) return;
     if (action === "record") return activeClip ? finishClip() : startClip();
     if (action === "pause") { automaticPause = false; return paused ? resumeTest() : pauseTest(); }
-    if (paused) return;
+    // 이전은 일시중지 중에도 화면을 벗어날 수 있어야 한다.
+    if (paused && action !== "back") return;
     if (action === "manual-arrival") {
       if (lastResult?.crosswalk?.event?.crossing_active && Date.now() - lastResult.captured_at_ms < 1500)
         return status("횡단 중에는 보행 안내를 계속합니다. 정류장에 멈춘 뒤 눌러 주세요.");
@@ -460,7 +461,12 @@
       else { view.setRoute(draftRoute); view.show("input"); }
     } else if (action === "back") {
       if (view.getScreen() === "confirm") { view.show("input"); return; }
-      if (activeRoute) { await boarding.reopen(); return; }
+      if (activeRoute) {
+        // 노선 입력 화면의 확인은 일시중지 중에 막히므로 안내를 재개한 뒤 다시 연다.
+        if (paused) await resumeTest();
+        if (!paused) await boarding.reopen();
+        return;
+      }
       if (["pending", "awaiting_stop"].includes(boardingState?.status)) await boarding.cancel();
       else await stopTest();
     } else if (action === "locate" && activeRoute) journey.start(activeRoute);

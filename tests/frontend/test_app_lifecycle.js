@@ -174,6 +174,32 @@ test("이동 안내에서 이전을 누르면 마무리 대신 출발 준비로 
   assert.equal(app.resources().sessionsStopped, 1);
 });
 
+test("일시중지 중에도 이전을 누르면 출발 준비로 돌아간다", async () => {
+  const app = await harness();
+  await app.action("start");
+  await app.action("pause");
+  await app.action("back");
+  assert.equal(app.screen(), "home");
+  assert.equal(app.resources().cameraActive, false);
+  assert.equal(app.resources().sessionsStopped, 1);
+});
+
+test("버스 노선 안내를 일시중지한 뒤 이전을 누르면 재개하고 노선 입력으로 돌아간다", async () => {
+  const app = await harness();
+  await app.action("start");
+  await app.action("manual-arrival");
+  await app.finishVoice();
+  await app.confirmRoute("143");
+  await app.action("pause");
+  assert.equal(app.journeyPaused(), true);
+  await app.action("back");
+  assert.equal(app.resources().route, null, "이전이 무시되지 않고 노선 안내를 해제한다");
+  assert.equal(app.journeyPaused(), false);
+  assert.equal(app.resources().cameraActive, true, "노선을 다시 고르는 동안 세션을 유지한다");
+  assert.equal(app.resources().sessionsStopped, 0);
+  await app.action("end");
+});
+
 test("빠른 일시중지·재개 중 응답한 이전 프레임은 순번만 반영하고 안내에 재사용하지 않는다", async () => {
   const app = await harness();
   await app.action("start");
