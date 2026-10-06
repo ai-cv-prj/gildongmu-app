@@ -145,17 +145,21 @@ def inside_voice_roi(item):
 
 
 # 행동 안내에 사용할 위험·주의 객체 선별
-def guidance_items(prediction, level, crossing_active=False):
+def guidance_items(prediction, level, crossing_active=False, stationary_voice=False):
     """근거리와 확인된 예측 위험을 음성에 연결한다."""
     warning = prediction.get("warning") or {}
     if warning.get("source") == "camera_view":
         return []
+    stationary = (stationary_voice
+                  and (prediction.get("stationarity") or {}).get("status") == "stationary")
     return [item for item in prediction.get("detections", [])
             if item.get("alert_level", item.get("risk_level")) == level
             and item.get("warning_primary", True)
             and not item.get("voice_suppressed_reason")
             and (not crossing_active or item.get("class_name") in VEHICLE_CLASSES)
             and not item.get("risk_suppressed_reason")
+            and (not stationary
+                 or bool((item.get("geometry") or {}).get("stationary_voice_eligible")))
             and (level != "danger" or inside_voice_roi(item) or rapid_approach_hazard(item))]
 
 
@@ -251,9 +255,9 @@ def movement_steps(items, action, image_width, previous_steps=None):
 
 
 # 위험 분포를 최종 이동 행동으로 변환
-def walking_action(prediction, image_width, crossing_active=False):
+def walking_action(prediction, image_width, crossing_active=False, stationary_voice=False):
     """횡단 상태에 맞는 위험 분포와 좌우 안전도를 하나의 행동으로 바꾼다."""
-    dangers = guidance_items(prediction, "danger", crossing_active)
+    dangers = guidance_items(prediction, "danger", crossing_active, stationary_voice)
     directions = {direction for item in dangers
                   for direction in warning_directions(item, image_width)}
     if not directions:
@@ -268,7 +272,7 @@ def walking_action(prediction, image_width, crossing_active=False):
         all_people = all(item.get("class_name") == "person" for item in dangers)
         return "straight" if all_people else "stop"
     if directions == {"center"}:
-        cautions = guidance_items(prediction, "caution", crossing_active)
+        cautions = guidance_items(prediction, "caution", crossing_active, stationary_voice)
         return safer_side(dangers, cautions, image_width) or "stop"
     return "stop"
 
@@ -353,23 +357,30 @@ class WalkingVoice:
         previous_steps = self.last_steps
         display_action = walking_action(evidence, image_width)
         vehicle_only = crossing_active or crosswalk_status == "approach"
-        raw_action = walking_action(evidence, image_width, vehicle_only)
+        raw_action = walking_action(evidence, image_width, vehicle_only, True)
         if (prediction.get("boarding") or {}).get("assumed_stationary") and raw_action is not None:
             # Keep the user stopped during input even when a side hazard would
             # ordinarily allow straight movement.
             raw_action = "stop"
-        eligible = guidance_items(evidence, "danger", vehicle_only)
+        eligible = guidance_items(evidence, "danger", vehicle_only, True)
         raw_steps = movement_steps(
             eligible, raw_action, image_width,
             previous_steps if raw_action == previous_action else None,
         )
         voice_action = raw_action
         voice_steps = raw_steps
+        stationary_clear = ((prediction.get("stationarity") or {}).get("status") == "stationary"
+                            and raw_action is None)
         if raw_action is None:
             self.pending_action = self.pending_since = None
-            if self.clear_since is None:
+            if stationary_clear:
+                self.last_action = None
+                self.last_steps = None
                 self.clear_since = output_time_s
-            if output_time_s - self.clear_since + 1e-6 >= self.release_confirm_s or crossing_active:
+            elif self.clear_since is None:
+                self.clear_since = output_time_s
+            if (stationary_clear or output_time_s - self.clear_since + 1e-6 >= self.release_confirm_s
+                    or crossing_active):
                 self.last_action = None
                 self.last_steps = None
         else:
@@ -415,7 +426,7 @@ class WalkingVoice:
                                                 "risk_suppressed_reason": item.get("risk_suppressed_reason")}
                                                 for item in evidence.get("detections", [])]}
         if voice_action is None:
-            if vehicle_only and previous_action is not None:
+            if (stationary_clear or vehicle_only) and previous_action is not None:
                 self.events.append((output_time_s, None))
             return None
         message = ACTION_MESSAGES[(voice_action, voice_steps)] if voice_steps else ACTION_MESSAGES[voice_action]

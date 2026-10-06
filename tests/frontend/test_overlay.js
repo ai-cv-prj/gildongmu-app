@@ -10,8 +10,13 @@ const vm = require("node:vm");
 const labels = [];
 const strokeColors = [];
 const rectangles = [];
+const dashedLines = [];
+let currentPoint = null;
+let dashPattern = [];
 const context2d = {
-  beginPath() {}, moveTo() {}, lineTo() {}, closePath() {}, fill() {}, stroke() {},
+  beginPath() { currentPoint = null; }, moveTo(...args) { currentPoint = args; },
+  lineTo(...args) { if (dashPattern.length) dashedLines.push([currentPoint, args]); currentPoint = args; },
+  closePath() {}, fill() {}, stroke() {}, setLineDash(value) { dashPattern = value; },
   strokeRect(...args) { strokeColors.push(this.strokeStyle); rectangles.push(args); },
   fillRect() {}, clearRect() {}, drawImage() {}, arc() {},
   save() {}, restore() {},
@@ -35,7 +40,8 @@ context.window.GOverlay.render({
       xyxy: [.1, .2, .3, .6], display_label: "person", alert_level: "danger",
       track_id: 12, event_id: 34,
     }],
-    event: { roi: {}, last_action: "left", voice_action: "right" },
+    event: { roi: { immediate_polygon: [[.02, .70], [.98, .70], [.98, 1], [.02, 1]] },
+      last_action: "left", voice_action: "right", stationarity: { status: "stationary" } },
   },
   traffic: { detections: [] },
   crosswalk: { event: { status: "crossing" } },
@@ -48,10 +54,12 @@ context.window.GOverlay.render({
 assert.ok(labels.includes("person | T12 · E34"));
 assert.ok(labels.includes("ACTION: left"));
 assert.ok(labels.includes("VOICE: right"));
+assert.ok(labels.includes("MOTION: stationary"));
 assert.ok(labels.includes("CROSSWALK: crossing"));
 assert.ok(labels.includes("WALKWAY: inside"));
 assert.ok(strokeColors.includes("#50e65a"));
 assert.ok(labels.includes("정류장 후보 1/3"));
+assert.deepEqual(dashedLines.at(-1), [[7.2, 544], [352.8, 544]]);
 assert.equal(drawState, "drawn");
 
 labels.length = 0;

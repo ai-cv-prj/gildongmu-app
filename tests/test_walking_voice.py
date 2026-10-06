@@ -107,6 +107,66 @@ class WalkingVoiceTests(unittest.TestCase):
         self.assertIsNone(walking_action(prediction(outside), 100))
         self.assertEqual(walking_action(prediction(inside), 100), "straight")
 
+    # 정지 중 분홍색 ROI 하단 절반 음성 제한 확인
+    def test_stationary_guidance_requires_lower_half_of_pink_roi(self):
+        """사람과 차량 모두 정지 중에는 분홍색 ROI 하단 절반에 들어와야 안내한다."""
+        for class_name in ("person", "car"):
+            with self.subTest(class_name=class_name):
+                upper = danger_item(
+                    1, [45, 0, 55, 20], class_name,
+                    geometry={"immediate_overlap": 1.0,
+                              "stationary_voice_eligible": False},
+                    motion={"quality": "valid"}, reasons=["short_ttc"])
+                lower = danger_item(
+                    2, [45, 0, 55, 20], class_name,
+                    geometry={"immediate_overlap": 1.0,
+                              "stationary_voice_eligible": True})
+                upper_prediction = prediction(upper)
+                upper_prediction["stationarity"] = {"status": "stationary"}
+                lower_prediction = prediction(lower)
+                lower_prediction["stationarity"] = {"status": "stationary"}
+                self.assertIsNone(walking_action(upper_prediction, 100, stationary_voice=True))
+                self.assertEqual(
+                    walking_action(lower_prediction, 100, stationary_voice=True), "stop")
+
+    # 이동 중 기존 음성 범위 유지 확인
+    def test_moving_guidance_keeps_existing_pink_roi_rule(self):
+        """정지하지 않은 상태에서는 분홍색 ROI 상단 객체도 기존처럼 안내한다."""
+        item = danger_item(
+            1, [45, 0, 55, 20], geometry={"immediate_overlap": 1.0,
+                                         "stationary_voice_eligible": False})
+        result = prediction(item)
+        result["stationarity"] = {"status": "moving"}
+        self.assertEqual(walking_action(result, 100, stationary_voice=True), "stop")
+
+    # 정지 중 화면 행동과 모든 장애물 음성 제한 확인
+    def test_stationary_filter_keeps_action_but_also_limits_crossing_vehicle_voice(self):
+        """화면 ACTION은 유지하고 횡단 중 차량도 하단 절반 밖에서는 음성을 내지 않는다."""
+        vehicle = danger_item(
+            1, [45, 0, 55, 20], "car",
+            geometry={"immediate_overlap": 1.0, "stationary_voice_eligible": False})
+        result = prediction(vehicle)
+        result["stationarity"] = {"status": "stationary"}
+        self.assertEqual(walking_action(result, 100), "stop")
+        self.assertIsNone(walking_action(result, 100, True, True))
+
+    # 정지 중 화면 상태와 실제 음성 분리 확인
+    def test_stationary_upper_half_keeps_action_but_mutes_voice(self):
+        """상단 위험 표시는 유지하면서 분홍색 ROI 하단 밖의 실제 음성만 억제한다."""
+        item = danger_item(
+            1, [45, 0, 55, 20], "car",
+            geometry={"immediate_overlap": 1.0, "stationary_voice_eligible": False})
+        result = prediction(item)
+        result["stationarity"] = {"status": "stationary"}
+        voice = WalkingVoice()
+        active = prediction(danger_item(2, [45, 0, 55, 20]))
+        self.assertEqual(voice.observe(active, 100, 3.0), ("멈추세요", "walking-stop.mp3"))
+        self.assertIsNone(voice.observe(result, 100, 3.1))
+        self.assertEqual(result["last_action"], "stop")
+        self.assertIsNone(result["voice_action"])
+        self.assertTrue(result["voice_clear"])
+        self.assertEqual(voice.events[-1], (3.1, None))
+
     # 기본 위험 분포의 네 행동 확인
     def test_danger_distribution_selects_basic_action(self):
         """세 방향의 모든 위험 조합을 직진·좌우 이동·정지로 바꾼다."""
@@ -410,11 +470,13 @@ class WalkingVoiceTests(unittest.TestCase):
         """화면 행동과 선택 음성 또는 무음 상태를 서로 다른 줄로 표시한다."""
         self.assertEqual(action_status_text(
             {"last_action": "left", "voice_action": "right"}),
-            ("ACTION: left", "VOICE: right"))
+            ("ACTION: left", "VOICE: right", "MOTION: unavailable"))
         self.assertEqual(action_status_text(
             {"last_action": "stop", "voice_action": None}),
-            ("ACTION: stop", "VOICE: muted"))
-        self.assertEqual(action_status_text({}), ("ACTION: none", "VOICE: none"))
+            ("ACTION: stop", "VOICE: muted", "MOTION: unavailable"))
+        self.assertEqual(action_status_text(
+            {"stationarity": {"status": "stationary"}}),
+            ("ACTION: none", "VOICE: none", "MOTION: stationary"))
 
     # 새 이벤트가 이전 음성을 끊는 PCM 결과 확인
     def test_voice_track_starts_at_frame_time_and_is_video_length(self):

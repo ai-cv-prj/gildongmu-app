@@ -32,6 +32,39 @@ window.GOverlay = (() => {
     ctx.stroke();
   }
 
+  // 정지 중 음성 범위가 시작되는 분홍색 ROI 하단 절반 경계 표시
+  /** 분홍색 ROI의 세로 중앙을 가로지르는 점선을 그린다. */
+  function stationaryVoiceBoundary(points) {
+    if (!Array.isArray(points) || points.length < 3) return;
+    const ys = points.map(point => point?.[1]).filter(Number.isFinite);
+    if (ys.length !== points.length) return;
+    const middleY = (Math.min(...ys) + Math.max(...ys)) / 2;
+    const intersections = [];
+    points.forEach((point, index) => {
+      const next = points[(index + 1) % points.length];
+      if (![point?.[0], point?.[1], next?.[0], next?.[1]].every(Number.isFinite)) return;
+      const [x1, y1] = point, [x2, y2] = next;
+      if (Math.abs(y2 - y1) < 1e-9) {
+        if (Math.abs(middleY - y1) < 1e-9) intersections.push(x1, x2);
+        return;
+      }
+      if (middleY < Math.min(y1, y2) || middleY > Math.max(y1, y2)) return;
+      intersections.push(x1 + (middleY - y1) * (x2 - x1) / (y2 - y1));
+    });
+    const xs = intersections.filter(Number.isFinite).sort((left, right) => left - right);
+    if (xs.length < 2) return;
+    ctx.save();
+    ctx.strokeStyle = "#ff88ba";
+    ctx.lineWidth = Math.max(2, canvas.width / 320);
+    ctx.setLineDash([Math.max(8, canvas.width / 45), Math.max(6, canvas.width / 60)]);
+    ctx.beginPath();
+    ctx.moveTo(xs[0] * canvas.width, middleY * canvas.height);
+    ctx.lineTo(xs.at(-1) * canvas.width, middleY * canvas.height);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
   // 정규화된 탐지 박스와 라벨 표시
   /** 보행 장애물과 신호등을 색상과 짧은 이름으로 구분한다. */
   function boxes(items, kind) {
@@ -146,7 +179,8 @@ window.GOverlay = (() => {
   function actionStatus(event) {
     const action = event?.last_action ?? "none";
     const voice = event?.voice_action ?? (action === "none" ? "none" : "muted");
-    const lines = [`ACTION: ${action}`, `VOICE: ${voice}`];
+    const motion = event?.stationarity?.status ?? "unavailable";
+    const lines = [`ACTION: ${action}`, `VOICE: ${voice}`, `MOTION: ${motion}`];
     ctx.font = `bold ${Math.max(13, canvas.width / 38)}px system-ui`;
     const padding = 8;
     const lineHeight = Math.max(26, canvas.height / 24);
@@ -222,6 +256,7 @@ window.GOverlay = (() => {
       for (const points of roi.corridor_polygons || [roi.corridor_polygon])
         polygon(points, "#4ce3fa", "#4ce3fa20");
       polygon(roi.immediate_polygon, "#ff88ba", "#ff88ba24");
+      stationaryVoiceBoundary(roi.immediate_polygon);
       crosswalkRoi(result.crosswalk?.event);
       walkingSurfaceRoi(result.walking_surface?.event);
       if (obstacles) boxes(result.walking?.detections, "walking");
