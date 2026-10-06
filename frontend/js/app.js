@@ -91,7 +91,7 @@
         if (activeClip === clip) queueMicrotask(() => {
           void finishClip(error ? `영상 기록 오류: ${error.message}` : "카메라 영상 기록이 종료됐습니다.");
         });
-      });
+      }, player.recordingStream());
       clip.last_sent_at_ms = clip.started_at_ms;
       activeClip = clip;
       clipTimer = setTimeout(() => { void finishClip("30초 영상 구간 기록을 마쳤습니다."); }, MAX_CLIP_MS - 250);
@@ -139,17 +139,31 @@
   }
   function bufferClipFrame(clip, frameId, capturedAtMs, image, maskPng) {
     if (!clip || clip.discarded || capturedAtMs < clip.started_at_ms ||
-        (clip.ended_at_ms !== null && capturedAtMs >= clip.ended_at_ms)) return;
+        (clip.ended_at_ms !== null && capturedAtMs >= clip.ended_at_ms)) return null;
     const mask = typeof maskPng === "string" ? maskPng : "";
     const bytes = image.size + mask.length;
     if (clip.frames.length >= MAX_CLIP_FRAMES || clip.frame_bytes + bytes > MAX_CLIP_FRAME_BYTES ||
         bufferedBytes + GRecorder.bytes() + bytes > MAX_PENDING_BYTES) {
       if (activeClip === clip) void finishClip("프레임 또는 영상 용량 제한에 도달해 기록을 마쳤습니다.");
-      return;
+      return null;
     }
-    clip.frames.push({ frame_id: frameId, captured_at_ms: capturedAtMs, image, mask_png: mask });
+    const frame = { frame_id: frameId, captured_at_ms: capturedAtMs, image, mask_png: mask };
+    clip.frames.push(frame);
     clip.frame_bytes += bytes;
     bufferedBytes += bytes;
+    return frame;
+  }
+  function saveClipOverlay(clip, frame) {
+    if (!frame || clip.discarded || clip.overlay_finalized || !clip.frames.includes(frame)) return;
+    try {
+      const png = GOverlay.snapshot();
+      const bytes = png.length;
+      if (bytes > 2 * 1024 * 1024 * 4 / 3 || clip.frame_bytes + bytes > MAX_CLIP_FRAME_BYTES ||
+          bufferedBytes + GRecorder.bytes() + bytes > MAX_PENDING_BYTES) return;
+      frame.overlay_png = png;
+      clip.frame_bytes += bytes;
+      bufferedBytes += bytes;
+    } catch (error) { console.warn("화면 오버레이 저장 실패:", error); }
   }
   const clipIndex = item => Number.parseInt(String(item.clip_id).replace(/[^0-9]/g, ""), 10);
   async function pollClipStatus() {
@@ -189,6 +203,13 @@
       }
       while (pendingUploads.length) {
         const clip = pendingUploads[0];
+        // 추론 결과가 화면에 표시된 프레임만 저장한다.
+        clip.overlay_finalized = true;
+        clip.frames = clip.frames.filter(frame => frame.overlay_png);
+        const frameBytes = clip.frames.reduce((sum, frame) =>
+          sum + frame.image.size + frame.mask_png.length + frame.overlay_png.length, 0);
+        bufferedBytes -= clip.frame_bytes - frameBytes;
+        clip.frame_bytes = frameBytes;
         if (!clip.frames.length) {
           status(`${clip.index}번째 구간에 완료된 추론 프레임이 없어 영상 쌍을 저장하지 않았습니다.`);
           bufferedBytes -= clip.blob.size + clip.frame_bytes;
@@ -291,16 +312,19 @@
     if (!["input", "confirm", "home", "welcome", "finish"].includes(view.getScreen())) view.show(state, { focus: false });
     view.setPaused(paused);
   }
-  function showResult(result, capturedAt) {
+  function showResult(result, capturedAt, clip = null, clipFrame = null) {
     // Apply revision-checked boarding first; an old in-flight frame must not
     // restore obstacle warnings after the user manually confirms arrival.
     boarding.accept(result, capturedAt);
     if (!obstaclesEnabled(boardingState)) result = { ...result,
       walking: { ...result.walking, detections: [], event: { enabled: false } } };
     lastResult = result;
-    GOverlay.render(result, state => queueTiming({ kind: "overlay", frame_id: result.frame_id,
-      captured_at_ms: result.captured_at_ms, status: state,
-      overlay_delay_ms: state === "drawn" ? Math.round(performance.now() - capturedAt) : null }));
+    GOverlay.render(result, state => {
+      if (state === "drawn" || state === "stale") saveClipOverlay(clip, clipFrame);
+      queueTiming({ kind: "overlay", frame_id: result.frame_id,
+        captured_at_ms: result.captured_at_ms, status: state,
+        overlay_delay_ms: state === "drawn" ? Math.round(performance.now() - capturedAt) : null });
+    });
     $("metrics").textContent = `${result.frame_id} 프레임 · 추론 ${result.inference_ms}ms`;
     $("stop-proximity-status").textContent = result.stop_proximity?.nearby ? "카메라에서 정류장 근접 추정" : "정류장 근접 관측 없음";
     coordinator.acceptCrosswalk(result.crosswalk?.event, capturedAt);
@@ -362,11 +386,13 @@
         }
         const result = await GApi.frame(id, frameId + 1, capturedAtMs, blob, request.signal,
           busBlob, busCapturedAtMs);
-        bufferClipFrame(selectedClip, result.frame_id, capturedAtMs, blob, result.walking?.mask_png);
+        const clipFrame = bufferClipFrame(selectedClip, result.frame_id, capturedAtMs, blob,
+          result.walking?.mask_png);
         if (!running || version !== generation) return;
         frameId = result.frame_id; // Even an in-flight paused request advances the server sequence.
         const returnedAt = performance.now();
-        if (!paused && !document.hidden && shownVersion === presentation) showResult(result, capturedAt);
+        if (!paused && !document.hidden && shownVersion === presentation)
+          showResult(result, capturedAt, selectedClip, clipFrame);
         const busTiming = {};
         if (busBlob) {
           busTiming.bus_capture_ms = busCaptureMs;

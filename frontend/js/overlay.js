@@ -102,7 +102,7 @@ window.GOverlay = (() => {
   }
 
   // 현장 테스트용 정류장 판정. 캔버스에 그리므로 오버레이 영상에도 남는다.
-  function stopDiagnostic(event) {
+  function stopDiagnostic(event, crosswalk, walkingSurface) {
     const state = event?.status || "unavailable";
     const recordedUndetected = state === "not_detected" && event?.arrival_recorded;
     const basis = { left: "좌측", right: "우측", bottom: "하단" }[event?.basis];
@@ -129,8 +129,12 @@ window.GOverlay = (() => {
     const bannerWidth = Math.min(canvas.width - 16,
       Math.max(...lines.map(line => ctx.measureText(line).width)) + 22);
     const x = canvas.width - bannerWidth - 8;
-    const y = 52;
     const bannerHeight = lines.length === 2 ? 54 : 36;
+    const statusHeight = Math.max(26, canvas.height / 24);
+    const rightBadges = [crosswalk?.status, walkingSurface?.status]
+      .filter(status => status && status !== "disabled").length;
+    const actionHeight = Math.max(26, canvas.height / 24) * 2;
+    const y = 8 + Math.max(actionHeight, rightBadges * (statusHeight + 8)) + 8;
     ctx.fillStyle = "#08131feb";
     ctx.fillRect(x, y, bannerWidth, bannerHeight);
     ctx.strokeStyle = color;
@@ -275,7 +279,8 @@ window.GOverlay = (() => {
       if (obstacles) actionStatus(result.walking?.event);
       crosswalkStatus(result.crosswalk?.event);
       walkingSurfaceStatus(result.walking_surface?.event);
-      if (obstacles) stopDiagnostic(result.stop_proximity);
+      if (obstacles) stopDiagnostic(result.stop_proximity,
+        result.crosswalk?.event, result.walking_surface?.event);
       onDrawn("drawn");
     };
     if (!result.walking?.mask_png) return draw(null);
@@ -292,5 +297,10 @@ window.GOverlay = (() => {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
   }
 
-  return { size, render, clear };
+  /** 저장할 추론 프레임에 화면과 같은 오버레이 픽셀을 사용한다. */
+  function snapshot() {
+    return canvas.toDataURL("image/png").split(",", 2)[1];
+  }
+
+  return { size, render, clear, snapshot };
 })();

@@ -87,7 +87,8 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
       async stopRaw() { if (!recording) return null; recording = false; recordStops++;
         return { blob: { size: 12, type: "video/webm" }, started_at_ms: recordingStartedAt,
           ended_at_ms: Math.min(100000 + now, recordingStartedAt + 30000) }; } },
-    GOverlay: { size() {}, clear() {}, render(_result, done) { done("drawn"); } },
+    GOverlay: { size() {}, clear() {}, snapshot: () => "cG5n",
+      render(_result, done) { done("drawn"); } },
     fetch: async () => ({}), addEventListener() {},
     queueMicrotask,
   };
@@ -315,6 +316,8 @@ test("녹화는 기본 꺼짐이며 선택한 두 구간을 세션 종료 후 �
     [[1], [2]]);
   assert.strictEqual(app.uploads[0].frames[0].image, app.frames[0].blob,
     "라이브 추론에 보낸 동일한 JPEG를 사후 업로드한다");
+  assert.equal(app.uploads[0].frames[0].overlay_png, "cG5n",
+    "화면에 실제 그린 오버레이도 같은 프레임과 함께 업로드한다");
   assert.ok(app.uploads.every(clip => clip.ended_at_ms - clip.started_at_ms <= 30000));
   assert.match(app.statuses.at(-1), /원본·추론 영상 저장이 완료/);
 });

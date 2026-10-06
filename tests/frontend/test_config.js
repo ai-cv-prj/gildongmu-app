@@ -75,6 +75,11 @@ test("preview fps and optional raw recorder use server settings", async () => {
   assert.equal(calls.interval, 345);
   const saved = await context.window.GRecorder.stopRaw();
   assert.equal(saved.blob.size, 3);
+  const audioTrack = { readyState: "live" };
+  context.window.GRecorder.startRaw(null, null, { getAudioTracks: () => [audioTrack] });
+  assert.equal(calls.tracks.length, 2);
+  assert.strictEqual(calls.tracks[1], audioTrack);
+  await context.window.GRecorder.stopRaw();
   context.window.GRecorder.startRaw(() => false);
   calls.recorder.ondataavailable({ data: new Blob(["overflow"], { type: "video/webm" }) });
   await assert.rejects(context.window.GRecorder.stopRaw(), /120MB/,

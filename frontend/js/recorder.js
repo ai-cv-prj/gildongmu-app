@@ -19,7 +19,7 @@ window.GRecorder = (() => {
   let onChunk = null;
 
   function supportedMimeType() {
-    const formats = ["video/webm;codecs=vp8", "video/webm", "video/mp4;codecs=avc1", "video/mp4"];
+    const formats = ["video/webm;codecs=vp8,opus", "video/webm", "video/mp4;codecs=avc1,mp4a.40.2", "video/mp4"];
     return formats.find(type => MediaRecorder.isTypeSupported(type)) || "";
   }
 
@@ -62,14 +62,15 @@ window.GRecorder = (() => {
   }
 
   /** Start one raw clip. The browser encodes only while this recorder is active. */
-  function startRaw(chunkCallback = null, endedCallback = null) {
+  function startRaw(chunkCallback = null, endedCallback = null, audioStream = null) {
     if (recorder) throw new Error("이미 영상 구간을 기록하고 있습니다.");
     const cameraTrack = video.srcObject?.getVideoTracks?.()[0];
     if (!window.MediaRecorder || !cameraTrack || cameraTrack.readyState !== "live") {
       throw new Error("원본 카메라 영상 기록을 시작할 수 없습니다.");
     }
     const mimeType = supportedMimeType();
-    const current = new MediaRecorder(new MediaStream([cameraTrack]), {
+    const audioTracks = audioStream?.getAudioTracks?.().filter(track => track.readyState === "live") || [];
+    const current = new MediaRecorder(new MediaStream([cameraTrack, ...audioTracks]), {
       ...(mimeType ? { mimeType } : {}),
       videoBitsPerSecond: window.GConfig.get().recording.video_bits_per_second,
     });
