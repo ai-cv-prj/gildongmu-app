@@ -4,10 +4,11 @@ const vm = require("node:vm");
 const settings = require("./settings");
 let utterance, audioInstance, speechCancels = 0, cancelledAudio = 0, started = 0, finished = 0;
 class Audio {
-  constructor() { audioInstance = this; }
+  constructor() { audioInstance = this; this.defaultPlaybackRate = 1; this.playbackRate = 1; }
   pause() { cancelledAudio++; }
   removeAttribute() {}
-  load() {}
+  // 브라우저처럼 load()가 재생 속도를 기본값으로 되돌린다.
+  load() { this.playbackRate = this.defaultPlaybackRate; }
   play() { this.onplaying(); }
 }
 const context = { window: { GConfig: { get: () => settings }, Audio,
@@ -31,7 +32,9 @@ assert.equal(audioInstance.playbackRate, 1.5);
 assert.equal(audioInstance.src, "/audio/walking-stop.mp3?v=walking-action-v9");
 player.cancel();
 assert.equal(cancelledAudio, 1);
+assert.equal(player.setRate(0.75), 0.75);
 assert.equal(player.speak("오른쪽으로 두 걸음", 1000), true);
 assert.equal(audioInstance.src, "/audio/walking-move-right-two.mp3?v=walking-action-v9");
+assert.equal(audioInstance.playbackRate, 0.75);
 player.cancel();
 console.log("tts: pass");
