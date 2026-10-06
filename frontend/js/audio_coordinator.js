@@ -176,8 +176,16 @@
       if (current && now() >= current.validUntil && (!current.started || current.repeat)) clear(current.source);
     }
 
+    // 실제 재생 중인 장애물 안내 행동 조회
+    /** 장애물 음원의 시작 콜백 후부터 종료·취소 전까지만 행동을 반환한다. */
+    function walkingPlaybackAction() {
+      if (!current || current.source !== "walking" || !current.started) return null;
+      const action = current.metadata?.action;
+      return ["left", "right", "straight", "stop"].includes(action) ? action : null;
+    }
+
     return { start, stop, request, clear, acceptCrosswalk, acceptWalkingSurface,
-      tick, PRIORITY };
+      tick, walkingPlaybackAction, PRIORITY };
   }
 
   window.GAudioCoordinator = { create, PRIORITY };

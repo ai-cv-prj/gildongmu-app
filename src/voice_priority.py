@@ -6,6 +6,7 @@ file_path: src/voice_priority.py
 """
 
 import math
+from functools import lru_cache
 
 from src.video_audio import SAMPLE_RATE, decode_clip
 
@@ -15,6 +16,7 @@ RED_TRAFFIC_CLIPS = {"red.mp3", "red-changed.mp3"}
 
 
 # 음원 길이 계산
+@lru_cache(maxsize=None)
 def clip_duration(filename):
     """MP3를 해독해 단일 채널 16 kHz 기준 재생 시간을 초로 반환한다."""
     return len(decode_clip(filename)) / (2 * SAMPLE_RATE)

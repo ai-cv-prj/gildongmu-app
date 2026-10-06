@@ -17,8 +17,7 @@ DARK_TEXT_COLOR = (31, 19, 8)
 def action_status_text(prediction):
     """화면 행동과 음성 선택, 카메라 움직임 상태를 짧은 문구로 반환한다."""
     action = prediction.get("last_action") or "none"
-    voice_action = prediction.get("voice_action")
-    voice = voice_action or ("muted" if action != "none" else "none")
+    voice = prediction.get("voice_playback_action") or "none"
     motion = (prediction.get("stationarity") or {}).get("status") or "unavailable"
     return f"ACTION: {action}", f"VOICE: {voice}", f"MOTION: {motion}"
 

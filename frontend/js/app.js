@@ -319,12 +319,6 @@
     if (!obstaclesEnabled(boardingState)) result = { ...result,
       walking: { ...result.walking, detections: [], event: { enabled: false } } };
     lastResult = result;
-    GOverlay.render(result, state => {
-      if (state === "drawn" || state === "stale") saveClipOverlay(clip, clipFrame);
-      queueTiming({ kind: "overlay", frame_id: result.frame_id,
-        captured_at_ms: result.captured_at_ms, status: state,
-        overlay_delay_ms: state === "drawn" ? Math.round(performance.now() - capturedAt) : null });
-    });
     $("metrics").textContent = `${result.frame_id} 프레임 · 추론 ${result.inference_ms}ms`;
     $("stop-proximity-status").textContent = result.stop_proximity?.nearby ? "카메라에서 정류장 근접 추정" : "정류장 근접 관측 없음";
     coordinator.acceptCrosswalk(result.crosswalk?.event, capturedAt);
@@ -336,6 +330,15 @@
     traffic.accept({ session_id: result.session_id, frame_id: result.frame_id,
       detections: result.traffic.detections, event: result.traffic.event }, capturedAt);
     if (activeRoute) journey.accept(result.bus, result.bus?.captured_at_ms ?? result.captured_at_ms);
+    const overlayResult = { ...result, walking: { ...result.walking,
+      event: { ...result.walking?.event,
+        voice_playback_action: coordinator.walkingPlaybackAction() } } };
+    GOverlay.render(overlayResult, state => {
+      if (state === "drawn" || state === "stale") saveClipOverlay(clip, clipFrame);
+      queueTiming({ kind: "overlay", frame_id: result.frame_id,
+        captured_at_ms: result.captured_at_ms, status: state,
+        overlay_delay_ms: state === "drawn" ? Math.round(performance.now() - capturedAt) : null });
+    });
     view.render(result);
   }
   function scheduleFrame() {

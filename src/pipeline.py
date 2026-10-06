@@ -33,7 +33,7 @@ from src.crosswalk_visualization import draw_crosswalk_safety
 from src.walking_surface import WalkingSurfaceEngine, walking_surface_config
 from src.walking_surface_visualization import draw_walking_surface
 from backend.stop_proximity import StopProximity
-from src.voice_priority import CrosswalkVoice, prioritize_voice_events
+from src.voice_priority import CrosswalkVoice, clip_duration, prioritize_voice_events
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -193,6 +193,8 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
     stop_proximity = None
     crosswalk_engine = None
     walking_surface_engine = None
+    walking_voice_action = None
+    walking_voice_end_s = 0.0
     try:
         if not capture.isOpened():
             raise RuntimeError(f"영상을 열 수 없습니다: {video_path}")
@@ -315,6 +317,7 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
                 if risk_result is not None:
                     risk_result["walking_surface"] = walking_surface_result
             if risk_result is not None:
+                event_count = len(voice.events)
                 voice.observe(
                     risk_result, output_width, processed_frames / fps,
                     crossing_active=bool(
@@ -322,6 +325,17 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
                     signal=traffic_result,
                     crosswalk_status=(crosswalk_result or {}).get("status"),
                 )
+                if len(voice.events) > event_count:
+                    event_time, event_clip = voice.events[-1]
+                    if event_clip is None:
+                        walking_voice_action = None
+                        walking_voice_end_s = event_time
+                    else:
+                        walking_voice_action = risk_result.get("voice_action")
+                        walking_voice_end_s = event_time + clip_duration(event_clip)
+                if processed_frames / fps >= walking_voice_end_s - 1e-9:
+                    walking_voice_action = None
+                risk_result["voice_playback_action"] = walking_voice_action
             if traffic_result is not None:
                 # 일반 장애물 모델의 traffic_light 박스와 대상 신호등 표시가 겹치지 않게 한다.
                 detections = [item for item in detections if item["class_name"] != "traffic_light"]

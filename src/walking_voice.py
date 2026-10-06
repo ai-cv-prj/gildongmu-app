@@ -21,6 +21,11 @@ VOICE_IMMEDIATE_OVERLAP_RATIO = GUIDANCE["walking_voice_immediate_overlap_ratio"
 DISTANCE_TIE_RATIO = GUIDANCE["walking_distance_tie_ratio"]
 TWO_STEP_ENTER_RATIO = GUIDANCE["walking_two_step_enter_ratio"]
 TWO_STEP_EXIT_RATIO = GUIDANCE["walking_two_step_exit_ratio"]
+LATERAL_CONFIRM_S = GUIDANCE.get("walking_lateral_confirm_ms", 200) / 1000
+STRAIGHT_CONFIRM_S = GUIDANCE.get("walking_straight_confirm_ms", 1000) / 1000
+FROM_STOP_CONFIRM_S = GUIDANCE.get("walking_from_stop_confirm_ms", 500) / 1000
+REPEAT_NONE_S = GUIDANCE.get("walking_repeat_none_ms", 3000) / 1000
+STOP_REPEAT_NONE_S = GUIDANCE.get("walking_stop_repeat_none_ms", 500) / 1000
 ACTION_MESSAGES = {
     ("left", 1): ("왼쪽으로 한 걸음", "walking-move-left-one.mp3"),
     ("left", 2): ("왼쪽으로 두 걸음", "walking-move-left-two.mp3"),
@@ -32,6 +37,28 @@ ACTION_MESSAGES = {
 VEHICLE_CLASSES = frozenset({"car", "bus", "truck", "motorcycle"})
 NON_GREEN_SIGNAL_STATES = frozenset({"red", "unknown"})
 CROSSWALK_WAIT_STATUSES = frozenset({"used", "eligible"})
+
+
+# 이전 행동과 다음 행동에 맞는 음성 확정 시간 선택
+def transition_confirm_s(previous_action, next_action):
+    """
+    긴급 정지는 즉시 안내하고 나머지 행동 전환에 지정된 안정화 시간을 반환한다.
+    """
+    if previous_action is None or next_action == "stop":
+        return 0.0
+    if previous_action == "stop":
+        return FROM_STOP_CONFIRM_S
+    if next_action == "straight":
+        return STRAIGHT_CONFIRM_S
+    return LATERAL_CONFIRM_S
+
+
+# 같은 음성을 다시 허용할 none 유지 시간 선택
+def repeat_none_s(previous_action):
+    """
+    멈춤과 일반 이동 안내에 각각 지정된 무음 유지 시간을 반환한다.
+    """
+    return STOP_REPEAT_NONE_S if previous_action == "stop" else REPEAT_NONE_S
 
 
 # 객체 바닥에서 지정 영역 픽셀 비율 계산
@@ -311,8 +338,6 @@ class WalkingVoice:
         self.epoch = None
         self.hazards = {}
         self.voice_event_id = 0
-        self.change_confirm_s = GUIDANCE.get("walking_change_confirm_ms", 350) / 1000
-        self.release_confirm_s = GUIDANCE.get("walking_release_confirm_ms", 600) / 1000
         self.missing_hold_s = GUIDANCE.get("walking_missing_hold_ms", 800) / 1000
 
     def _evidence(self, prediction, timestamp):
@@ -377,18 +402,23 @@ class WalkingVoice:
                             and raw_action is None)
         if raw_action is None:
             self.pending_action = self.pending_since = None
-            if stationary_clear:
-                self.last_action = None
-                self.last_steps = None
+            if self.clear_since is None:
                 self.clear_since = output_time_s
-            elif self.clear_since is None:
-                self.clear_since = output_time_s
-            if (stationary_clear or output_time_s - self.clear_since + 1e-6 >= self.release_confirm_s
-                    or crossing_active):
+            if (self.last_action is not None
+                    and output_time_s - self.clear_since + 1e-6
+                    >= repeat_none_s(self.last_action)):
                 self.last_action = None
                 self.last_steps = None
         else:
+            if (self.clear_since is not None and self.last_action is not None
+                    and output_time_s - self.clear_since + 1e-6
+                    >= repeat_none_s(self.last_action)):
+                self.last_action = None
+                self.last_steps = None
             self.clear_since = None
+            # 같은 방향의 걸음 수 변화도 동일 행동으로 보고 반복 안내하지 않는다.
+            if voice_action == self.last_action:
+                voice_steps = self.last_steps
             candidate = (voice_action, voice_steps)
             previous = (self.last_action, self.last_steps)
             if voice_action == "stop" or self.last_action is None:
@@ -396,7 +426,7 @@ class WalkingVoice:
             elif candidate != previous:
                 if self.pending_action != candidate:
                     self.pending_action, self.pending_since = candidate, output_time_s
-                confirmation = self.release_confirm_s if voice_action == "straight" else self.change_confirm_s
+                confirmation = transition_confirm_s(self.last_action, voice_action)
                 if output_time_s - self.pending_since + 1e-6 < confirmation:
                     voice_action = self.last_action
                     voice_steps = self.last_steps
@@ -410,7 +440,9 @@ class WalkingVoice:
         prediction["last_action"] = display_action
         prediction["voice_action"] = voice_action
         prediction["voice_steps"] = voice_steps
-        prediction["voice_clear"] = voice_action is None and self.last_action is None
+        prediction["voice_clear"] = (voice_action is None
+                                     and (self.last_action is None
+                                          or stationary_clear or vehicle_only))
         eligible_ids = {id(item) for item in eligible}
         hazard_ids = {f"{item.get('class_name')}:{item.get('hazard_id') or item.get('event_id') or item.get('track_id')}"
                       for item in eligible}
