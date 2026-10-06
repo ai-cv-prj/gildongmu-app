@@ -21,40 +21,125 @@ file_path: README.md
 
 ## 1. 실행 준비
 
-### 가상환경과 패키지
+### 팀원용 설치 순서
 
-Linux/WSL과 Python 3.12 기준입니다. 프로젝트 루트에서 실행하세요.
+Linux 또는 Windows의 WSL에서 Bash로 실행합니다. 아래 바이너리 설치 명령은 x86_64 PC 기준입니다.
+Windows 사용자는 Python, 서버, `cloudflared`를 모두 같은 WSL 안에서 실행하세요.
+통합 앱의 공통 Python 버전은 **3.12**입니다. 버스 모델을 개발했던 3.10 환경과 별도로
+이 저장소에 `.venv`를 만들면 됩니다.
+
+현재 검증한 환경은 다음과 같습니다. 가상환경과 Python 실행 파일은 각 PC에서 설치하며 Git에 포함하지 않습니다.
+
+| 항목 | 검증한 버전·장치 |
+| --- | --- |
+| Python | 3.12.15 |
+| PyTorch / torchvision | 2.14.0 / 0.29.0, CUDA 13.0 빌드 |
+| Transformers / Ultralytics | 5.17.0 / 8.4.152 |
+| 버스 OCR timm / PyTorch Lightning | 0.9.16 / 2.5.1 |
+| GPU / NVIDIA 드라이버 | RTX 5080 Laptop GPU / 592.27 |
+
+#### 1) 시스템 도구와 저장소 준비
+
+Ubuntu 24.04/26.04 또는 해당 WSL 배포판에서는 최초 한 번 다음 도구를 설치합니다.
+`build-essential`은 GPU 실행 중 필요한 C 컴파일러를, `libgl1`과 GLib는 OpenCV 실행 라이브러리를 제공합니다.
+
+```bash
+sudo apt update
+sudo apt install -y git curl build-essential libgl1 libglib2.0-0t64
+```
+
+Ubuntu 22.04에서는 위 명령의 `libglib2.0-0t64`를 `libglib2.0-0`으로 바꿉니다.
+[Ubuntu 24.04 GLib 패키지](https://packages.ubuntu.com/noble/libglib2.0-0t64),
+[Ubuntu 22.04 GLib 패키지](https://packages.ubuntu.com/jammy/libglib2.0-0).
+다른 Linux 배포판에서는 같은 도구와 라이브러리를 해당 패키지 관리자로 준비합니다.
+
+```bash
+git clone --branch dev https://github.com/ai-cv-prj/gildongmu-app.git
+cd gildongmu-app
+```
+
+이미 저장소를 받았다면 해당 프로젝트 폴더에서 아래 단계를 진행합니다.
+
+#### 2) Python 3.12 가상환경 만들기
+
+Python 3.12가 없는 PC에서는 `uv`로 Python과 가상환경을 함께 준비할 수 있습니다.
+`--seed`는 이후 `python -m pip`를 사용할 수 있도록 pip도 설치합니다.
+[uv 설치 안내](https://docs.astral.sh/uv/getting-started/installation/),
+[가상환경 생성 옵션](https://docs.astral.sh/uv/reference/cli/#uv-venv).
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+uv venv --python 3.12.15 --seed .venv
+source .venv/bin/activate
+python --version
+```
+
+마지막 명령에서 `Python 3.12.15`가 출력되면 준비된 상태입니다.
+Python 3.12와 venv 지원이 이미 설치되어 있다면 다음 방법도 사용할 수 있습니다.
 
 ```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
 ```
 
-NVIDIA GPU를 사용한다면 CUDA 13.0용 PyTorch를 먼저 설치합니다.
+#### 3) PyTorch와 나머지 패키지 설치
+
+GPU용 또는 CPU용 PyTorch 중 실행 환경에 맞는 명령 하나를 먼저 실행합니다.
+NVIDIA GPU를 사용할 때는 `nvidia-smi`로 드라이버를 확인하고 CUDA 13.0 지원 드라이버를 준비하세요.
+아래 GPU 명령은 위 검증 환경에서 사용한 명령입니다. 다른 GPU·드라이버의 지원 빌드는
+[PyTorch 설치 안내](https://pytorch.org/get-started/locally/)에서 확인할 수 있습니다.
+
+GPU용:
 
 ```bash
 python -m pip install torch==2.14.0 torchvision==0.29.0 \
   --index-url https://download.pytorch.org/whl/cu130
 ```
 
-CPU만 사용한다면 CPU용 PyTorch를 설치합니다.
+CPU용:
 
 ```bash
 python -m pip install torch==2.14.0 torchvision==0.29.0 \
   --index-url https://download.pytorch.org/whl/cpu
 ```
 
-이후 나머지 패키지를 설치합니다. 앞에서 설치한 PyTorch는 같은 버전이므로 다시 설치되지 않습니다.
+이후 통합 추론, 버스 OCR, 서버와 테스트 패키지를 설치합니다.
+`requirements.txt`는 공통 패키지 버전을 지정하며, 앞서 설치한 CUDA·CPU용 PyTorch도 해당 버전으로 인정됩니다.
 
 ```bash
 python -m pip install -r requirements.txt
+python -m pip check
 ```
 
-GPU 사용 가능 여부는 다음 명령으로 확인합니다.
+`No broken requirements found.`가 나오면 패키지 의존성 검사에 통과한 것입니다.
+GPU를 사용할 때는 다음 명령의 마지막 값이 `True`인지 확인합니다. CPU 환경에서는 `False`가 정상입니다.
 
 ```bash
-python -c "import torch; print(torch.cuda.is_available())"
+python -c "import sys, torch; print(sys.version.split()[0]); print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available())"
 ```
+
+패키지를 추가·변경했다면 같은 가상환경에서 `python -m pip install -r requirements.txt`를 다시 실행합니다.
+새 터미널에서 직접 Python 명령을 쓸 때는 `source .venv/bin/activate`로 활성화하고,
+작업을 끝낼 때는 `deactivate`로 나올 수 있습니다. 전체 Python 설치 과정에서 `sudo pip`는 사용하지 않습니다.
+
+#### 4) 휴대폰 접속용 cloudflared 설치
+
+`cloudflared`는 Python 패키지가 아니라 별도로 설치하는 실행 파일입니다.
+이미 설치되어 있으면 `cloudflared --version`으로 확인하고 다음 단계로 넘어갑니다.
+설치가 필요한 Linux/WSL x86_64 PC에서는 다음 명령을 실행합니다.
+
+```bash
+mkdir -p "$HOME/.local/bin"
+curl -fL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+  -o "$HOME/.local/bin/cloudflared"
+chmod +x "$HOME/.local/bin/cloudflared"
+export PATH="$HOME/.local/bin:$PATH"
+cloudflared --version
+```
+
+새 터미널에서 `uv` 또는 `cloudflared`를 찾지 못하면 `export PATH="$HOME/.local/bin:$PATH"`를 다시 실행합니다.
+프론트엔드 회귀 테스트도 실행하려면 Node.js 22를 별도로 설치합니다. 앱 실행에는 Node.js가 필요하지 않습니다.
 
 ### 가중치와 데이터 배치
 
@@ -137,11 +222,9 @@ python -m scripts.run_video_inference --help
 
 ## 3. 휴대폰 실시간 테스트
 
-PC에서 두 터미널을 열어 실행합니다.
-
-Python 3.12가 필요합니다. `python3.12 --version`으로 확인하세요. 최초 서버 실행 시
-`.venv`를 생성하고 `requirements.txt`의 패키지를 설치하므로 시간이 걸립니다.
-실행 전 가상환경을 직접 활성화할 필요는 없습니다.
+위 가상환경·패키지·`cloudflared` 설치를 마친 뒤, **PC의 같은 프로젝트 폴더에서** 두 터미널을 열어 실행합니다.
+`run.sh`는 `.venv/bin/python`을 직접 사용하므로 실행할 때 가상환경을 따로 활성화할 필요는 없습니다.
+테스트하는 동안 서버와 터널 터미널을 모두 켜 둡니다.
 
 ```bash
 # 터미널 1: API 서버
@@ -154,8 +237,40 @@ Python 3.12가 필요합니다. `python3.12 --version`으로 확인하세요. �
 ```
 
 두 번째 터미널에 표시되는 `https://...trycloudflare.com` 주소를 휴대폰 브라우저에서 엽니다.
-코드나 추론 설정을 변경했다면 실행 중인 서버에는 자동 반영되지 않으므로 `run.sh`와
-`tunnel.sh`를 종료한 뒤 다시 실행합니다. 휴대폰 화면도 한 번 새로고침해야 합니다.
+PC와 휴대폰 모두 인터넷에 연결되어 있으면 휴대폰은 LTE/5G나 다른 Wi-Fi에서도 접속할 수 있습니다.
+Cloudflare Quick Tunnel은 임시 HTTPS 주소를 만들어 로컬 서버에 연결합니다.
+[Cloudflare 공식 안내](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/).
+
+### PC 주소와 휴대폰 주소 구분
+
+| 접속 위치 | 사용할 주소 |
+| --- | --- |
+| 서버를 실행한 PC의 브라우저 | `http://127.0.0.1:8001` 또는 `http://localhost:8001` |
+| 외부 휴대폰의 브라우저 | `tunnel.sh`가 출력한 `https://...trycloudflare.com` |
+| 같은 PC의 cloudflared가 연결할 내부 서버 | `http://127.0.0.1:8001` |
+
+`localhost`와 `127.0.0.1`은 주소를 여는 기기 자신을 뜻합니다. **휴대폰에서 localhost를 열면 휴대폰 자신을
+가리키므로 PC에 연결되지 않습니다.** 휴대폰에서는 반드시 출력된 HTTPS 터널 주소를 사용합니다.
+카메라 접근에도 HTTPS 등 보안 컨텍스트가 필요합니다.
+[브라우저 카메라 접근 조건](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia).
+
+```mermaid
+flowchart LR
+    Phone["외부 휴대폰 브라우저"] -->|"HTTPS 터널 주소"| Cloudflare["Cloudflare"]
+    Cloudflare --> Tunnel["PC의 cloudflared"]
+    Tunnel -->|"http://127.0.0.1:8001"| API["같은 PC의 FastAPI 서버"]
+```
+
+서버의 `APP_HOST`는 기본값 `127.0.0.1`로 둡니다. 터널이 같은 PC의 로컬 서버로 연결하므로
+외부 휴대폰 접속을 위해 `0.0.0.0`으로 바꿀 필요가 없습니다.
+참고로 `gildongmu-test-app`도 같은 연결 방식을 사용하며 기본 내부 포트는 `8000`입니다.
+이 프로젝트의 기본 포트는 `8001`이고, `run.sh`와 `tunnel.sh`가 같은 설정을 읽습니다.
+
+코드나 추론 설정을 바꾸면 서버를 `Ctrl+C`로 종료하고 `./scripts/run.sh`를 다시 실행합니다.
+주소·포트가 그대로라면 터널은 켜 둔 채 사용할 수 있습니다. 주소·포트를 변경했거나 터널을 종료했다면
+`./scripts/tunnel.sh`도 다시 실행하고 새 HTTPS 주소를 휴대폰에서 엽니다. 화면도 한 번 새로고침합니다.
+
+### 휴대폰 테스트 순서
 
 1. 출발 화면에서 음성 속도와 글자 크기를 설정한 뒤 **시작**을 누릅니다.
 2. 카메라 권한을 허용하면 기존 보행·신호등·횡단보도 안내가 시작됩니다.
@@ -186,8 +301,8 @@ weights/bus/
 └── parseq-src/                 # 고정 PARSeq 소스 전체, hubconf.py 포함
 ```
 
-이 로컬 작업본에는 test-app에서 가져온 버스 가중치와 PARSeq 소스가 배치되어 있습니다.
-`weights/`는 Git에서 제외되므로 새 clone에는 별도로 준비해야 합니다. `requirements.txt`의
+가중치와 PARSeq 소스는 별도로 공유받아 배치합니다. `weights/`는 Git에서 제외되므로
+새 clone에는 별도로 준비해야 합니다. `requirements.txt`의
 OCR 의존성도 설치합니다. 기존 환경은 `python -m pip install -r requirements.txt`로 갱신하세요.
 `GET /api/bus/status`는 API 키와 모델 파일의 준비 여부만 반환하며 모델의 실제 로딩 성공을 뜻하지는 않습니다.
 
@@ -238,17 +353,9 @@ OCR 한 번 관측과 반복 확인은 각각 번호 후보와 번호 확인으�
 오디오 트랙에는 포함되지 않습니다. 한국어 합성을 지원하지 않으면 입력 화면으로 안내합니다.
 터널 주소는 실행할 때마다 달라지므로 외부에 공개하지 마세요.
 
-`cloudflared`가 없다면 다음과 같이 설치합니다.
-
-```bash
-curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
-  -o /tmp/cloudflared
-chmod +x /tmp/cloudflared
-sudo mv /tmp/cloudflared /usr/local/bin/cloudflared
-```
-
 서버 주소와 포트의 기본값은 `configs/app.yaml`에 있습니다. 로컬에서만 바꾸려면 `.env`에
-`APP_HOST`, `APP_PORT`를 지정합니다. `.env` 값이 YAML보다 우선합니다.
+`APP_HOST`, `APP_PORT`를 지정합니다. `.env` 값이 YAML보다 우선합니다. 필요한 경우
+`cp .env.example .env`로 템플릿을 복사하고 값을 설정합니다.
 
 ## 4. 결과 확인
 
@@ -341,8 +448,12 @@ node --test tests/frontend/test_*.js tests/frontend/test_*.cjs
 | 모델 파일이 없음 | `configs/paths.yaml`의 경로와 실제 가중치 위치 확인 |
 | Mask2Former 로딩 실패 | 설정·전처리 파일과 모든 가중치 조각이 있는지 확인 |
 | CUDA를 사용할 수 없음 | NVIDIA 드라이버와 CUDA 지원 PyTorch 확인 또는 `--device cpu` 사용 |
+| OpenCV의 libGL.so.1·libgthread 로딩 실패 또는 C 컴파일러 없음 | 1장의 시스템 도구·라이브러리 설치 단계 확인 |
+| Python 3.12를 찾지 못함 | 1장의 uv 설치 절차로 `.venv`를 먼저 생성 |
 | 모듈을 찾을 수 없음 | 프로젝트 루트에서 가상환경을 활성화했는지 확인 |
 | 터널 연결 실패 | 서버 실행 여부와 `.env`·`configs/app.yaml`의 포트 확인 |
+| 휴대폰에서 localhost에 접속할 수 없음 | `tunnel.sh`가 출력한 최신 HTTPS 주소로 접속 |
+| 휴대폰에서 502 오류 | 서버가 실행 중인지, 터널과 서버의 포트가 같은지 확인 |
 
 ## 9. 상세 문서
 
