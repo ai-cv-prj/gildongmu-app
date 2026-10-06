@@ -74,7 +74,7 @@ class IntegrationTests(unittest.TestCase):
                          resolve_path(paths["yolo_weights"]))
         self.assertNotIn("model_dir", config)
         self.assertEqual(resolve_path(config["sample_dir"]), PROJECT_DIR / "data/samples/input")
-        self.assertEqual(resolve_path(config["session_dir"]), PROJECT_DIR / "data/sessions")
+        self.assertEqual(resolve_path(config["session_dir"]), PROJECT_DIR / "test-result")
         self.assertEqual(resolve_path(config["output_dir"]), PROJECT_DIR / "data/samples/output")
         self.assertEqual(resolve_path("/tmp/example.mp4"), Path("/tmp/example.mp4"))
         self.assertEqual(config["overlay_alpha"], 0.55)

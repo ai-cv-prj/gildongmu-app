@@ -24,6 +24,7 @@ htmlcov/
 
 # 샘플 입력·출력 및 날짜별 촬영 세션
 data/
+test-result/
 
 # 모델 가중치 및 이전 실험 산출물
 weights/

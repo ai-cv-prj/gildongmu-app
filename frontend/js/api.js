@@ -73,6 +73,56 @@ window.GApi = (() => {
     }).then(result);
   }
 
+  const CHUNK_BYTES = 4 * 1024 * 1024;
+  const retryDelay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+  async function retryUpload(path, options) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        return await result(await fetch(path, options));
+      } catch (error) {
+        if (attempt === 2 || (error.status && error.status < 500 && error.status !== 429)) throw error;
+        await retryDelay(500 * (attempt + 1));
+      }
+    }
+  }
+
+  /** Upload one selected clip after live inference and the session have stopped. */
+  async function uploadClip(sessionId, clip, onProgress = () => {}) {
+    const base = `/api/sessions/${encodeURIComponent(sessionId)}/clips/${clip.index}`;
+    const blob = clip.blob;
+    if (!blob?.size) throw new Error("원본 영상이 비어 있습니다.");
+    const chunkCount = Math.ceil(blob.size / CHUNK_BYTES);
+    const frames = clip.frames || [];
+    const total = chunkCount + frames.length + 1;
+    let done = 0;
+    for (let index = 0; index < chunkCount; index++) {
+      const body = new FormData();
+      body.append("video", blob.slice(index * CHUNK_BYTES, (index + 1) * CHUNK_BYTES, blob.type),
+        `clip_${clip.index}_part_${index}`);
+      await retryUpload(`${base}/chunks/${index}`, { method: "POST", body });
+      onProgress(++done, total);
+    }
+    for (const frame of frames) {
+      const body = new FormData();
+      body.append("captured_at_ms", String(frame.captured_at_ms));
+      body.append("image", frame.image, `frame_${frame.frame_id}.jpg`);
+      if (frame.mask_png) body.append("mask_png", frame.mask_png);
+      await retryUpload(`${base}/frames/${frame.frame_id}`, { method: "POST", body });
+      onProgress(++done, total);
+    }
+    const complete = await retryUpload(`${base}/complete`, { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mime_type: blob.type || "video/webm", chunk_count: chunkCount,
+        size_bytes: blob.size, started_at_ms: clip.started_at_ms, ended_at_ms: clip.ended_at_ms }) });
+    onProgress(++done, total);
+    return complete;
+  }
+
+  function clips(sessionId) {
+    return fetch(`/api/sessions/${encodeURIComponent(sessionId)}/clips`, { cache: "no-store" }).then(result);
+  }
+
   function nearbyBusArrival({ busNumber, latitude, longitude, accuracyM, signal }) {
     const query = new URLSearchParams({ bus_number: busNumber, latitude, longitude });
     if (Number.isFinite(accuracyM)) query.set("accuracy_m", accuracyM);
@@ -97,6 +147,6 @@ window.GApi = (() => {
       body: JSON.stringify({ session_id: sessionId }) }).then(result);
   }
 
-  return { start, frame, recording, camera, recordingEvent, timings, boarding, stop,
+  return { start, frame, recording, camera, uploadClip, clips, recordingEvent, timings, boarding, stop,
     nearbyBusArrival, busStatus, busEvents };
 })();

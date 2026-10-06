@@ -2,7 +2,7 @@
 (() => {
   const CAMERA_SCREENS = new Set(["walk", "signal", "search", "approach", "arrived"]);
   const BUS_SCREENS = new Set(["search", "approach", "arrived"]);
-  const SCREENS = new Set(["home", "input", "confirm", ...CAMERA_SCREENS]);
+  const SCREENS = new Set(["welcome", "finish", "home", "input", "confirm", ...CAMERA_SCREENS]);
   const DEFAULT_CUES = {
     walk: { label: "이동 안내", title: "주변을 살피며 이동해 주세요.", copy: "보행 위험과 신호를 확인하고 있어요.", icon: "walk", tone: "walk" },
     signal: { label: "보행자 신호", title: "신호를 확인하고 있어요.", copy: "주변과 보행자 신호를 확인해 주세요.", icon: "hand", tone: "signal" },
@@ -16,11 +16,13 @@
 
   function create({ onAction = () => {}, onSubmitRoute = () => {}, onRateChange = () => {},
     onTextScaleChange = () => {}, onStationChange = () => {} } = {}) {
-    let screen = "home", paused = false, busy = false;
+    let screen = "welcome", paused = false, busy = false;
     let bus = {}, lastResult = null, currentCue = DEFAULT_CUES.walk;
     let micMode = null, destroyed = false, stationCount = 0, speechSession = false;
+    let clipState = { active: false, count: 0, max: 5, available: false };
     const listeners = [];
     const cameraPanel = document.querySelector('[data-panel="camera"]');
+    const film = window.GildongmuFilm.mount($("opening-film"), $("film-caption"), $("ending-film"));
     function bind(element, event, callback) {
       element.addEventListener(event, callback);
       listeners.push(() => element.removeEventListener(event, callback));
@@ -98,9 +100,25 @@
         element.disabled = (busy && !canCancel) || (paused && action === "manual-arrival") || (paused && action === "locate");
       });
       $("bus-stations").disabled = busy || paused || stationCount === 0;
+      $("record-button").disabled = busy || !clipState.available;
       $("app").setAttribute("aria-busy", String(busy));
     }
     function setBusy(value) { busy = Boolean(value); updateControls(); }
+    function setClipState(value) {
+      clipState = { ...clipState, ...value };
+      const button = $("record-button");
+      button.setAttribute("aria-pressed", String(clipState.active));
+      updateText($("record-label"), clipState.active ? "영상 구간 기록 끝내기" : "30초 영상 구간 기록");
+      const message = clipState.active
+        ? `${clipState.count}/${clipState.max}번째 구간 기록 중 · 최대 30초 후 자동 종료`
+        : clipState.count >= clipState.max
+          ? `최대 ${clipState.max}개를 선택했습니다. 테스트 종료 후 저장합니다.`
+          : clipState.count
+            ? `${clipState.count}/${clipState.max}개 선택됨 · 필요하면 이어서 새 구간을 기록할 수 있습니다.`
+            : "영상 기록은 꺼져 있습니다. 필요할 때만 최대 30초씩 5개까지 기록합니다.";
+      updateText($("clip-status"), message);
+      updateControls();
+    }
     function setPaused(value) {
       paused = Boolean(value);
       if (paused) speech.stop();
@@ -121,6 +139,8 @@
       if (previous !== next) speech.stop();
       const panelName = CAMERA_SCREENS.has(screen) ? "camera" : screen;
       all("[data-panel]").forEach(panel => { panel.hidden = panel.dataset.panel !== panelName; });
+      if (screen === "welcome" && previous === "finish") film.restart();
+      film.setVisible(screen === "welcome");
       const busScreen = BUS_SCREENS.has(screen);
       $("app").dataset.screen = screen;
       updateText($("camera-title"), busScreen ? "버스 탐색" : "이동 안내");
@@ -190,6 +210,8 @@
       if (screen === "input") return "버스 번호를 입력하거나 마이크를 눌러 말해 주세요.";
       if (screen === "confirm") return `${readRoute()}번이 맞습니까?`;
       if (screen === "home") return "길동무가 정류장까지 함께합니다. 선택한 속도로 안내해 드릴게요.";
+      if (screen === "welcome") return "카메라 안내로, 버스에 오르기까지. 시작하기를 눌러 주세요.";
+      if (screen === "finish") return "안내를 종료했습니다. 다음 길도 길동무와 함께해요.";
       render(lastResult);
       return [currentCue.title, currentCue.copy].filter(Boolean).join(" ");
     }
@@ -275,10 +297,11 @@
     function destroy() {
       destroyed = true;
       speech.destroy();
+      film.destroy();
       listeners.forEach(remove => remove());
     }
-    show("home", { focus: false });
-    return { show, render, setBus, setStations, setPaused, setBusy, setStatus, setRoute, readRoute,
+    show("welcome", { focus: false });
+    return { show, render, setBus, setStations, setPaused, setBusy, setClipState, setStatus, setRoute, readRoute,
       setSettings, announce, getScreen: () => screen, getGuidance, destroy };
   }
   window.GView = { create };

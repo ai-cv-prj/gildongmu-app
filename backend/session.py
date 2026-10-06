@@ -5,6 +5,7 @@ file_path: backend/session.py
 """
 
 import json
+import hashlib
 import re
 import threading
 import time
@@ -51,6 +52,8 @@ class SessionManager:
         self.models = None
         self.session = None
         self.lock = threading.Lock()
+        self._completed_folders = {}
+        self._completed_summaries = {}
 
     # 휴대폰 테스트 시작
     def start(self, device_name, note=""):
@@ -100,7 +103,7 @@ class SessionManager:
 
     # 한 프레임 처리와 JSONL 기록
     def process(self, session_id, frame_id, captured_at_ms, frame, request_start_ns=None,
-                decode_ms=None):
+                decode_ms=None, image_bytes=None, save_live_frame=True):
         """요청 순서를 검증하고 세 모델 결과를 저장한다."""
         with self.lock:
             processing_start_ns = time.perf_counter_ns()
@@ -128,13 +131,16 @@ class SessionManager:
                 result["bus"] = {"status": "error", "event": None, "detections": [],
                                  "captured_at_ms": None, "frame_id": None,
                                  "error": f"bus_recognition_unavailable:{type(error).__name__}"}
-            frame_name = f"{frame_id:06d}.jpg"
-            frame_file = Path("frames") / frame_name
-            encoded, jpeg = cv2.imencode(".jpg", frame)
-            if not encoded:
-                raise SessionError("추론 프레임 이미지를 저장할 수 없습니다.")
-            (session["folder"] / frame_file).write_bytes(jpeg.tobytes())
-            result["frame_file"] = frame_file.as_posix()
+            if save_live_frame:
+                frame_file = Path("frames") / f"{frame_id:06d}.jpg"
+                encoded, jpeg = cv2.imencode(".jpg", frame)
+                if not encoded:
+                    raise SessionError("추론 프레임 이미지를 저장할 수 없습니다.")
+                (session["folder"] / frame_file).write_bytes(jpeg.tobytes())
+                result["frame_file"] = frame_file.as_posix()
+            else:
+                result["frame_file"] = None
+            result["frame_sha256"] = hashlib.sha256(image_bytes).hexdigest() if image_bytes is not None else None
             result["server_timing"] = {
                 "decode_ms": decode_ms,
                 "processing_ms": round((time.perf_counter_ns() - processing_start_ns) / 1e6, 1),
@@ -224,20 +230,53 @@ class SessionManager:
         with self.lock:
             session = self.session
             if session is None or session["id"] != session_id:
-                raise SessionError("진행 중인 세션이 없습니다.")
-            summary = {
-                "session_id": session_id, "device_name": session["device_name"],
-                "date": session["date"], "folder_name": session["folder_name"],
-                "note": session["note"], "started_at": session["started_at"],
-                "ended_at": datetime.now(timezone.utc).isoformat(),
-                "frame_count": session["frame_count"],
-            }
-            (session["folder"] / "session.json").write_text(
-                json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8",
-            )
-            self.session = None
-            self.bus_recognizer.set_target(None, None)
-            return summary
+                cached = self._completed_summaries.get(session_id)
+                if cached is not None:
+                    return cached.copy()
+                session = None
+            if session is None:
+                pass
+            else:
+                summary = {
+                    "session_id": session_id, "device_name": session["device_name"],
+                    "date": session["date"], "folder_name": session["folder_name"],
+                    "note": session["note"], "started_at": session["started_at"],
+                    "ended_at": datetime.now(timezone.utc).isoformat(),
+                    "frame_count": session["frame_count"],
+                }
+                (session["folder"] / "session.json").write_text(
+                    json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8",
+                )
+                self._completed_folders[session_id] = session["folder"]
+                self._completed_summaries[session_id] = summary
+                self.session = None
+                self.bus_recognizer.set_target(None, None)
+                return summary
+        folder = self.completed_folder(session_id)
+        return json.loads((folder / "session.json").read_text(encoding="utf-8"))
+
+    def completed_folder(self, session_id):
+        """Return a verified stopped-session folder for deferred clip uploads."""
+        if not re.fullmatch(r"[0-9a-f]{32}", session_id):
+            raise SessionError("세션 번호가 올바르지 않습니다.")
+        with self.lock:
+            if self.session is not None and self.session["id"] == session_id:
+                raise SessionError("녹화물은 테스트 종료 후 전송할 수 있습니다.")
+            cached = self._completed_folders.get(session_id)
+        candidates = [cached] if cached else self.output_dir.glob("[0-9]" * 8 + "/*")
+        for folder in candidates:
+            if folder is None:
+                continue
+            manifest = folder / "session.json"
+            try:
+                saved = json.loads(manifest.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if saved.get("session_id", saved.get("id")) == session_id and saved.get("ended_at"):
+                with self.lock:
+                    self._completed_folders[session_id] = folder
+                return folder
+        raise SessionError("종료된 세션을 찾을 수 없습니다.")
 
     # 원본 카메라 영상의 세션별 경로 확인
     def camera_path(self, session_id):

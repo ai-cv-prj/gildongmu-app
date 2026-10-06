@@ -8,7 +8,13 @@
   let frameId = 0, timer, tick, request, frameTask;
   let boardingState = null, activeRoute = null, draftRoute = "", lastResult = null;
   let timingQueue = [], eventQueue = [], flushTask = null, logTimer;
-  let rawRecording = false, overlayRecording = false;
+  const MAX_CLIPS = 5, MAX_CLIP_MS = 30000, MAX_CLIP_FRAMES = 300;
+  const MAX_CLIP_FRAME_BYTES = 32 * 1024 * 1024, MAX_PENDING_BYTES = 120 * 1024 * 1024;
+  const MAX_FRAME_GAP_MS = 5000;
+  let clips = [], activeClip = null, clipStopTask = null, clipTimer = null, clipWatchdog = null;
+  let bufferedBytes = 0, uploadSessionId = null, pendingStopSessionId = null;
+  let pendingUploads = [], uploadTotalClips = 0, uploading = false;
+  let pendingCheckSessionId = null, expectedClipIds = [];
   const preferenceKey = "gildongmu-accessibility-v1";
   let preferences = { rate: 1, textScale: 1 };
   try {
@@ -20,17 +26,25 @@
     onSubmitRoute: confirmDraft, onStationChange: key => journey?.selectStop(key),
     onRateChange: rate => { preferences.rate = player?.setRate(rate) ?? rate; savePreferences(); },
     onTextScaleChange: textScale => { preferences.textScale = textScale; savePreferences(); } });
-  view.setSettings(preferences); view.show("home"); view.setBusy(true);
+  view.setSettings(preferences); view.show("welcome", { focus: false }); view.setBusy(true);
 
   function savePreferences() {
     try { localStorage.setItem(preferenceKey, JSON.stringify(preferences)); } catch (_) {}
   }
   function status(message) { view.setStatus(message); }
   function controls() {
-    view.setBusy(!ready || starting || stopping || Boolean(boardingState?.busy));
+    view.setBusy(!ready || starting || stopping || uploading || Boolean(boardingState?.busy));
     for (const id of ["device", "custom-device", "note"]) $(id).disabled = running || starting;
     $("camera-badge").textContent = paused ? "일시중지" : running ? "안내 중" : starting ? "준비 중" : "대기 중";
     $("camera-badge").classList.toggle("live", running && !paused);
+    view.setClipState?.({ active: Boolean(activeClip), count: clips.length + (activeClip ? 1 : 0),
+      max: MAX_CLIPS, available: ready && running && !starting && !stopping && !paused &&
+        !cameraLost && GCamera.active() && !clipStopTask && (Boolean(activeClip) || clips.length < MAX_CLIPS) });
+    $("retry-upload").hidden = (!pendingUploads.length && !pendingStopSessionId && !pendingCheckSessionId) ||
+      running || starting || uploading;
+    $("retry-upload").disabled = stopping || uploading;
+    $("retry-upload").textContent = pendingCheckSessionId && !pendingUploads.length && !pendingStopSessionId
+      ? "영상 저장 상태 다시 확인" : "영상 전송 다시 시도";
   }
   function queueTiming(record) {
     if (!Number.isInteger(record.frame_id) || !Number.isInteger(record.captured_at_ms)) return;
@@ -56,6 +70,152 @@
       }
     })().finally(() => { flushTask = null; });
     return flushTask;
+  }
+  function clipClock() { return Math.round(performance.timeOrigin + performance.now()); }
+  function clearClipTimers() {
+    clearTimeout(clipTimer); clearInterval(clipWatchdog);
+    clipTimer = clipWatchdog = null;
+  }
+  function startClip() {
+    if (!running || paused || starting || stopping || cameraLost || document.hidden ||
+        !GCamera.active() || activeClip || clipStopTask) return;
+    if (clips.length >= MAX_CLIPS) return status(`영상 구간은 테스트당 최대 ${MAX_CLIPS}개입니다.`);
+    if (bufferedBytes >= MAX_PENDING_BYTES) return status("영상 기록 용량 120MB에 도달했습니다. 테스트를 종료해 저장해 주세요.");
+    const clip = { index: clips.length + 1, frames: [], frame_bytes: 0, blob: null,
+      started_at_ms: null, ended_at_ms: null, last_sent_at_ms: null, discarded: false };
+    try {
+      clip.started_at_ms = GRecorder.startRaw(proposedBytes => {
+        return bufferedBytes + proposedBytes <= MAX_PENDING_BYTES;
+      }, error => {
+        if (activeClip === clip) queueMicrotask(() => {
+          void finishClip(error ? `영상 기록 오류: ${error.message}` : "카메라 영상 기록이 종료됐습니다.");
+        });
+      });
+      clip.last_sent_at_ms = clip.started_at_ms;
+      activeClip = clip;
+      clipTimer = setTimeout(() => { void finishClip("30초 영상 구간 기록을 마쳤습니다."); }, MAX_CLIP_MS - 250);
+      clipWatchdog = setInterval(() => {
+        if (activeClip === clip && clipClock() - clip.last_sent_at_ms > MAX_FRAME_GAP_MS) {
+          void finishClip("추론 프레임 전송이 멈춰 영상 기록을 마쳤습니다.");
+        }
+      }, 1000);
+      controls();
+      status(`${clip.index}번째 영상 구간 기록 중입니다. 30초 후 자동으로 끝납니다.`);
+    } catch (error) { status(`영상 기록을 시작할 수 없습니다: ${error.message}`); }
+  }
+  async function finishClip(reason = "영상 구간 기록을 마쳤습니다.") {
+    if (clipStopTask) return clipStopTask;
+    const clip = activeClip;
+    if (!clip) return null;
+    activeClip = null;
+    clearClipTimers();
+    clipStopTask = (async () => {
+      try {
+        const recorded = await GRecorder.stopRaw();
+        if (!recorded?.blob?.size) throw new Error("원본 영상이 비어 있습니다.");
+        if (recorded.ended_at_ms - recorded.started_at_ms > MAX_CLIP_MS) {
+          throw new Error("30초 제한을 넘긴 영상 구간은 저장하지 않습니다.");
+        }
+        if (bufferedBytes + recorded.blob.size > MAX_PENDING_BYTES) {
+          throw new Error("영상 기록 용량 120MB에 도달했습니다.");
+        }
+        clip.blob = recorded.blob;
+        clip.ended_at_ms = recorded.ended_at_ms;
+        bufferedBytes += recorded.blob.size;
+        clips.push(clip);
+        status(`${reason} ${clips.length}/${MAX_CLIPS}개를 선택했습니다. 테스트 종료 후 저장합니다.`);
+        return clip;
+      } catch (error) {
+        clip.discarded = true;
+        bufferedBytes -= clip.frame_bytes;
+        clip.frames = [];
+        status(`영상 구간 저장 준비 실패: ${error.message}`);
+        return null;
+      } finally { clipStopTask = null; controls(); }
+    })();
+    controls();
+    return clipStopTask;
+  }
+  function bufferClipFrame(clip, frameId, capturedAtMs, image, maskPng) {
+    if (!clip || clip.discarded || capturedAtMs < clip.started_at_ms ||
+        (clip.ended_at_ms !== null && capturedAtMs >= clip.ended_at_ms)) return;
+    const mask = typeof maskPng === "string" ? maskPng : "";
+    const bytes = image.size + mask.length;
+    if (clip.frames.length >= MAX_CLIP_FRAMES || clip.frame_bytes + bytes > MAX_CLIP_FRAME_BYTES ||
+        bufferedBytes + GRecorder.bytes() + bytes > MAX_PENDING_BYTES) {
+      if (activeClip === clip) void finishClip("프레임 또는 영상 용량 제한에 도달해 기록을 마쳤습니다.");
+      return;
+    }
+    clip.frames.push({ frame_id: frameId, captured_at_ms: capturedAtMs, image, mask_png: mask });
+    clip.frame_bytes += bytes;
+    bufferedBytes += bytes;
+  }
+  const clipIndex = item => Number.parseInt(String(item.clip_id).replace(/[^0-9]/g, ""), 10);
+  async function pollClipStatus() {
+    if (!pendingCheckSessionId || !expectedClipIds.length) return;
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const report = await GApi.clips(pendingCheckSessionId);
+      const rows = new Map((report.clips || []).map(item => [clipIndex(item), item]));
+      const selected = expectedClipIds.map(id => rows.get(id));
+      const failure = selected.find(item => ["failed", "no_frames"].includes(item?.state));
+      if (failure) {
+        status(`${failure.clip_id}번 영상 결과 생성 실패: ${failure.error || failure.state}. 서버 기록을 확인해 주세요.`);
+        pendingCheckSessionId = null; expectedClipIds = [];
+        return;
+      }
+      if (selected.every(item => item?.state === "ready")) {
+        status(`${selected.length}개 구간의 원본·추론 영상 저장이 완료됐습니다.`);
+        pendingCheckSessionId = null; expectedClipIds = [];
+        return;
+      }
+      status(`원본 영상 전송 완료 · 추론 영상 생성 중 (${attempt + 1}/12)`);
+      if (attempt < 11) await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+    status("추론 영상 생성이 계속 진행 중입니다. 잠시 뒤 저장 상태를 다시 확인해 주세요.");
+  }
+  async function uploadQueuedClips() {
+    if (uploading || (!pendingStopSessionId && !pendingUploads.length && !pendingCheckSessionId)) return;
+    uploading = true; controls();
+    try {
+      if (pendingStopSessionId) {
+        status("서버의 테스트 종료를 확인하고 있습니다.");
+        try { await GApi.stop(pendingStopSessionId); }
+        catch (error) {
+          if (error.status !== 409) throw error;
+          await GApi.clips(pendingStopSessionId);
+        }
+        pendingStopSessionId = null;
+      }
+      while (pendingUploads.length) {
+        const clip = pendingUploads[0];
+        if (!clip.frames.length) {
+          status(`${clip.index}번째 구간에 완료된 추론 프레임이 없어 영상 쌍을 저장하지 않았습니다.`);
+          bufferedBytes -= clip.blob.size + clip.frame_bytes;
+          pendingUploads.shift();
+          continue;
+        }
+        const stored = (await GApi.clips(uploadSessionId)).clips?.find(item => clipIndex(item) === clip.index);
+        if (["pending", "rendering", "ready", "failed", "no_frames"].includes(stored?.state)) {
+          bufferedBytes -= clip.blob.size + clip.frame_bytes;
+          pendingUploads.shift();
+          continue;
+        }
+        status(`${clip.index}/${uploadTotalClips}번째 영상 구간을 전송하고 있습니다. 화면을 유지해 주세요.`);
+        await GApi.uploadClip(uploadSessionId, clip, (done, total) => {
+          status(`${clip.index}번째 영상 구간 전송 중 · ${done}/${total}`);
+        });
+        bufferedBytes -= clip.blob.size + clip.frame_bytes;
+        pendingUploads.shift();
+      }
+      if (expectedClipIds.length && !pendingCheckSessionId) pendingCheckSessionId = uploadSessionId;
+      uploadSessionId = null;
+      if (pendingCheckSessionId) await pollClipStatus();
+      else status(uploadTotalClips
+        ? "완료된 추론 프레임이 없는 영상 구간은 저장하지 않았습니다."
+        : "테스트 종료 기록을 저장했습니다. 선택한 영상 구간은 없습니다.");
+    } catch (error) {
+      status(`${pendingCheckSessionId ? "영상 저장 상태 확인" : "영상 전송"} 실패: ${error.message}. 다시 시도 버튼을 눌러 주세요.`);
+    } finally { uploading = false; controls(); }
   }
   function speak(text) {
     if (!ready || !text) return;
@@ -106,7 +266,7 @@
     view.setStations((snapshot.gps?.candidates || []).map(match => ({ id: match.key,
       name: match.station?.station_name, distance_m: match.station?.distance_m,
       direction: match.arrival?.direction || match.direction })), selected?.key);
-    if (!["input", "confirm", "home"].includes(view.getScreen())) view.show(state, { focus: false });
+    if (!["input", "confirm", "home", "welcome", "finish"].includes(view.getScreen())) view.show(state, { focus: false });
     view.setPaused(paused);
   }
   function showResult(result, capturedAt) {
@@ -139,20 +299,27 @@
     frameTask = (async () => {
       try {
         const started = performance.now();
+        const selectedClip = activeClip;
         const blob = await GCamera.capture(settings.camera.capture_max_side, settings.camera.jpeg_quality);
         if (!blob || !running || paused || version !== generation || shownVersion !== presentation) return;
         const encodedAt = performance.now(), capturedAt = started;
         const capturedAtMs = Math.round(performance.timeOrigin + capturedAt);
         request = new AbortController();
         const sentAt = performance.now();
+        if (selectedClip && capturedAtMs >= selectedClip.started_at_ms) {
+          selectedClip.last_sent_at_ms = clipClock();
+        }
         const result = await GApi.frame(id, frameId + 1, capturedAtMs, blob, request.signal);
+        bufferClipFrame(selectedClip, result.frame_id, capturedAtMs, blob, result.walking?.mask_png);
         if (!running || version !== generation) return;
         frameId = result.frame_id; // Even an in-flight paused request advances the server sequence.
         const returnedAt = performance.now();
         if (!paused && !document.hidden && shownVersion === presentation) showResult(result, capturedAt);
         queueTiming({ kind: "frame", frame_id: frameId, captured_at_ms: capturedAtMs,
           capture_ms: Math.round(encodedAt - started), round_trip_ms: Math.round(returnedAt - sentAt),
-          result_ms: Math.round(performance.now() - capturedAt) });
+          result_ms: Math.round(performance.now() - capturedAt),
+          recording_active: Boolean(selectedClip && capturedAtMs >= selectedClip.started_at_ms &&
+            (selectedClip.ended_at_ms === null || capturedAtMs < selectedClip.ended_at_ms)) });
       } catch (error) {
         if (error.name !== "AbortError" && running && version === generation) failure = error;
       } finally { if (version === generation) request = null; }
@@ -162,14 +329,17 @@
     else scheduleFrame();
   }
   async function startTest() {
-    if (!ready || running || starting || stopping) return;
+    if (!ready || running || starting || stopping || uploading) return;
+    if (pendingUploads.length || pendingStopSessionId || pendingCheckSessionId) {
+      return status("이전 테스트 영상 저장 상태를 먼저 확인해 주세요.");
+    }
     let device = $("device").value === "custom" ? $("custom-device").value.trim() : $("device").value;
     if (device === "자동 감지") device = /iPhone/.test(navigator.userAgent) ? "iPhone"
       : /Android/.test(navigator.userAgent) ? "Android" : "웹 브라우저";
     if (!device) return status("테스트 설정에서 휴대폰 기종을 입력해 주세요.");
     starting = true;
     const version = ++generation;
-    coordinator.start(); GRecorder.prepareAudio([player.recordingStream()]);
+    coordinator.start();
     controls(); view.show("walk"); status("카메라와 추론 모델을 준비하고 있습니다.");
     try {
       const info = await GCamera.start();
@@ -180,11 +350,8 @@
       if (version !== generation) { await GApi.stop(created.session_id); return; }
       sessionId = created.session_id; running = true; paused = false; cameraLost = false; frameId = 0;
       activeRoute = null; draftRoute = ""; lastResult = null; timingQueue = []; eventQueue = [];
+      clips = []; activeClip = null; bufferedBytes = 0; clearClipTimers();
       walking.start(sessionId, false, "walking"); traffic.start(sessionId, false, "traffic"); boarding.start(sessionId);
-      try { GRecorder.startRaw(); rawRecording = true; }
-      catch (error) { void GApi.recordingEvent(sessionId, "camera", "failed", error.message).catch(() => {}); }
-      try { GRecorder.start(); overlayRecording = true; }
-      catch (error) { void GApi.recordingEvent(sessionId, "overlay", "failed", error.message).catch(() => {}); }
       tick = setInterval(() => {
         if (!paused && !document.hidden) { walking.tick(); traffic.tick(); boarding.tick(); coordinator.tick(); }
       }, settings.audio.tick_ms);
@@ -193,19 +360,23 @@
     } catch (error) {
       if (version !== generation) return;
       if (sessionId) await stopTest();
-      else { GRecorder.stopPreview(); GRecorder.cancelPreparedAudio(); GCamera.stop(); coordinator.stop(); }
+      else { GRecorder.stopPreview(); GCamera.stop(); coordinator.stop(); }
       view.show("home"); status(`시작할 수 없습니다: ${error.message}`);
     } finally { if (version === generation) { starting = false; controls(); } }
   }
-  function pauseTest() {
+  async function pauseTest() {
     if (!running || paused) return;
     paused = true; presentation++; lastResult = null; view.render(null); clearTimeout(timer);
+    await finishClip("일시중지로 영상 구간을 마쳤습니다.");
+    if (!running) return;
     // Keep an uploaded frame alive to preserve contiguous IDs when resuming.
     journey.pause(); boarding.pause(); walking.stop(); traffic.stop(); coordinator.stop();
     GRecorder.pause(); GCamera.pause(); GOverlay.clear(); view.setPaused(true); controls();
     status("촬영·버스 조회·안내를 일시중지했습니다.");
   }
-  function resumeTest() {
+  async function resumeTest() {
+    if (!running || !paused) return;
+    if (clipStopTask) await clipStopTask;
     if (!running || !paused) return;
     if (cameraLost) {
       paused = false; presentation++; coordinator.start(); journey.resume();
@@ -218,57 +389,63 @@
     walking.start(sessionId, false, "walking"); traffic.start(sessionId, false, "traffic"); boarding.resume(); journey.resume();
     view.setPaused(false); controls(); status("새 위치와 카메라 영상으로 안내를 재개합니다."); scheduleFrame();
   }
-  async function saveRecording(id, kind, result, upload) {
-    try {
-      if (result.status === "rejected") throw result.reason;
-      if (result.value?.size) await upload(id, result.value);
-      else await GApi.recordingEvent(id, kind, "empty", "녹화된 영상이 없습니다.");
-    } catch (error) {
-      await GApi.recordingEvent(id, kind, "failed", String(error.message).slice(0, 500)).catch(() => {});
-      return `${kind === "camera" ? "원본" : "안내"} 영상: ${error.message}`;
-    }
-    return null;
-  }
-  async function stopTest() {
+  async function stopTest({ finish = false } = {}) {
     if (stopping || (!running && !starting)) return;
     stopping = true; running = false; starting = false; paused = false; automaticPause = false; ++generation;
-    clearTimeout(timer); clearInterval(tick); clearInterval(logTimer); request?.abort();
+    clearTimeout(timer); clearInterval(tick); clearInterval(logTimer);
     journey.stop(); boarding.stop(); walking.stop(); traffic.stop(); coordinator.stop();
     const id = sessionId;
     controls(); status("안내를 종료하고 기록을 저장하고 있습니다.");
-    const recordings = await Promise.allSettled([
-      rawRecording ? GRecorder.stopRaw() : Promise.resolve(null),
-      overlayRecording ? GRecorder.stop() : Promise.resolve(null)]);
-    GRecorder.stopPreview(); GRecorder.cancelPreparedAudio(); GCamera.stop(); GOverlay.clear(); $("placeholder").hidden = false;
-    rawRecording = overlayRecording = false;
-    if (frameTask) await frameTask;
+    await finishClip("테스트 종료로 영상 구간을 마쳤습니다.");
+    if (clipStopTask) await clipStopTask;
+    GRecorder.stopPreview(); GCamera.stop(); GOverlay.clear(); $("placeholder").hidden = false;
+    if (frameTask) {
+      if (clips.length) {
+        let timeout;
+        let settled = false;
+        const pending = frameTask.then(() => { settled = true; });
+        await Promise.race([pending, new Promise(resolve => { timeout = setTimeout(resolve, 1500); })]);
+        clearTimeout(timeout);
+        if (!settled) request?.abort();
+      } else request?.abort();
+      await frameTask;
+    }
     frameTask = null;
     let message = "안내를 종료했습니다.";
     if (id) {
       if (flushTask) await flushTask;
       await flushLogs(id);
-      const failures = [];
-      for (const [index, kind, upload] of [[0, "camera", GApi.camera], [1, "overlay", GApi.recording]]) {
-        const failure = await saveRecording(id, kind, recordings[index], upload);
-        if (failure) failures.push(failure);
-      }
+      pendingUploads = clips;
+      uploadTotalClips = clips.length;
+      expectedClipIds = clips.filter(clip => clip.frames.length).map(clip => clip.index);
+      uploadSessionId = id;
+      pendingStopSessionId = id;
+      clips = [];
       try {
         const summary = await GApi.stop(id);
-        message = `${summary.frame_count}프레임 기록을 저장했습니다.${failures.length ? ` 영상 저장 오류: ${failures.join(" / ")}` : ""}`;
+        pendingStopSessionId = null;
+        message = `${summary.frame_count}프레임 기록을 저장했습니다.`;
       } catch (error) { message = `세션 종료 확인이 필요합니다: ${error.message}`; }
+      if (!pendingUploads.length && !pendingStopSessionId) uploadSessionId = null;
     }
     sessionId = null; activeRoute = null; lastResult = null; stopping = false;
-    view.setRoute(""); view.show("home"); view.setPaused(false); controls(); status(message);
+    view.setRoute(""); view.show(finish && id ? "finish" : "home"); view.setPaused(false); controls(); status(message);
+    if (pendingUploads.length && !pendingStopSessionId) await uploadQueuedClips();
+    else if (pendingStopSessionId) status(`${message} '영상 전송 다시 시도'로 종료 확인을 재시도할 수 있습니다.`);
   }
   async function act(action) {
     if (!ready) return;
+    if (action === "retry-upload" && !running && !starting && !stopping) return uploadQueuedClips();
+    if (action === "enter" && !running && !starting && !stopping) return view.show("home");
+    if (action === "finish-home" && !running && !starting && !stopping) return view.show("welcome");
     if (action === "start") return startTest();
-    if (action === "end") return stopTest();
+    if (action === "end") return stopTest({ finish: true });
     if (action === "back" && starting) return stopTest();
     if (action === "sample") return speak("길동무가 함께합니다. 선택한 속도로 안내해 드릴게요.");
     if (action === "speech-start") { coordinator.stop(); return; }
     if (action === "speech-end") { if (!paused) coordinator.start(); return; }
     if (!running || starting || stopping) return;
+    if (action === "record") return activeClip ? finishClip() : startClip();
     if (action === "pause") { automaticPause = false; return paused ? resumeTest() : pauseTest(); }
     if (paused) return;
     if (action === "manual-arrival") {
@@ -301,12 +478,13 @@
     walking = GGuidance.create({ coordinator }); traffic = GGuidance.create({ coordinator });
     boarding = GBoarding.create({ api: GApi, coordinator, onChange: boardingChanged, onError: status });
     journey = GBusJourney.create({ api: GApi, coordinator, onChange: busChanged, onStatus: status, onEvent: queueEvent });
-    ready = true; controls(); status("준비되었습니다. 시작을 눌러 주세요.");
+    ready = true; controls(); status("준비되었습니다. 시작하기를 눌러 주세요.");
   } catch (error) { status(`${error.message} 서버를 확인한 뒤 새로고침해 주세요.`); return; }
   $("device").addEventListener("change", () => { $("custom-device").hidden = $("device").value !== "custom"; });
   GCamera.setOnEnded(() => {
     if (!running) return;
     cameraLost = true; presentation++; lastResult = null; view.render(null); clearTimeout(timer);
+    void finishClip("카메라 종료로 영상 구간을 마쳤습니다.");
     GRecorder.pause(); GOverlay.clear(); walking.stop(); traffic.stop(); boarding.pause();
     coordinator.stop(); if (!paused) coordinator.start();
     $("placeholder").hidden = false;
@@ -319,9 +497,11 @@
   });
   window.addEventListener("pagehide", event => {
     if (event.persisted) { automaticPause = true; pauseTest(); return; }
+    const finalizingClip = finishClip("페이지가 닫혀 영상 기록을 마쳤습니다.");
     const id = sessionId; running = false; ++generation; request?.abort();
     clearTimeout(timer); clearInterval(tick); clearInterval(logTimer);
-    journey.stop(); boarding.stop(); walking.stop(); traffic.stop(); coordinator.stop(); GCamera.stop();
+    journey.stop(); boarding.stop(); walking.stop(); traffic.stop(); coordinator.stop();
+    void Promise.resolve(finalizingClip).finally(() => GCamera.stop());
     if (id) void fetch("/api/sessions/stop", { method: "POST", keepalive: true,
       headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: id }) }).catch(() => {});
   });

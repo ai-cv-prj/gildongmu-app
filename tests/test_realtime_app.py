@@ -6,6 +6,7 @@ file_path: tests/test_realtime_app.py
 
 import io
 import json
+import hashlib
 import subprocess
 from datetime import datetime
 
@@ -214,8 +215,9 @@ def test_mobile_session_flow(tmp_path, recording_fps):
     logged = json.loads((folder / "results.jsonl").read_text(encoding="utf-8"))
     assert "mask_png" not in logged["walking"]
     assert logged["stop_proximity"] == body["stop_proximity"]
-    assert (folder / "frames" / "000001.jpg").is_file()
-    assert logged["frame_file"] == "frames/000001.jpg"
+    assert not (folder / "frames" / "000001.jpg").exists()
+    assert logged["frame_file"] is None
+    assert logged["frame_sha256"] == hashlib.sha256(jpeg.tobytes()).hexdigest()
     assert (folder / "camera_overlay.mp4").is_file()
     assert (folder / "camera.mp4").is_file()
     events = [json.loads(line) for line in

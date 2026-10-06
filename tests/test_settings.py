@@ -19,7 +19,7 @@ def test_paths_are_independent_of_working_directory(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     paths = load_paths()
     assert resolve_path(paths["sample_dir"]) == PROJECT_DIR / "data/samples/input"
-    assert resolve_path(paths["session_dir"]) == PROJECT_DIR / "data/sessions"
+    assert resolve_path(paths["session_dir"]) == PROJECT_DIR / "test-result"
     assert resolve_path(str(tmp_path)) == tmp_path
 
 

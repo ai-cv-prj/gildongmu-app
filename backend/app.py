@@ -6,8 +6,11 @@ file_path: backend/app.py
 
 from pathlib import Path
 from contextlib import asynccontextmanager
+from concurrent.futures import ThreadPoolExecutor
 import json
+import logging
 import subprocess
+import threading
 import time
 from typing import Literal
 
@@ -19,6 +22,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from backend.session import SessionError, SessionManager
+from backend.clips import ClipError, ClipStore, MAX_CHUNK_BYTES
+from backend.logger import configure_app_logging
 from backend.boarding import BoardingError
 from backend.bus.arrival import BusArrivalError, BusArrivalService
 from backend.bus.config import BusServiceSettings, load_bus_config
@@ -32,6 +37,7 @@ from src.video_audio import ffmpeg_executable
 
 
 ROOT = Path(__file__).resolve().parents[1]
+log = logging.getLogger(__name__)
 
 
 class StartRequest(BaseModel):
@@ -75,10 +81,19 @@ class ClientTimingRecord(BaseModel):
     source: str | None = Field(default=None, max_length=20)
     action: Literal["left", "straight", "right", "stop"] | None = None
     event_ids: list[int] = Field(default_factory=list, max_length=20)
+    recording_active: bool = False
 
 
 class ClientTimingRequest(BaseModel):
     records: list[ClientTimingRecord] = Field(min_length=1, max_length=100)
+
+
+class ClipCompleteRequest(BaseModel):
+    mime_type: str = Field(min_length=1, max_length=100)
+    chunk_count: int
+    size_bytes: int
+    started_at_ms: int
+    ended_at_ms: int
 
 
 # FastAPI 앱과 테스트용 세션 저장소 생성
@@ -87,10 +102,16 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
     """테스트에서는 모델 저장소를 교체할 수 있는 API 앱을 반환한다."""
     @asynccontextmanager
     async def lifespan(_app):
+        configure_app_logging(sessions.output_dir)
+        log.info("mobile server started results=%s", sessions.output_dir)
+        for session_id, clip_id in clip_store.pending_exports():
+            queue_export(session_id, clip_id)
         try:
             yield
         finally:
+            exporter.shutdown(wait=True)
             sessions.close()
+            log.info("mobile server stopped")
 
     app = FastAPI(title="길동무 실시간 테스트", lifespan=lifespan)
     settings = load_app_config(app_config)
@@ -106,8 +127,27 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
         manager = SessionManager(resolve_path(paths["session_dir"]), session_settings=settings["session"],
                                  bus_config=bus_settings)
     sessions = manager
+    clip_store = ClipStore(sessions, max_jpeg_bytes=upload["max_jpeg_bytes"],
+                           recording_fps=recording_settings["fps"])
+    exporter = ThreadPoolExecutor(max_workers=1, thread_name_prefix="clip-export")
+    export_jobs = set()
+    export_jobs_lock = threading.Lock()
+
+    def queue_export(session_id, clip_id):
+        future = exporter.submit(clip_store.export, session_id, clip_id)
+        with export_jobs_lock:
+            export_jobs.add(future)
+        def completed(done):
+            with export_jobs_lock:
+                export_jobs.discard(done)
+        future.add_done_callback(completed)
+
+    def export_busy():
+        with export_jobs_lock:
+            return any(not future.done() for future in export_jobs)
     app.state.bus_arrivals = bus_arrivals
     app.state.bus_speech = bus_speech
+    app.state.clip_store = clip_store
 
     @app.exception_handler(BusArrivalError)
     async def bus_arrival_error(_request: Request, error: BusArrivalError):
@@ -120,6 +160,11 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
         return JSONResponse(status_code=error.status_code,
                             content={"error": {"code": error.code, "message": error.message},
                                      "detail": error.message})
+
+    @app.exception_handler(ClipError)
+    async def clip_error(_request: Request, error: ClipError):
+        log.warning("clip request rejected: %s", error)
+        return JSONResponse(status_code=error.status_code, content={"detail": str(error)})
 
     @app.middleware("http")
     async def disable_frontend_cache(request, call_next):
@@ -176,8 +221,14 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
         if not request.device_name.strip():
             raise HTTPException(422, "휴대폰 기종을 입력하세요.")
         try:
-            return sessions.start(request.device_name.strip(), request.note.strip())
+            with clip_store.lock:
+                if export_busy():
+                    raise SessionError("선택 영상 변환이 끝나면 새 테스트를 시작할 수 있습니다.")
+                created = sessions.start(request.device_name.strip(), request.note.strip())
+            log.info("session started id=%s", created["session_id"])
+            return created
         except SessionError as error:
+            log.warning("session start failed: %s", error)
             raise HTTPException(409, str(error)) from error
 
     # JPEG 한 프레임 추론
@@ -198,8 +249,10 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
         try:
             return sessions.process(session_id, frame_id, captured_at_ms, decoded,
                                     request_start_ns=request_start_ns,
-                                    decode_ms=round((time.perf_counter_ns()-request_start_ns)/1e6, 1))
+                                    decode_ms=round((time.perf_counter_ns()-request_start_ns)/1e6, 1),
+                                    image_bytes=content, save_live_frame=False)
         except SessionError as error:
+            log.warning("frame rejected session=%s frame=%d: %s", session_id, frame_id, error)
             raise HTTPException(409, str(error)) from error
 
     @app.post("/api/sessions/{session_id}/timings")
@@ -311,6 +364,33 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
             raise HTTPException(409, str(error)) from error
         return {"recorded": True}
 
+    @app.post("/api/sessions/{session_id}/clips/{clip_id}/chunks/{index}")
+    def clip_chunk(session_id: str, clip_id: int, index: int, video: UploadFile = File(...)):
+        """Accept a bounded camera WebM or MP4 chunk after the session ends."""
+        data = video.file.read(MAX_CHUNK_BYTES + 1)
+        return clip_store.add_chunk(session_id, clip_id, index, data)
+
+    @app.post("/api/sessions/{session_id}/clips/{clip_id}/frames/{frame_id}")
+    def clip_frame(session_id: str, clip_id: int, frame_id: int,
+                   captured_at_ms: int = Form(...), image: UploadFile = File(...),
+                   mask_png: str | None = Form(None)):
+        """Store one JPEG proven to be the same bytes used in live inference."""
+        data = image.file.read(upload["max_jpeg_bytes"] + 1)
+        return clip_store.add_frame(session_id, clip_id, frame_id, captured_at_ms, data, mask_png)
+
+    @app.post("/api/sessions/{session_id}/clips/{clip_id}/complete")
+    def clip_complete(session_id: str, clip_id: int, request: ClipCompleteRequest):
+        """Close a clip and queue offline rendering on a dedicated worker."""
+        with clip_store.lock:
+            manifest, started = clip_store.complete(session_id, clip_id, **request.model_dump())
+            if started:
+                queue_export(session_id, clip_id)
+        return manifest
+
+    @app.get("/api/sessions/{session_id}/clips")
+    def clips(session_id: str):
+        return clip_store.status(session_id)
+
     # 오버레이와 안내 음성이 포함된 선택형 영상 업로드
     @app.post("/api/sessions/{session_id}/recording")
     def recording(session_id: str, video: UploadFile = File(...)):
@@ -337,6 +417,7 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
         """세션 결과 요약을 저장하고 반환한다."""
         try:
             summary = sessions.stop(request.session_id)
+            log.info("session stopped id=%s frames=%d", request.session_id, summary["frame_count"])
             folder = (sessions.output_dir / summary["date"] / summary["folder_name"]).resolve()
             summary["storage_path"] = (
                 folder.relative_to(ROOT).as_posix() if folder.is_relative_to(ROOT) else str(folder)

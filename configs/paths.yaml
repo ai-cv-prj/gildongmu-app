@@ -8,7 +8,7 @@ sample_dir: data/samples/input
 output_dir: data/samples/output
 
 # 날짜별 촬영·추론 기록
-session_dir: data/sessions
+session_dir: test-result
 
 # 웹 화면 파일
 frontend_dir: frontend
