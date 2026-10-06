@@ -31,3 +31,5 @@ upload:
 session:
   timezone: Asia/Seoul
   folder_note_max_length: 40
+  # 브라우저 신호가 이 시간(초) 동안 없으면 새 시작 요청 때 이전 세션을 정리한다.
+  stale_after_s: 30

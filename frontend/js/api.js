@@ -59,6 +59,10 @@ window.GApi = (() => {
     }).then(result);
   }
 
+  function heartbeat(sessionId) {
+    return fetch(`/api/sessions/${sessionId}/heartbeat`, { method: "POST", cache: "no-store" }).then(result);
+  }
+
   function timings(sessionId, records) {
     return fetch(`/api/sessions/${sessionId}/timings`, {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -147,6 +151,6 @@ window.GApi = (() => {
       body: JSON.stringify({ session_id: sessionId }) }).then(result);
   }
 
-  return { start, frame, recording, camera, uploadClip, clips, recordingEvent, timings, boarding, stop,
+  return { start, frame, recording, camera, uploadClip, clips, recordingEvent, timings, heartbeat, boarding, stop,
     nearbyBusArrival, busStatus, busEvents };
 })();

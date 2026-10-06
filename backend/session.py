@@ -60,7 +60,11 @@ class SessionManager:
         """새 세션을 만들고 모델 추적 상태를 초기화한다."""
         with self.lock:
             if self.session is not None:
-                raise SessionError("이미 진행 중인 테스트가 있습니다. 먼저 종료하세요.")
+                # 브라우저를 강제로 닫으면 종료 요청이 오지 않으므로 응답이 끊긴 세션은 정리하고 새로 시작한다.
+                idle_s = time.monotonic() - self.session["last_seen"]
+                if idle_s < self.settings.get("stale_after_s", 30):
+                    raise SessionError("이미 진행 중인 테스트가 있습니다. 먼저 종료하세요.")
+                self._close(self.session)
             if self.models is None:
                 if self.model_factory is None:
                     from backend.inference import RealtimeInference
@@ -93,10 +97,10 @@ class SessionManager:
                 "date": date, "folder_name": folder_name,
                 "started_at": started_at.astimezone(timezone.utc).isoformat(),
                 "frame_count": 0, "last_frame_id": 0, "last_capture_ms": None,
-                "folder": folder,
+                "folder": folder, "last_seen": time.monotonic(),
             }
             (folder / "session.json").write_text(json.dumps({
-                key: value for key, value in self.session.items() if key != "folder"
+                key: value for key, value in self.session.items() if key not in ("folder", "last_seen")
             }, ensure_ascii=False, indent=2), encoding="utf-8")
             return {"session_id": session_id, "device_name": device_name,
                     "date": date, "folder_name": folder_name}
@@ -174,6 +178,7 @@ class SessionManager:
             session["frame_count"] += 1
             session["last_frame_id"] = frame_id
             session["last_capture_ms"] = captured_at_ms
+            session["last_seen"] = time.monotonic()
             return result
 
     def boarding_state(self, session_id):
@@ -224,6 +229,31 @@ class SessionManager:
                 for record in records:
                     file.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n")
 
+    def heartbeat(self, session_id):
+        """일시중지 중에도 브라우저가 열려 있음을 기록한다."""
+        with self.lock:
+            if self.session is None or self.session["id"] != session_id:
+                raise SessionError("진행 중인 세션이 없습니다.")
+            self.session["last_seen"] = time.monotonic()
+
+    def _close(self, session):
+        """lock을 잡은 상태에서 세션 요약을 저장하고 진행 중 세션을 비운다."""
+        summary = {
+            "session_id": session["id"], "device_name": session["device_name"],
+            "date": session["date"], "folder_name": session["folder_name"],
+            "note": session["note"], "started_at": session["started_at"],
+            "ended_at": datetime.now(timezone.utc).isoformat(),
+            "frame_count": session["frame_count"],
+        }
+        (session["folder"] / "session.json").write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8",
+        )
+        self._completed_folders[session["id"]] = session["folder"]
+        self._completed_summaries[session["id"]] = summary
+        self.session = None
+        self.bus_recognizer.set_target(None, None)
+        return summary
+
     # 휴대폰 테스트 종료
     def stop(self, session_id):
         """세션 종료 시각과 처리 프레임 수를 저장한다."""
@@ -234,24 +264,8 @@ class SessionManager:
                 if cached is not None:
                     return cached.copy()
                 session = None
-            if session is None:
-                pass
-            else:
-                summary = {
-                    "session_id": session_id, "device_name": session["device_name"],
-                    "date": session["date"], "folder_name": session["folder_name"],
-                    "note": session["note"], "started_at": session["started_at"],
-                    "ended_at": datetime.now(timezone.utc).isoformat(),
-                    "frame_count": session["frame_count"],
-                }
-                (session["folder"] / "session.json").write_text(
-                    json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8",
-                )
-                self._completed_folders[session_id] = session["folder"]
-                self._completed_summaries[session_id] = summary
-                self.session = None
-                self.bus_recognizer.set_target(None, None)
-                return summary
+            if session is not None:
+                return self._close(session)
         folder = self.completed_folder(session_id)
         return json.loads((folder / "session.json").read_text(encoding="utf-8"))
 

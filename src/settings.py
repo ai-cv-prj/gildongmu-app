@@ -105,6 +105,7 @@ def load_app_config(config_path=DEFAULT_APP_CONFIG):
         raise ValueError("camera.capture_max_side는 업로드 허용 크기 범위여야 합니다.")
     session = section(config, "session")
     number(session, "folder_note_max_length", 1, 500, integer=True)
+    number(session, "stale_after_s", 10, 3600)
     try:
         ZoneInfo(session["timezone"])
     except (KeyError, TypeError, ValueError, ZoneInfoNotFoundError) as error:

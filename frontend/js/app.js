@@ -355,7 +355,11 @@
       tick = setInterval(() => {
         if (!paused && !document.hidden) { walking.tick(); traffic.tick(); boarding.tick(); coordinator.tick(); }
       }, settings.audio.tick_ms);
-      logTimer = setInterval(() => { void flushLogs(); }, 5000);
+      logTimer = setInterval(() => {
+        void flushLogs();
+        // 일시중지 중에도 페이지가 살아 있음을 알려 강제 종료된 세션과 구분한다.
+        if (sessionId) GApi.heartbeat(sessionId).catch(() => {});
+      }, 5000);
       view.setPaused(false); status("보행 안내를 시작했습니다. 정류장에 도착하면 버튼을 눌러 주세요."); scheduleFrame();
     } catch (error) {
       if (version !== generation) return;

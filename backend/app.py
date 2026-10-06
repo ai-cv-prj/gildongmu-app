@@ -255,6 +255,15 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
             log.warning("frame rejected session=%s frame=%d: %s", session_id, frame_id, error)
             raise HTTPException(409, str(error)) from error
 
+    @app.post("/api/sessions/{session_id}/heartbeat")
+    def heartbeat(session_id: str):
+        """브라우저가 열려 있는 동안 세션을 유지한다."""
+        try:
+            sessions.heartbeat(session_id)
+        except SessionError as error:
+            raise HTTPException(409, str(error)) from error
+        return {"ok": True}
+
     @app.post("/api/sessions/{session_id}/timings")
     def client_timings(session_id: str, request: ClientTimingRequest):
         """프레임 루프와 분리해 모은 지연 기록을 세션에 추가한다."""

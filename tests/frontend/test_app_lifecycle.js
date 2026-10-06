@@ -50,7 +50,7 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
       }
       return { ...busState };
     },
-    timings: async () => ({}), busEvents: async () => ({}), recordingEvent: async () => ({}),
+    timings: async () => ({}), heartbeat: async () => ({}), busEvents: async () => ({}), recordingEvent: async () => ({}),
     recording: async () => ({}), camera: async () => ({}),
     clips: async () => ({ clips: uploads.map(clip => ({ clip_id: clip.index, state: clipState,
       error: clipState === "failed" ? "인코딩 실패" : null })) }),
