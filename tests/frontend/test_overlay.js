@@ -43,7 +43,8 @@ context.window.GOverlay.render({
       track_id: 12, event_id: 34,
     }],
     event: { roi: { immediate_polygon: [[.02, .70], [.98, .70], [.98, 1], [.02, 1]] },
-      last_action: "left", voice_action: "right", stationarity: { status: "stationary" } },
+      last_action: "left", voice_action: "right", voice_playback_action: "right",
+      stationarity: { status: "stationary" } },
   },
   traffic: { detections: [] },
   crosswalk: { event: { status: "crossing" } },
@@ -72,7 +73,7 @@ context.window.GOverlay.render({
   image_width: 360, image_height: 640,
   walking: { event: { roi: {}, last_action: "stop", voice_action: null } },
 });
-assert.ok(labels.includes("VOICE: muted"));
+assert.ok(labels.includes("VOICE: none"));
 
 labels.length = rectangles.length = 0;
 context.window.GOverlay.render({

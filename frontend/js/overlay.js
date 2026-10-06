@@ -183,11 +183,11 @@ window.GOverlay = (() => {
     ctx.fillText(text, x + padding, y + height - 8);
   }
 
-  // 현재 장애물 이동 행동과 음성 상태 표시
-  /** 모바일 화면 왼쪽 위에 판단한 행동과 장애물 음성 선택 상태를 표시한다. */
+  // 현재 장애물 이동 행동과 실제 음성 재생 상태 표시
+  /** 모바일 화면 왼쪽 위에 판단 행동과 실제 재생 중인 음성만 표시한다. */
   function actionStatus(event) {
     const action = event?.last_action ?? "none";
-    const voice = event?.voice_action ?? (action === "none" ? "none" : "muted");
+    const voice = event?.voice_playback_action ?? "none";
     const motion = event?.stationarity?.status ?? "unavailable";
     const lines = [`ACTION: ${action}`, `VOICE: ${voice}`, `MOTION: ${motion}`];
     ctx.font = `bold ${Math.max(13, canvas.width / 38)}px system-ui`;
