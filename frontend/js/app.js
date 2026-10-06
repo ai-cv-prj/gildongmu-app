@@ -6,7 +6,7 @@
   let sessionId = null, running = false, starting = false, stopping = false, paused = false;
   let automaticPause = false, generation = 0, presentation = 0, cameraLost = false;
   let frameId = 0, timer, tick, request, frameTask;
-  let boardingState = null, activeRoute = null, draftRoute = "", lastResult = null;
+  let boardingState = null, activeRoute = null, draftRoute = "", draftEventId = null, lastResult = null;
   let timingQueue = [], eventQueue = [], flushTask = null, logTimer;
   const MAX_CLIPS = 5, MAX_CLIP_MS = 30000, MAX_CLIP_FRAMES = 300;
   const MAX_CLIP_FRAME_BYTES = 32 * 1024 * 1024, MAX_PENDING_BYTES = 120 * 1024 * 1024;
@@ -231,7 +231,8 @@
       status("143, N26, 마포07처럼 노선 번호를 입력해 주세요.");
       view.announce("버스 번호 형식을 확인해 주세요."); return;
     }
-    draftRoute = route; view.setRoute(route); view.show("confirm"); speak(`${route}번이 맞습니까?`);
+    draftRoute = route; draftEventId = boardingState?.arrival_event_id ?? null;
+    view.setRoute(route); view.show("confirm"); speak(`${route}번이 맞습니까?`);
   }
   function boardingChanged(next) {
     const previous = boardingState; boardingState = next;
@@ -245,6 +246,8 @@
     } else {
       if (activeRoute) { journey.stop(); activeRoute = null; }
       if (next.status === "pending" && previous?.status !== "pending") {
+        // 새 정류장 도착에서는 이전 도착 때 입력한 번호를 지우고, 노선 변경(reopen)에서만 이어서 보여 준다.
+        if (next.arrival_event_id !== draftEventId) { draftRoute = ""; draftEventId = null; }
         view.setRoute(draftRoute); view.show("input");
       } else if (next.status === "awaiting_stop") status("멈춤 안내가 끝나면 탑승할 버스 번호를 입력해 주세요.");
       else if (next.status === "cancelled" && previous?.status !== "cancelled") {
@@ -349,7 +352,7 @@
       const created = await GApi.start(device, $("note").value.trim());
       if (version !== generation) { await GApi.stop(created.session_id); return; }
       sessionId = created.session_id; running = true; paused = false; cameraLost = false; frameId = 0;
-      activeRoute = null; draftRoute = ""; lastResult = null; timingQueue = []; eventQueue = [];
+      activeRoute = null; draftRoute = ""; draftEventId = null; lastResult = null; timingQueue = []; eventQueue = [];
       clips = []; activeClip = null; bufferedBytes = 0; clearClipTimers();
       walking.start(sessionId, false, "walking"); traffic.start(sessionId, false, "traffic"); boarding.start(sessionId);
       tick = setInterval(() => {
