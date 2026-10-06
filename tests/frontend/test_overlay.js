@@ -85,7 +85,16 @@ context.window.GOverlay.render({
   walking: { event: { roi: {} } },
   stop_proximity: { status: "not_detected", arrival_recorded: true },
 });
-assert.ok(labels.includes("정류장 확인 기록 · 재확인 중"));
+assert.ok(labels.includes("정류장 도착 기록 있음 ·"));
+assert.ok(labels.includes("현재 화면에서 미검출"));
+labels.length = 0;
+context.window.GOverlay.render({
+  image_width: 360, image_height: 640,
+  walking: { event: { roi: {} } },
+  stop_proximity: { status: "candidate", arrival_recorded: true,
+    observations: 1, required_observations: 3 },
+});
+assert.ok(labels.includes("정류장 후보 재확인 중"));
 console.log("overlay ids: pass");
 
 // Results older than 400ms must not leave a person box on a newer camera frame.

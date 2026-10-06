@@ -190,6 +190,13 @@ risk:
   # 안정적인 추적에서 장애물이 근접 경로에 들어올 때를 미리 위험으로 판단
   approach_danger_enabled: true
   approach_danger_s: 0.5
+  # 차량·자전거만: 안정된 추적에서 경로 교차와 접근이 함께 예측될 때 조기 위험
+  moving_conflict_enabled: true
+  moving_conflict_horizon_s: 2.0
+  moving_conflict_ttc_s: 3.0
+  moving_conflict_lateral_ttc_s: 2.5
+  moving_conflict_lateral_max_gap_y: 0.16
+  moving_conflict_min_independent_speed: 0.06
   min_forward_speed: 0.05
   min_lateral_speed: 0.05
   lateral_near_y: 0.42

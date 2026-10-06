@@ -156,7 +156,8 @@ def guidance_items(prediction, level, crossing_active=False, stationary_voice=Fa
             if item.get("alert_level", item.get("risk_level")) == level
             and item.get("warning_primary", True)
             and not item.get("voice_suppressed_reason")
-            and (not crossing_active or item.get("class_name") in VEHICLE_CLASSES)
+            and (not crossing_active or item.get("class_name") in VEHICLE_CLASSES
+                 or item.get("class_name") == "bicycle" and rapid_approach_hazard(item))
             and not item.get("risk_suppressed_reason")
             and (not stationary
                  or bool((item.get("geometry") or {}).get("stationary_voice_eligible")))
@@ -167,7 +168,8 @@ def rapid_approach_hazard(item):
     """안정적으로 확인된 빠른 접근·짧은 TTC 위험인지 반환한다."""
     reasons = item.get("reasons", [])
     return ((item.get("motion") or {}).get("quality") == "valid"
-            and bool({"approaching_near_path", "short_ttc"}.intersection(reasons)))
+            and bool({"approaching_near_path", "short_ttc",
+                      "predicted_moving_conflict"}.intersection(reasons)))
 
 
 # 후보 방향과 객체 박스 사이의 가로 거리 계산
@@ -258,6 +260,8 @@ def movement_steps(items, action, image_width, previous_steps=None):
 def walking_action(prediction, image_width, crossing_active=False, stationary_voice=False):
     """횡단 상태에 맞는 위험 분포와 좌우 안전도를 하나의 행동으로 바꾼다."""
     dangers = guidance_items(prediction, "danger", crossing_active, stationary_voice)
+    if any("predicted_moving_conflict" in item.get("reasons", []) for item in dangers):
+        return "stop"
     directions = {direction for item in dangers
                   for direction in warning_directions(item, image_width)}
     if not directions:

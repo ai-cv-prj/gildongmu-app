@@ -40,6 +40,12 @@ DEFAULT_RISK = {
     "prediction_horizon_s": 0.80,
     "approach_danger_enabled": False,
     "approach_danger_s": 1.20,
+    "moving_conflict_enabled": False,
+    "moving_conflict_horizon_s": 2.0,
+    "moving_conflict_ttc_s": 3.0,
+    "moving_conflict_lateral_ttc_s": 2.5,
+    "moving_conflict_lateral_max_gap_y": 0.16,
+    "moving_conflict_min_independent_speed": 0.06,
     "min_forward_speed": 0.05,
     "min_lateral_speed": 0.05,
     "lateral_near_y": 0.60,
@@ -149,7 +155,8 @@ def risk_config(value=None):
                 "roi_recalibration_enabled","surface_risk_enabled","class_bridge_enabled",
                 "warning_grouping_enabled","wide_roi_priority_enabled",
                 "camera_view_guard_enabled","walkable_surroundings_filter_enabled",
-                "approach_danger_enabled", "stationary_voice_enabled"):
+                "approach_danger_enabled", "stationary_voice_enabled",
+                "moving_conflict_enabled"):
         if not isinstance(cfg[key],bool):
             raise ValueError(f"risk.{key} must be boolean")
     for key in ("side_near_y","side_min_height","side_min_width","roi_jitter_shift",
@@ -165,7 +172,8 @@ def risk_config(value=None):
                 "stationary_voice_overlap_threshold",
                 "surrounding_side_width_ratio","surrounding_side_height_ratio",
                 "surrounding_bottom_height_ratio","surrounding_max_side_width_ratio",
-                "surrounding_max_bottom_height_ratio","surrounding_walkable_threshold"):
+                "surrounding_max_bottom_height_ratio","surrounding_walkable_threshold",
+                "moving_conflict_lateral_max_gap_y", "moving_conflict_min_independent_speed"):
         _number(cfg[key],f"risk.{key}",0,1,True)
     for key in ("roi_change_confirm_s","roi_small_confirm_s","surface_confirm_s",
                 "surface_clear_s","visibility_advisory_s","roi_extent_smooth_s",
@@ -187,6 +195,8 @@ def risk_config(value=None):
         _number(cfg[key], f"risk.{key}", 0, 1, True)
     for key in ("history_window_s", "min_history_s", "prediction_horizon_s", "reset_gap_s",
                 "ttc_danger_s", "ttc_caution_s", "approach_danger_s",
+                "moving_conflict_horizon_s", "moving_conflict_ttc_s",
+                "moving_conflict_lateral_ttc_s",
                 "release_hold_s", "repeat_cooldown_s",
                 "camera_max_rotation_deg", "roi_confirm_s", "roi_smooth_s", "roi_hold_s",
                 "roi_return_s", "clear_confirm_s", "uncertainty_hold_s", "id_bridge_s",
