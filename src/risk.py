@@ -7,7 +7,7 @@ import math
 from copy import deepcopy
 from src.risk_config import risk_config
 from src.risk_geometry import geometry, sidewalk_context, surrounding_walkability
-from src.risk_motion import CameraMotionGuard, MotionHistory
+from src.risk_motion import BackgroundStationarityGuard, CameraMotionGuard, MotionHistory
 from src.tracking import DetectionTracker
 from src.alert_policy import AlertPolicy
 from src.path_roi import SidewalkGuidedROI
@@ -37,11 +37,14 @@ class VideoClock:
 
 class RiskEngine:
     # 위험 판정 모듈 초기화
-    def __init__(self, config=None, tracking=None, tracker=None, camera_guard=None):
+    def __init__(self, config=None, tracking=None, tracker=None, camera_guard=None,
+                 stationarity_guard=None):
         """추적·ROI·촬영 상태·경고 선택기를 같은 설정으로 준비한다."""
         self.config = risk_config(config)
         self.tracker = tracker if tracker is not None else DetectionTracker(tracking)
         self.camera_guard = camera_guard if camera_guard is not None else CameraMotionGuard(self.config)
+        self.stationarity_guard = (stationarity_guard if stationarity_guard is not None
+                                   else BackgroundStationarityGuard(self.config))
         self.motion = MotionHistory(self.config)
         self.alerts = AlertPolicy(self.config)
         self.path_roi = SidewalkGuidedROI(self.config)
@@ -56,6 +59,7 @@ class RiskEngine:
         """새 영상에서 이전 영상의 추적과 경고 상태를 지운다."""
         self.tracker.reset()
         self.camera_guard.reset()
+        self.stationarity_guard.reset()
         self.motion.reset()
         self.alerts.reset()
         self.path_roi.reset()
@@ -96,6 +100,10 @@ class RiskEngine:
         if not timestamp_valid:
             self.motion.reset()
         camera_stable = bool(self.camera_guard.update(frame, timestamp_s))
+        stationarity = (self.stationarity_guard.update(
+            frame, detections, timestamp_s, timestamp_valid)
+            if self.config["stationary_voice_enabled"] else
+            {"status": "disabled", "reason": "stationary_voice_disabled", "duration_s": 0.0})
         previous_view_status = self.camera_view.status
         camera_view = self.camera_view.update(frame, detections, class_map, label_ids,
                                               timestamp_s, camera_stable)
@@ -306,6 +314,7 @@ class RiskEngine:
         return {"timestamp_s":timestamp_s, "timestamp_valid":timestamp_valid,
                 "state_epoch":self.epoch, "state_reset":bool(discontinuity or tracking_reset or view_recovered),
                 "view_recovered":view_recovered, "camera_view":camera_view,
+                "stationarity":stationarity,
                 "motion_gap":bool(motion_gap), "frame_gap_s":frame_gap_s,
                 "camera_motion_stable":camera_stable, "tracker_status":self.tracker.status,
                 "roi":roi, "surface":surface, "advisories":self.alerts.advisories,

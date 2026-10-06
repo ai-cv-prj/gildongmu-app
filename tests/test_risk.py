@@ -41,6 +41,23 @@ def engine(identity=1, stable=True, config=None):
     return RiskEngine(config,tracker=FixedTracker(identity),camera_guard=guard)
 
 class RiskTests(unittest.TestCase):
+    # 정지 음성 영역의 분홍색 ROI 하단 절반 확인
+    def test_stationary_voice_geometry_uses_lower_half_of_immediate_roi(self):
+        """분홍색 ROI가 70%부터 시작하면 하단 발자국이 85%를 넘어야 음성 대상이 된다."""
+        config = risk_config({
+            "corridor_polygon": [[.38, .30], [.62, .30], [.98, .70],
+                                 [.98, 1], [.02, 1], [.02, .70]],
+            "immediate_polygon": [[.02, .70], [.98, .70], [.98, 1], [.02, 1]],
+            "stationary_voice_roi_fraction": .50,
+            "stationary_voice_overlap_threshold": .10,
+        })
+        upper = geometry(detection((40, 60, 60, 84)), FRAME.shape, config)
+        lower = geometry(detection((40, 60, 60, 87)), FRAME.shape, config)
+        self.assertFalse(upper["stationary_voice_eligible"])
+        self.assertEqual(upper["stationary_immediate_overlap"], 0)
+        self.assertTrue(lower["stationary_voice_eligible"])
+        self.assertGreaterEqual(lower["stationary_immediate_overlap"], .10)
+
     def test_default_polygons_valid_and_bad_config_rejected(self):
         risk_config()
         for cfg in ({"overlap_threshold":float("nan")},{"enabled":1},

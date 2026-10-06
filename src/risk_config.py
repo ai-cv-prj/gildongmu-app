@@ -55,6 +55,18 @@ DEFAULT_RISK = {
     "camera_motion_failure_hold_s": 0.75,
     "camera_motion_min_inlier_ratio": 0.30,
     "camera_motion_min_inlier_points": 12,
+    "stationary_voice_enabled": False,
+    "stationary_confirm_s": 3.0,
+    "stationary_release_s": 0.8,
+    "stationary_middle_top": 0.45,
+    "stationary_lower_top": 0.70,
+    "stationary_bottom": 0.95,
+    "stationary_median_motion_per_s": 0.015,
+    "stationary_p80_motion_per_s": 0.030,
+    "stationary_scale_change_per_s": 0.015,
+    "stationary_min_points": 12,
+    "stationary_voice_roi_fraction": 0.50,
+    "stationary_voice_overlap_threshold": 0.10,
     "release_hold_s": 0.50,
     "repeat_cooldown_s": 2.0,
     "event_match_iou": 0.30,
@@ -137,7 +149,7 @@ def risk_config(value=None):
                 "roi_recalibration_enabled","surface_risk_enabled","class_bridge_enabled",
                 "warning_grouping_enabled","wide_roi_priority_enabled",
                 "camera_view_guard_enabled","walkable_surroundings_filter_enabled",
-                "approach_danger_enabled"):
+                "approach_danger_enabled", "stationary_voice_enabled"):
         if not isinstance(cfg[key],bool):
             raise ValueError(f"risk.{key} must be boolean")
     for key in ("side_near_y","side_min_height","side_min_width","roi_jitter_shift",
@@ -147,6 +159,10 @@ def risk_config(value=None):
                 "label_confidence","central_danger_left","central_danger_right",
                 "side_danger_y","roi_extent_max_shift_per_s",
                 "camera_motion_min_inlier_ratio",
+                "stationary_middle_top", "stationary_lower_top", "stationary_bottom",
+                "stationary_median_motion_per_s", "stationary_p80_motion_per_s",
+                "stationary_scale_change_per_s", "stationary_voice_roi_fraction",
+                "stationary_voice_overlap_threshold",
                 "surrounding_side_width_ratio","surrounding_side_height_ratio",
                 "surrounding_bottom_height_ratio","surrounding_max_side_width_ratio",
                 "surrounding_max_bottom_height_ratio","surrounding_walkable_threshold"):
@@ -176,6 +192,8 @@ def risk_config(value=None):
                 "roi_return_s", "clear_confirm_s", "uncertainty_hold_s", "id_bridge_s",
                 "camera_motion_failure_hold_s"):
         _number(cfg[key], f"risk.{key}", 0, strictly_positive=True)
+    for key in ("stationary_confirm_s", "stationary_release_s"):
+        _number(cfg[key], f"risk.{key}", 0, strictly_positive=True)
     if (isinstance(cfg["label_confirm_frames"], bool) or
             not isinstance(cfg["label_confirm_frames"], int) or cfg["label_confirm_frames"] < 1):
         raise ValueError("label_confirm_frames must be a positive integer")
@@ -183,6 +201,13 @@ def risk_config(value=None):
             not isinstance(cfg["camera_motion_min_inlier_points"], int)
             or cfg["camera_motion_min_inlier_points"] < 3):
         raise ValueError("camera_motion_min_inlier_points must be an integer of at least 3")
+    if (isinstance(cfg["stationary_min_points"], bool)
+            or not isinstance(cfg["stationary_min_points"], int)
+            or cfg["stationary_min_points"] < 6):
+        raise ValueError("stationary_min_points must be an integer of at least 6")
+    if not (cfg["stationary_middle_top"] < cfg["stationary_lower_top"]
+            < cfg["stationary_bottom"]):
+        raise ValueError("stationary background bands must be ordered")
     if cfg["hard_reset_gap_s"] < cfg["reset_gap_s"]:
         raise ValueError("hard_reset_gap_s must not be below reset_gap_s")
     if cfg["roi_top_max_y"] >= min(p[1] for p in cfg["corridor_polygon"]

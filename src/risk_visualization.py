@@ -220,7 +220,8 @@ def draw_review(frame, prediction, config):
          (16,h-panel_height+round(66*scale)),.66*scale,(255,255,255),max(1,round(scale)))
     text("TTC risk: "+mode+" | metric distance: unavailable",
          (16,h-panel_height+round(98*scale)),.66*scale,(255,255,255),max(1,round(scale)))
-    text("CYAN: path   MAGENTA: near   AMBER: path check / side watch",
+    stationarity=(prediction.get("stationarity") or {}).get("status","disabled")
+    text("Motion: "+stationarity+" | CYAN: path   MAGENTA: near   AMBER: path check / side watch",
          (16,h-panel_height+round(130*scale)),.60*scale,(255,255,255),max(1,round(scale)))
     surface=prediction.get("surface") or {}
     state=("CAUTION" if surface.get("alert_level") else surface.get("status","off")).upper()
