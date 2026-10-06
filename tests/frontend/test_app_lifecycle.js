@@ -6,7 +6,7 @@ const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve()
 
 async function harness({ stopFailsOnce = false, clipState = "ready", uploadResponseLostOnce = false } = {}) {
   let now = 100, nextTimer = 0, screen = "home", cameraActive = false, cameraEnded;
-  let handlers, voice = null, busState = { status: "idle", revision: 0, arrival_event_id: null };
+  let handlers, voice = null, busState = { status: "idle", revision: 0, arrival_event_id: null }, routeInput = "";
   let journeyCallbacks, journeyPaused = false, route = null;
   let sessionsStarted = 0, sessionsStopped = 0, stopAttempts = 0, uploadAttempts = 0;
   let recording = false, recordingStartedAt = null, recorderEnded = null;
@@ -21,7 +21,7 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
     return elements.get(id);
   };
   const view = { setSettings() {}, show(value) { screen = value; }, getScreen: () => screen,
-    setObstacleDetection() {}, setBusy() {}, setStatus(text) { statuses.push(text); }, announce() {}, setRoute() {}, setBus() {},
+    setObstacleDetection() {}, setBusy() {}, setStatus(text) { statuses.push(text); }, announce() {}, setRoute(value) { routeInput = value; }, setBus() {},
     setStations() {}, setPaused() {}, render(value) { renders.push(value); }, getGuidance: () => "안내" };
   const player = { setRate: value => value, recordingStream: () => null, cancel() { voice = null; },
     speak(text, validUntil, callbacks) { voice = { text, validUntil, ...callbacks }; callbacks.onStart?.(); return true; } };
@@ -45,7 +45,7 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
         busBlob, busCapturedAtMs, resolve, reject }));
     },
     async boarding(_id, action, _event, number) {
-      if (action === "arrive") busState = { status: "awaiting_stop", arrival_event_id: 1,
+      if (action === "arrive") busState = { status: "awaiting_stop", arrival_event_id: (busState.arrival_event_id ?? 0) + 1,
         revision: busState.revision + 1, arrival_source: "user_confirmed", bus_number: null };
       else {
         const state = { stop_announced: "pending", submit: "submitted", reopen: "awaiting_stop", cancel: "cancelled" }[action];
@@ -54,7 +54,7 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
       }
       return { ...busState };
     },
-    timings: async () => ({}), busEvents: async () => ({}), recordingEvent: async () => ({}),
+    timings: async () => ({}), heartbeat: async () => ({}), busEvents: async () => ({}), recordingEvent: async () => ({}),
     recording: async () => ({}), camera: async () => ({}),
     clips: async () => ({ clips: uploads.map(clip => ({ clip_id: clip.index, state: clipState,
       error: clipState === "failed" ? "인코딩 실패" : null })) }),
@@ -106,7 +106,7 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
     recordCounts: () => ({ starts: recordStarts, stops: recordStops, recording }), screen: () => screen,
     retryVisible: () => !node("retry-upload").hidden,
     resources: () => ({ cameraActive, sessionsStarted, sessionsStopped, timers: timers.size, intervals: intervals.size, route }),
-    journeyPaused: () => journeyPaused, setNow(value) { now = value; },
+    journeyPaused: () => journeyPaused, routeInput: () => routeInput, setNow(value) { now = value; },
     async capture() {
       const [id, timer] = [...timers].find(([, value]) => value.delay === 0);
       timers.delete(id);
@@ -119,6 +119,7 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
     },
     async respond(index, overrides = {}) { frames[index].resolve({ ...frameResult(frames[index]), ...overrides }); await flush(); },
     async finishVoice() { const done = voice; voice = null; done.onEnd(); await flush(); },
+    async draftRoute(value) { handlers.onSubmitRoute(value); await flush(); },
     async confirmRoute(value) { handlers.onSubmitRoute(value); await flush(); await action("confirm-route"); },
     async cameraEnd() { cameraActive = false; cameraEnded(); await flush(); },
     async recorderError() { recording = false; recordStops++; recorderEnded?.(new Error("인코더 오류")); await flush(); },
@@ -204,6 +205,51 @@ test("이동 안내에서 이전을 누르면 마무리 대신 출발 준비로 
   assert.equal(app.screen(), "home");
   assert.equal(app.resources().cameraActive, false);
   assert.equal(app.resources().sessionsStopped, 1);
+});
+
+test("일시중지 중에도 이전을 누르면 출발 준비로 돌아간다", async () => {
+  const app = await harness();
+  await app.action("start");
+  await app.action("pause");
+  await app.action("back");
+  assert.equal(app.screen(), "home");
+  assert.equal(app.resources().cameraActive, false);
+  assert.equal(app.resources().sessionsStopped, 1);
+});
+
+test("버스 노선 안내를 일시중지한 뒤 이전을 누르면 재개하고 노선 입력으로 돌아간다", async () => {
+  const app = await harness();
+  await app.action("start");
+  await app.action("manual-arrival");
+  await app.finishVoice();
+  await app.confirmRoute("143");
+  await app.action("pause");
+  assert.equal(app.journeyPaused(), true);
+  await app.action("back");
+  assert.equal(app.resources().route, null, "이전이 무시되지 않고 노선 안내를 해제한다");
+  assert.equal(app.journeyPaused(), false);
+  assert.equal(app.resources().cameraActive, true, "노선을 다시 고르는 동안 세션을 유지한다");
+  assert.equal(app.resources().sessionsStopped, 0);
+  await app.action("end");
+});
+
+test("새 정류장 도착에서는 이전 도착 때 입력한 버스 번호를 지운다", async () => {
+  const app = await harness();
+  await app.action("start");
+  await app.action("manual-arrival");
+  await app.finishVoice();
+  await app.draftRoute("143");
+  assert.equal(app.screen(), "confirm");
+  await app.action("back");
+  assert.equal(app.screen(), "input");
+  assert.equal(app.routeInput(), "143", "번호 확인에서 돌아오면 입력한 번호를 유지한다");
+  await app.action("back");
+  assert.equal(app.screen(), "walk");
+  await app.action("manual-arrival");
+  await app.finishVoice();
+  assert.equal(app.screen(), "input");
+  assert.equal(app.routeInput(), "", "새 도착에서는 입력란을 비운다");
+  await app.action("end");
 });
 
 test("빠른 일시중지·재개 중 응답한 이전 프레임은 순번만 반영하고 안내에 재사용하지 않는다", async () => {
