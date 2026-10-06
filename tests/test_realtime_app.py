@@ -20,7 +20,7 @@ from pydantic import ValidationError
 
 from backend.app import ClientTimingRequest, RecordingEventRequest, create_app
 from backend.response import normalize_detections
-from backend.session import SessionManager
+from backend.session import SessionError, SessionManager
 from src.video_audio import ffmpeg_executable
 from src.settings import load_app_config, load_paths
 
@@ -114,6 +114,31 @@ def test_session_response_contains_crosswalk_event(tmp_path):
     assert logged["server_timing"]["processing_ms"] >= 0
     assert result["frame_file"] == logged["frame_file"]
     assert not (folder / "frames").exists()
+
+
+def test_new_start_replaces_only_stale_session(tmp_path, monkeypatch):
+    """브라우저를 강제로 닫아 응답이 끊긴 세션만 새 시작 요청이 정리한다."""
+    clock = [1000.0]
+    monkeypatch.setattr("backend.session.time.monotonic", lambda: clock[0])
+    manager = SessionManager(tmp_path, model_factory=FakeModels,
+                             session_settings={**load_app_config()["session"], "stale_after_s": 30})
+    first = manager.start("Phone")
+    clock[0] += 25
+    manager.heartbeat(first["session_id"])
+    clock[0] += 25
+    with pytest.raises(SessionError, match="이미 진행 중"):
+        manager.start("Phone")
+    clock[0] += 10
+    second = manager.start("Phone")
+    assert second["session_id"] != first["session_id"]
+    summary = manager.stop(first["session_id"])
+    assert summary["session_id"] == first["session_id"]
+    assert "ended_at" in summary
+    folder = tmp_path / first["date"] / first["folder_name"]
+    assert "last_seen" not in json.loads((folder / "session.json").read_text(encoding="utf-8"))
+    with pytest.raises(SessionError):
+        manager.heartbeat(first["session_id"])
+    manager.stop(second["session_id"])
 
 
 def test_client_timing_is_saved_with_frame_and_audio_events(tmp_path):
