@@ -470,11 +470,13 @@ class WalkingVoiceTests(unittest.TestCase):
         """화면 행동과 선택 음성 또는 무음 상태를 서로 다른 줄로 표시한다."""
         self.assertEqual(action_status_text(
             {"last_action": "left", "voice_action": "right"}),
-            ("ACTION: left", "VOICE: right"))
+            ("ACTION: left", "VOICE: right", "MOTION: unavailable"))
         self.assertEqual(action_status_text(
             {"last_action": "stop", "voice_action": None}),
-            ("ACTION: stop", "VOICE: muted"))
-        self.assertEqual(action_status_text({}), ("ACTION: none", "VOICE: none"))
+            ("ACTION: stop", "VOICE: muted", "MOTION: unavailable"))
+        self.assertEqual(action_status_text(
+            {"stationarity": {"status": "stationary"}}),
+            ("ACTION: none", "VOICE: none", "MOTION: stationary"))
 
     # 새 이벤트가 이전 음성을 끊는 PCM 결과 확인
     def test_voice_track_starts_at_frame_time_and_is_video_length(self):

@@ -19,7 +19,7 @@ from src.tracking import DetectionTracker
 from src.alert_policy import AlertPolicy
 from src.pipeline import process_video, publish_video_result
 from src.risk_log import RiskLog, risk_log_path
-from src.risk_visualization import draw_risk
+from src.risk_visualization import draw_risk, draw_stop_proximity, stop_proximity_text
 
 FRAME = np.zeros((100,100,3),np.uint8)
 
@@ -229,9 +229,9 @@ class RiskTests(unittest.TestCase):
         self.assertIsNone(result["detections"][0]["risk_level"])
         self.assertEqual(result["events"],[])
         rendered=draw_risk(FRAME,result,risk_config({"draw_roi":False}))
-        # 일반 신호등 bbox는 제외하고 왼쪽 위 행동·음성 상태 배지만 표시한다.
-        self.assertFalse(np.array_equal(rendered[:64],FRAME[:64]))
-        np.testing.assert_array_equal(rendered[64:],FRAME[64:])
+        # 일반 신호등 bbox는 제외하고 왼쪽 위 3줄 상태 배지만 표시한다.
+        self.assertFalse(np.array_equal(rendered[:86], FRAME[:86]))
+        np.testing.assert_array_equal(rendered[86:], FRAME[86:])
 
     # 처음 핑크 ROI에서 포착된 객체의 경고 복원 확인
     def test_first_obstacle_inside_immediate_roi_can_warn(self):
@@ -325,6 +325,41 @@ class RiskPipelineTests(unittest.TestCase):
                 self.assertEqual(rows[0]["detections"][0]["xyxy"],detection()["xyxy"])
                 self.assertEqual(len(rows[0]["detections"]),1)
             self.assertEqual(detector.predict.call_count,6)
+
+    # 저장 영상에서도 실시간과 같은 정류장 상태 기록 확인
+    def test_recorded_video_logs_stop_proximity(self):
+        """정류장 객체를 감지하면 저장 영상 JSONL에도 근접 판정을 남긴다."""
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "input.mp4"
+            output = Path(folder) / "output.mp4"
+            self.make_video(source)
+            stop = detection(name="transit_stop", cid=24)
+            stop["xyxy"] = [10, 10, 40, 90]
+            detector = SimpleNamespace(predict=Mock(return_value=[stop]))
+            with redirect_stdout(io.StringIO()):
+                process_video(
+                    source, output, detector=detector,
+                    risk_config={"enabled": True}, tracking_config={"enabled": False},
+                    stop_proximity_config={"confirm_frames": 1, "confirm_s": .01},
+                )
+            rows = [json.loads(line) for line in risk_log_path(output).read_text().splitlines()]
+            self.assertEqual(rows[0]["stop_proximity"]["status"], "candidate")
+            self.assertEqual(rows[-1]["stop_proximity"]["status"], "nearby")
+
+    # 실시간과 같은 정류장 배너 문구와 화면 표시 확인
+    def test_recorded_stop_overlay_matches_realtime_states(self):
+        """정류장 후보와 근접 유지 상태를 배너와 박스로 표시한다."""
+        candidate = {
+            "status": "candidate", "observations": 1, "required_observations": 3,
+            "xyxy": [.1, .2, .5, .8], "held": False,
+        }
+        self.assertEqual(stop_proximity_text(candidate), "STOP CANDIDATE 1/3")
+        rendered = draw_stop_proximity(np.zeros((100, 100, 3), dtype=np.uint8), candidate)
+        self.assertTrue(np.any(rendered != 0))
+        self.assertEqual(
+            stop_proximity_text({"status": "nearby", "basis": "left", "held": True}),
+            "LEFT STOP NEARBY HOLD",
+        )
 
     def test_risk_enabled_preserves_traffic_input_filter_and_drawing(self):
         with tempfile.TemporaryDirectory() as folder:

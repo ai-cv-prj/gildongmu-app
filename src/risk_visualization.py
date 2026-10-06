@@ -13,13 +13,14 @@ NEAR_ROI_COLOR = (186, 136, 255)
 DARK_TEXT_COLOR = (31, 19, 8)
 
 
-# 장애물 행동과 음성 상태 문구 생성
+# 장애물 행동과 음성·움직임 상태 문구 생성
 def action_status_text(prediction):
-    """화면 행동과 장애물 음성 선택 상태를 두 줄의 짧은 문구로 반환한다."""
+    """화면 행동과 음성 선택, 카메라 움직임 상태를 짧은 문구로 반환한다."""
     action = prediction.get("last_action") or "none"
     voice_action = prediction.get("voice_action")
     voice = voice_action or ("muted" if action != "none" else "none")
-    return f"ACTION: {action}", f"VOICE: {voice}"
+    motion = (prediction.get("stationarity") or {}).get("status") or "unavailable"
+    return f"ACTION: {action}", f"VOICE: {voice}", f"MOTION: {motion}"
 
 
 # 현재 장애물 이동 행동 배지 표시
@@ -55,6 +56,90 @@ def risk_identity(item):
         values.append(f'E{item["event_id"]}')
     return " · ".join(values) if values else "no-ID"
 
+
+# 정지 중 음성 안내 범위 경계 표시
+def draw_stationary_voice_boundary(frame, polygon):
+    """분홍색 ROI의 아래쪽 절반이 시작되는 위치를 점선으로 표시한다."""
+    if not isinstance(polygon, (list, tuple)) or len(polygon) < 3:
+        return frame
+    try:
+        points = [(float(point[0]), float(point[1])) for point in polygon]
+    except (TypeError, ValueError, IndexError):
+        return frame
+    if not np.isfinite(points).all():
+        return frame
+    middle_y = (min(point[1] for point in points) + max(point[1] for point in points)) / 2
+    intersections = []
+    for index, (x1, y1) in enumerate(points):
+        x2, y2 = points[(index + 1) % len(points)]
+        if abs(y2 - y1) < 1e-9:
+            if abs(middle_y - y1) < 1e-9:
+                intersections.extend((x1, x2))
+            continue
+        if min(y1, y2) <= middle_y <= max(y1, y2):
+            intersections.append(x1 + (middle_y - y1) * (x2 - x1) / (y2 - y1))
+    if len(intersections) < 2:
+        return frame
+    height, width = frame.shape[:2]
+    left = round(min(intersections) * width)
+    right = round(max(intersections) * width)
+    y = round(middle_y * height)
+    dash, gap = max(8, round(width / 45)), max(6, round(width / 60))
+    for start in range(left, right, dash + gap):
+        cv2.line(frame, (start, y), (min(start + dash, right), y), NEAR_ROI_COLOR,
+                 max(2, round(width / 320)), cv2.LINE_AA)
+    return frame
+
+
+# 정류장 근접 판정 문구 생성
+def stop_proximity_text(event):
+    """실시간 오버레이와 같은 정류장 판정 문구를 반환한다."""
+    event = event or {}
+    state = event.get("status", "unavailable")
+    position = {"left": "LEFT ", "right": "RIGHT ", "bottom": "BOTTOM "}.get(
+        event.get("basis"), "")
+    if state == "nearby":
+        return f"{position}STOP {'NEARBY HOLD' if event.get('held') else 'NEARBY'}"
+    if event.get("arrival_recorded"):
+        return "STOP CONFIRMED / RECHECKING"
+    if state == "candidate":
+        if event.get("held"):
+            return f"{position}STOP CANDIDATE HOLD"
+        return (f"{position}STOP CANDIDATE {event.get('observations', 0)}/"
+                f"{event.get('required_observations', 0)}")
+    if state == "not_detected":
+        return "STOP NOT DETECTED"
+    return "STOP UNAVAILABLE"
+
+
+# 정류장 근접 판정 표시
+def draw_stop_proximity(frame, event):
+    """실시간 화면과 같은 정류장 후보 박스와 우측 배너를 표시한다."""
+    event = event or {}
+    result = frame.copy()
+    height, width = result.shape[:2]
+    state = event.get("status", "unavailable")
+    color = ((171, 215, 87) if state == "nearby"
+             else (115, 206, 255) if state == "candidate" else (218, 206, 194))
+    box = event.get("xyxy")
+    if (not event.get("held") and state in ("nearby", "candidate")
+            and isinstance(box, (list, tuple)) and len(box) == 4
+            and np.isfinite(box).all()):
+        x1, y1, x2, y2 = [round(value * scale)
+                          for value, scale in zip(box, (width, height, width, height))]
+        cv2.rectangle(result, (x1, y1), (x2, y2), color, max(4, round(width / 120)))
+    text = stop_proximity_text(event)
+    font, scale, thickness = cv2.FONT_HERSHEY_SIMPLEX, max(.45, min(.7, width / 640)), 1
+    (text_width, text_height), baseline = cv2.getTextSize(text, font, scale, thickness)
+    banner_width = min(width - 16, text_width + 22)
+    left, top, banner_height = width - banner_width - 8, 52, 36
+    cv2.rectangle(result, (left, top), (left + banner_width, top + banner_height),
+                  (31, 19, 8), -1)
+    cv2.rectangle(result, (left, top), (left + banner_width, top + banner_height), color, 2)
+    cv2.putText(result, text, (left + 11, top + text_height + 6), font, scale, color,
+                thickness, cv2.LINE_AA)
+    return result
+
 # 영상에 위험 판정 표시
 def draw_risk(frame, prediction, config):
     """현재 ROI와 장애물 위험도를 영상 프레임에 표시한다."""
@@ -74,6 +159,7 @@ def draw_risk(frame, prediction, config):
             cv2.fillPoly(tint, [points], color)
             result = cv2.addWeighted(tint, alpha, result, 1-alpha, 0)
             cv2.polylines(result, [points], True, color, max(2, round(w/320)), cv2.LINE_AA)
+        result = draw_stationary_voice_boundary(result, config["immediate_polygon"])
     counts = {"monitor":0,"caution":0,"danger":0}
     labels = []
     for item in prediction["detections"]:

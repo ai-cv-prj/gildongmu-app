@@ -20,7 +20,7 @@ from src.visualization import draw_detections, overlay_segmentation, draw_traffi
 from src.traffic import TrafficSignalPipeline, validate_traffic_config
 from src.risk import RiskEngine, VideoClock
 from src.risk_config import risk_config as normalize_risk, tracking_config as normalize_tracking
-from src.risk_visualization import draw_risk
+from src.risk_visualization import draw_risk, draw_stop_proximity
 from src.risk_log import RiskLog, risk_log_path
 from src.walking_voice import WalkingVoice, suppress_non_green_crosswalk_voice
 from src.traffic_voice import TrafficVoice
@@ -32,6 +32,7 @@ from src.crosswalk_safety import (
 from src.crosswalk_visualization import draw_crosswalk_safety
 from src.walking_surface import WalkingSurfaceEngine, walking_surface_config
 from src.walking_surface_visualization import draw_walking_surface
+from backend.stop_proximity import StopProximity
 from src.voice_priority import CrosswalkVoice, prioritize_voice_events
 
 
@@ -161,7 +162,8 @@ def publish_video_result(video_source, output_path, risk_log=None):
 # 영상 한 개 처리
 def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=None, traffic=None,
                   risk_config=None, tracking_config=None, crosswalk_config=None,
-                  recorded_frame_config=None, walking_surface_config_value=None):
+                  recorded_frame_config=None, walking_surface_config_value=None,
+                  stop_proximity_config=None):
     """임시 MP4로 처리한 뒤 프레임 수 확인에 성공하면 이전 결과를 교체한다."""
     if segmenter is None and detector is None and traffic is None:
         raise ValueError("도보, 장애물 또는 신호등 모델이 하나 이상 필요합니다.")
@@ -188,6 +190,7 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
     temporary_mux = None
     committed = False
     engine = None
+    stop_proximity = None
     crosswalk_engine = None
     walking_surface_engine = None
     try:
@@ -244,6 +247,7 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
 
         if risk_enabled:
             engine = RiskEngine(risk_settings, tracking_config)
+            stop_proximity = StopProximity(stop_proximity_config)
             clock = VideoClock(fps)
             voice = WalkingVoice()
             if risk_settings["log_jsonl"]:
@@ -268,6 +272,12 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
                     risk_result.update(risk_config=risk_settings,
                                        tracking_config=normalize_tracking(tracking_config))
             if risk_result is not None:
+                camera_view = risk_result.get("camera_view") or {}
+                risk_result["stop_proximity"] = stop_proximity.update(
+                    risk_result["detections"], frame.shape, timestamp,
+                    camera_view=camera_view.get("status", "clear"),
+                    state_reset=risk_result.get("state_reset", False),
+                )
                 engine.add_sidewalk_context(risk_result, class_map,
                     segmenter.label_ids if segmenter is not None else None, frame.shape)
             traffic_result = traffic.predict(
@@ -331,6 +341,8 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
                 result = draw_crosswalk_safety(result, crosswalk_result)
             if walking_surface_result is not None:
                 result = draw_walking_surface(result, walking_surface_result)
+            if risk_result is not None:
+                result = draw_stop_proximity(result, risk_result.get("stop_proximity"))
             writer.write(result)
             processed_frames += 1
             print(
@@ -543,5 +555,6 @@ def run_video_inference(
                       traffic=traffic, risk_config=risk_settings, tracking_config=tracking_settings,
                       crosswalk_config=config.get("crosswalk_safety"),
                       recorded_frame_config=config["recorded_frame"],
-                      walking_surface_config_value=config.get("walking_surface"))
+                      walking_surface_config_value=config.get("walking_surface"),
+                      stop_proximity_config=config.get("stop_proximity"))
     return outputs
