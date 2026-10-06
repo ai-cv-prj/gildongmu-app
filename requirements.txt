@@ -25,8 +25,9 @@ pytorch-lightning==2.5.1
 nltk==3.10.3
 lmdb==1.8.1
 
-# YAML 설정
+# YAML·환경변수 설정
 PyYAML==6.0.3
+python-dotenv==1.2.4
 
 # FastAPI 서버 및 업로드
 fastapi==0.141.1

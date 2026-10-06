@@ -50,6 +50,8 @@ class BusRecognizer:
         self._latest: dict[str, Any] | None = None
         self._error: str | None = None
         self._loading = False
+        self._prewarm_requested = False
+        self._models_loaded = False
         self._closed = False
 
     def _create_pipeline(self) -> BusPipeline:
@@ -87,7 +89,19 @@ class BusRecognizer:
                 self._thread.start()
             self._condition.notify_all()
 
-    def observe(self, session_id: str, frame: np.ndarray, frame_id: int,
+    def prewarm(self) -> None:
+        """Load bus models on the existing worker without starting OCR or a target session."""
+        with self._condition:
+            if (self._closed or self._prewarm_requested or self._models_loaded
+                    or not all(self.config.model_files().values())):
+                return
+            self._prewarm_requested = True
+            if self._thread is None:
+                self._thread = threading.Thread(target=self._run, name="bus-recognition", daemon=True)
+                self._thread.start()
+            self._condition.notify_all()
+
+    def observe(self, session_id: str, frame: np.ndarray | None, frame_id: int,
                 captured_at_ms: int) -> dict[str, Any]:
         """Queue a recent frame and return the latest result with its source timestamp."""
         with self._condition:
@@ -99,7 +113,7 @@ class BusRecognizer:
                 self._loading = True
                 self._thread = threading.Thread(target=self._run, name="bus-recognition", daemon=True)
                 self._thread.start()
-            if self._route and files_ready and not self._error:
+            if frame is not None and self._route and files_ready and not self._error:
                 if (self._last_queued_at_ms is None or
                         captured_at_ms - self._last_queued_at_ms >= self.config.interval_ms):
                     self._pending = _Frame(self._generation, session_id, frame_id,
@@ -143,6 +157,7 @@ class BusRecognizer:
             self._session_id = None
             self._route = None
             self._loading = False
+            self._prewarm_requested = False
             thread = self._thread
             self._condition.notify_all()
         if thread is not None and thread is not threading.current_thread():
@@ -156,11 +171,13 @@ class BusRecognizer:
         while True:
             with self._condition:
                 self._condition.wait_for(lambda: self._closed or self._generation != generation
-                                         or self._pending is not None)
+                                         or self._pending is not None
+                                         or (self._prewarm_requested and pipeline is None and not load_failed))
                 closed = self._closed
                 current_generation = self._generation
                 session_id = self._session_id
                 route = self._route
+                prewarm = self._prewarm_requested
                 pending = self._pending
                 self._pending = None
             if current_generation != generation or closed:
@@ -174,24 +191,31 @@ class BusRecognizer:
                 generation = current_generation
                 if closed:
                     return
-            if route and active_session is None and not load_failed:
+            if (route or prewarm) and active_session is None and not load_failed:
                 if all(self.config.model_files().values()):
                     try:
                         if pipeline is None:
                             pipeline = self._factory()
                             pipeline.load()
-                        pipeline.configure_target_route(route)
-                        pipeline.reset_session(session_id)
-                        active_session = session_id
                         with self._condition:
-                            if generation == self._generation:
-                                self._loading = False
-                                self._condition.notify_all()
+                            self._models_loaded = True
+                            self._prewarm_requested = False
+                            obsolete_after_load = self._closed or generation != self._generation
+                        if route and not obsolete_after_load:
+                            pipeline.configure_target_route(route)
+                            pipeline.reset_session(session_id)
+                            active_session = session_id
+                            with self._condition:
+                                if generation == self._generation:
+                                    self._loading = False
+                                    self._condition.notify_all()
                     except Exception as exc:
                         log.exception("bus model initialization failed")
                         pipeline = None
                         load_failed = True
                         with self._condition:
+                            self._models_loaded = False
+                            self._prewarm_requested = False
                             if generation == self._generation:
                                 self._error = f"bus_model_load_failed:{type(exc).__name__}"
                                 self._loading = False

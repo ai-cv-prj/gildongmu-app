@@ -191,11 +191,13 @@
         if (audioContext?.state === "suspended") {
           audioContext.resume().catch(() => onError("브라우저가 안내 음성 재생을 차단했습니다. 사이트 소리 허용을 확인하고 테스트를 다시 시작해 주세요."));
         }
-        // 원본 MP3는 유지하고 테스트 재생 단계에서만 설정 속도를 적용한다.
-        audio.playbackRate = rate;
         audio.src = request.dynamic && !clip
           ? `/api/bus-arrival-speech?text=${encodeURIComponent(request.text)}` : source(clip);
         audio.load();
+        // 원본 MP3는 유지하고 테스트 재생 단계에서만 설정 속도를 적용한다.
+        // load()는 playbackRate를 defaultPlaybackRate로 되돌리므로 둘 다 load() 뒤에 맞춘다.
+        audio.defaultPlaybackRate = rate;
+        audio.playbackRate = rate;
         // await 없이 클릭 처리 중 호출해야 모바일의 사용자 동작으로 인정된다.
         const playing = audio.play();
         playing?.then(started, rejected);
@@ -208,7 +210,7 @@
     function setRate(value) {
       const next = Number(value);
       if (Number.isFinite(next)) rate = Math.min(2, Math.max(0.75, next));
-      if (audio) audio.playbackRate = rate;
+      if (audio) audio.defaultPlaybackRate = audio.playbackRate = rate;
       return rate;
     }
 

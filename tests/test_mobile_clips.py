@@ -68,7 +68,7 @@ def test_two_sequential_clips_render_after_stop_with_verified_frames(tmp_path):
         masks.append(result["walking"]["mask_png"])
         assert result["frame_file"] is None
     folder = tmp_path / started["date"] / started["folder_name"]
-    assert not list((folder / "frames").glob("*.jpg"))
+    assert not (folder / "frames").exists()
     routes["/api/sessions/stop"](StopRequest(session_id=session_id))
     recording = sample_webm(tmp_path / "sample.webm")
     chunk_route = routes["/api/sessions/{session_id}/clips/{clip_id}/chunks/{index}"]
@@ -100,11 +100,18 @@ def test_two_sequential_clips_render_after_stop_with_verified_frames(tmp_path):
         clip = folder / "clips" / f"clip_{clip_id:03d}"
         assert (clip / "original.webm").read_bytes() == recording
         assert (clip / "inference.mp4").stat().st_size > 0
-        timeline = json.loads((clip / "timeline.json").read_text(encoding="utf-8"))
+        assert {path.name for path in clip.iterdir()} == {"original.webm", "inference.mp4", "manifest.json"}
+        timeline = json.loads((clip / "manifest.json").read_text(encoding="utf-8"))
         assert timeline["first_frame_offset_ms"] == 100
         assert timeline["frames"][0]["clip_offset_ms"] == 100
     restarted = SessionManager(tmp_path, model_factory=FakeModels)
-    assert ClipStore(restarted, max_jpeg_bytes=3_000_000).status(session_id)["clips"][0]["state"] == "ready"
+    store = ClipStore(restarted, max_jpeg_bytes=3_000_000)
+    assert store.status(session_id)["clips"][0]["state"] == "ready"
+    assert store.add_frame(session_id, 1, 1, 1000, jpeg[0], masks[0])["saved"]
+    assert store.add_chunk(session_id, 1, 0, recording)["saved"]
+    store.export(session_id, 1)
+    clip = folder / "clips" / "clip_001"
+    assert {path.name for path in clip.iterdir()} == {"original.webm", "inference.mp4", "manifest.json"}
 
 
 def test_clip_window_hash_and_overlap_are_rejected(tmp_path):
@@ -128,6 +135,10 @@ def test_clip_window_hash_and_overlap_are_rejected(tmp_path):
     manifest, _ = store.complete(session_id, 1, mime_type="video/webm", chunk_count=1,
                                  size_bytes=len(recording), started_at_ms=900, ended_at_ms=1400)
     assert manifest["state"] == "pending"
+    store.export(session_id, 1)
+    clip = manager.completed_folder(session_id) / "clips" / "clip_001"
+    assert store.status(session_id)["clips"][0]["state"] == "no_frames"
+    assert {path.name for path in clip.iterdir()} == {"original.webm", "manifest.json"}
     store.add_chunk(session_id, 2, 0, recording)
     with pytest.raises(ClipError):
         store.complete(session_id, 2, mime_type="video/webm", chunk_count=1,
@@ -235,3 +246,65 @@ def test_frame_retry_recovers_uncommitted_files_after_restart(tmp_path):
     assert orphan.read_bytes() == data
     assert not (clip / "masks" / "000001.png").exists()
     assert json.loads(orphan.with_suffix(".json").read_text())["sha256"] == hashlib.sha256(data).hexdigest()
+
+
+def test_failed_render_preserves_inputs_until_successful_retry(tmp_path, monkeypatch):
+    manager = SessionManager(tmp_path, model_factory=FakeModels)
+    session_id = manager.start("Phone")["session_id"]
+    frame = np.zeros((80, 100, 3), dtype=np.uint8)
+    success, encoded = cv2.imencode(".jpg", frame)
+    assert success
+    data = encoded.tobytes()
+    result = manager.process(session_id, 1, 1100, frame, image_bytes=data)
+    manager.stop(session_id)
+    store = ClipStore(manager, max_jpeg_bytes=3_000_000)
+    recording = sample_webm(tmp_path / "sample.webm")
+    store.add_chunk(session_id, 1, 0, recording)
+    store.add_frame(session_id, 1, 1, 1100, data, result["walking"]["mask_png"])
+    options = dict(mime_type="video/webm", chunk_count=1, size_bytes=len(recording),
+                   started_at_ms=1000, ended_at_ms=1500)
+    store.complete(session_id, 1, **options)
+    with monkeypatch.context() as patch:
+        def fail(*args):
+            raise RuntimeError("simulated render failure")
+        patch.setattr(store, "_draw", fail)
+        store.export(session_id, 1)
+    clip = manager.completed_folder(session_id) / "clips" / "clip_001"
+    assert store.status(session_id)["clips"][0]["state"] == "failed"
+    assert (clip / "frames" / "000001.jpg").read_bytes() == data
+    assert (clip / "frames" / "000001.json").is_file()
+    assert (clip / "masks" / "000001.png").is_file()
+    assert (clip / "original.webm").read_bytes() == recording
+    assert not list(clip.glob(".inference-*"))
+    manifest, retry = store.complete(session_id, 1, **options)
+    assert retry and manifest["state"] == "pending"
+    store.export(session_id, 1)
+    assert store.status(session_id)["clips"][0]["state"] == "ready"
+    assert {path.name for path in clip.iterdir()} == {"original.webm", "inference.mp4", "manifest.json"}
+
+    # Recover a crash after the final manifest was saved but before input cleanup.
+    (clip / "frames").mkdir()
+    (clip / "frames" / "000001.jpg").write_bytes(data)
+    restarted = ClipStore(SessionManager(tmp_path, model_factory=FakeModels), max_jpeg_bytes=3_000_000)
+    assert list(restarted.pending_exports()) == []
+    assert not (clip / "frames").exists()
+
+
+def test_session_events_share_one_log_and_keep_their_payloads(tmp_path):
+    manager = SessionManager(tmp_path, model_factory=FakeModels)
+    session_id = manager.start("Phone")["session_id"]
+    manager.process(session_id, 1, 1000, np.zeros((80, 100, 3), dtype=np.uint8))
+    manager.record_client_timings(session_id, [{"kind": "audio", "status": "started", "frame_id": 1}])
+    manager.record_bus_events(session_id, [{"type": "gps_poll", "event_group": "spoofed"}])
+    manager.record_video_event(session_id, "camera", "saved")
+    manager.session["crossing_active"] = False
+    manager.update_boarding(session_id, "arrive")
+    manager.stop(session_id)
+    folder = manager.completed_folder(session_id)
+    assert {path.name for path in folder.iterdir()} == {"session.json", "results.jsonl", "events.jsonl"}
+    events = [json.loads(line) for line in (folder / "events.jsonl").read_text().splitlines()]
+    assert [event["event_group"] for event in events] == ["client_timing", "bus", "recording", "boarding"]
+    assert events[0]["kind"] == "audio" and events[0]["frame_id"] == 1
+    assert events[1]["type"] == "gps_poll"
+    assert events[2]["status"] == "saved"
+    assert events[3]["action"] == "arrive"

@@ -103,5 +103,15 @@ module.exports = (async () => {
   assert.equal(await guide.submit("271"), true);
   assert.equal(view.bus_number, "271");
   guide.stop();
+  // Once arrival disables the obstacle model, automatic input can finish
+  // without requiring another stop detection from that suspended model.
+  server = { status: "awaiting_stop", arrival_event_id: 3, revision: ++version,
+    arrival_source: "visual_proximity", obstacle_detection_enabled: false };
+  guide.start("session");
+  accept(server, { stop_proximity: { status: "suspended", nearby: false } });
+  assert.equal(current.text, "멈추세요.");
+  finish(); await flush();
+  assert.equal(view.status, "pending");
+  guide.stop();
   console.log("boarding: pass");
 })();

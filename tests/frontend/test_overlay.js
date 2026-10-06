@@ -112,3 +112,12 @@ busFrame(1500);
 assert.ok(!labels.includes("143"));
 busFrame(2100);
 assert.ok(!labels.includes("143"));
+
+labels.length = rectangles.length = 0;
+context.window.GOverlay.render({ image_width: 360, image_height: 640, captured_at_ms: 1950,
+  walking: { detections: [{ xyxy: [.1, .2, .3, .6], class_name: "person" }],
+    event: { enabled: false, last_action: "stop", voice_action: "stop" } },
+  bus: { captured_at_ms: 1950, detections: [{ box: { x1: .1, y1: .2, x2: .3, y2: .4 }, extra: { text: "143" } }] },
+});
+assert.ok(labels.includes("143"));
+assert.ok(!labels.some(label => /person|ACTION|VOICE/.test(label)));

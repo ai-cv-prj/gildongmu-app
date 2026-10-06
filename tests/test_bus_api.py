@@ -16,13 +16,19 @@ from test_realtime_app import FakeModels
 class FakeBus:
     def __init__(self, *, fail=False):
         self.targets = []
+        self.frames = []
+        self.prewarms = 0
         self.fail = fail
         self.closed = False
 
     def set_target(self, session_id, route):
         self.targets.append((session_id, route))
 
+    def prewarm(self):
+        self.prewarms += 1
+
     def observe(self, session_id, frame, frame_id, captured_at_ms):
+        self.frames.append((None if frame is None else frame.shape[:2], frame_id, captured_at_ms))
         if self.fail:
             raise RuntimeError("optional worker unavailable")
         return {"status": "searching", "event": None, "detections": [],
@@ -30,6 +36,39 @@ class FakeBus:
 
     def close(self):
         self.closed = True
+
+
+def test_highres_bus_frame_is_separate_from_walking_frame(tmp_path):
+    import cv2
+
+    bus = FakeBus()
+    manager = SessionManager(tmp_path, model_factory=FakeModels, bus_recognizer=bus)
+    with TestClient(create_app(manager)) as client:
+        started = client.post("/api/sessions", json={"device_name": "Phone", "bus_highres": True})
+        started.raise_for_status()
+        session_id = started.json()["session_id"]
+        assert bus.prewarms == 1
+        ok, walking_jpeg = cv2.imencode(".jpg", np.zeros((80, 100, 3), np.uint8))
+        assert ok
+        ok, bus_jpeg = cv2.imencode(".jpg", np.zeros((160, 200, 3), np.uint8))
+        assert ok
+        url = f"/api/sessions/{session_id}/frames"
+        result = client.post(url, data={"frame_id": 1, "captured_at_ms": 1000,
+                                         "bus_captured_at_ms": 1010}, files={
+            "image": ("walk.jpg", walking_jpeg.tobytes(), "image/jpeg"),
+            "bus_image": ("bus.jpg", bus_jpeg.tobytes(), "image/jpeg"),
+        })
+        result.raise_for_status()
+        assert "bus_input" not in result.json()
+        assert bus.frames == [((160, 200), 1, 1010), (None, 1, 1010)]
+        folder = tmp_path / started.json()["date"] / started.json()["folder_name"]
+        assert not (folder / "frames").exists()  # Live bus JPEGs are not written to disk.
+        result = client.post(url, data={"frame_id": 2, "captured_at_ms": 1100}, files={
+            "image": ("walk.jpg", walking_jpeg.tobytes(), "image/jpeg"),
+        })
+        result.raise_for_status()
+        assert bus.frames[-1] == (None, 2, 1100)
+        assert not any(shape == (80, 100) for shape, _, _ in bus.frames)
 
 
 def test_manual_stop_uses_unique_arrival_and_requires_completed_stop():
@@ -96,7 +135,7 @@ def test_reopen_api_preserves_arrival_identity_and_logs_user_confirmation(tmp_pa
         assert result["arrival_event_id"] == arrival_id
         assert result["status"] == "awaiting_stop"
         folder = tmp_path / session["date"] / session["folder_name"]
-        records = [json.loads(line) for line in (folder / "boarding_events.jsonl").read_text().splitlines()]
+        records = [json.loads(line) for line in (folder / "events.jsonl").read_text().splitlines()]
         assert [record["action"] for record in records] == ["stop_announced", "submit", "reopen"]
         assert [record["arrival_source"] for record in records] == ["visual_proximity", "visual_proximity", "user_confirmed"]
         assert all(record["arrival_event_id"] == arrival_id for record in records)
@@ -216,7 +255,7 @@ def test_bus_event_endpoint_bounds_payload_and_preserves_server_attribution(tmp_
         response = client.post(url, json={"events": [{"type": "gps_poll", "session_id": "spoofed",
                                                       "server_at": "client time", "latitude": 37.5}]})
         assert response.json() == {"saved": 1}
-        path = tmp_path / session["date"] / session["folder_name"] / "bus_events.jsonl"
+        path = tmp_path / session["date"] / session["folder_name"] / "events.jsonl"
         record = json.loads(path.read_text())
         assert record["session_id"] == session["session_id"]
         assert record["server_at"] != "client time"

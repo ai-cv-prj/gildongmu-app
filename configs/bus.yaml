@@ -6,7 +6,7 @@ models:
   parseq_source: weights/bus/parseq-src
 
 recognition:
-  interval_ms: 500
+  interval_ms: 300
   max_result_age_ms: 3000
 
 arrivals:

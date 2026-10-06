@@ -6,7 +6,8 @@
   let sessionId = null, running = false, starting = false, stopping = false, paused = false;
   let automaticPause = false, generation = 0, presentation = 0, cameraLost = false;
   let frameId = 0, timer, tick, request, frameTask;
-  let boardingState = null, activeRoute = null, draftRoute = "", lastResult = null;
+  let boardingState = null, activeRoute = null, draftRoute = "", draftEventId = null, lastResult = null;
+  let lastBusCaptureAtMs = null, lastBusResultLoggedFrameId = null;
   let timingQueue = [], eventQueue = [], flushTask = null, logTimer;
   const MAX_CLIPS = 5, MAX_CLIP_MS = 30000, MAX_CLIP_FRAMES = 300;
   const MAX_CLIP_FRAME_BYTES = 32 * 1024 * 1024, MAX_PENDING_BYTES = 120 * 1024 * 1024;
@@ -231,20 +232,30 @@
       status("143, N26, 마포07처럼 노선 번호를 입력해 주세요.");
       view.announce("버스 번호 형식을 확인해 주세요."); return;
     }
-    draftRoute = route; view.setRoute(route); view.show("confirm"); speak(`${route}번이 맞습니까?`);
+    draftRoute = route; draftEventId = boardingState?.arrival_event_id ?? null;
+    view.setRoute(route); view.show("confirm"); speak(`${route}번이 맞습니까?`);
   }
+  const obstaclesEnabled = state => !["awaiting_stop", "pending", "submitted"].includes(state?.status);
   function boardingChanged(next) {
     const previous = boardingState; boardingState = next;
+    view.setObstacleDetection(obstaclesEnabled(next));
     if (!running || !next) return controls();
+    if (obstaclesEnabled(previous) !== obstaclesEnabled(next)) {
+      if (!obstaclesEnabled(next)) { walking.stop(); GOverlay.clear(); }
+      else if (!paused && !document.hidden) walking.start(sessionId, false, "walking");
+    }
     if (next.status === "submitted") {
       const route = normalizeRoute(next.bus_number);
       if (route !== activeRoute) {
+        lastBusCaptureAtMs = null;
         activeRoute = route; view.setRoute(route); view.show("search"); journey.start(route);
         if (paused) journey.pause();
       }
     } else {
-      if (activeRoute) { journey.stop(); activeRoute = null; }
+      if (activeRoute) { journey.stop(); activeRoute = null; lastBusCaptureAtMs = null; }
       if (next.status === "pending" && previous?.status !== "pending") {
+        // 새 정류장 도착에서는 이전 도착 때 입력한 번호를 지우고, 노선 변경(reopen)에서만 이어서 보여 준다.
+        if (next.arrival_event_id !== draftEventId) { draftRoute = ""; draftEventId = null; }
         view.setRoute(draftRoute); view.show("input");
       } else if (next.status === "awaiting_stop") status("멈춤 안내가 끝나면 탑승할 버스 번호를 입력해 주세요.");
       else if (next.status === "cancelled" && previous?.status !== "cancelled") {
@@ -257,12 +268,15 @@
     if (!running || !activeRoute || snapshot.route !== activeRoute) return;
     const selected = snapshot.gps?.selected, arrival = selected?.arrival;
     const valid = ["ready", "tracking", "active"].includes(snapshot.gps?.status);
+    const arrivalUnavailable = ["unavailable", "error", "denied"].includes(snapshot.gps?.status);
     const state = valid && arrival?.first_arrival_state === "arrived" ? "arrived"
       : valid && ["approaching", "arriving"].includes(arrival?.first_arrival_state) ? "approach" : "search";
-    view.setBus({ route: activeRoute, station: selected?.station?.station_name || "정류장 확인 중",
-      arrivalText: arrival?.first_arrival || "도착정보 확인 중", status: state,
+    view.setBus({ route: activeRoute, station: selected?.station?.station_name || (arrivalUnavailable ? "정류장 정보 없음" : "정류장 확인 중"),
+      arrivalText: arrival?.first_arrival || (arrivalUnavailable ? "도착정보 이용 불가" : "도착정보 확인 중"), status: state,
       gpsMessage: snapshot.gps?.message || "현재 위치를 확인하고 있습니다.",
-      ocrMessage: snapshot.ocr?.message || "카메라에서 버스 번호를 찾고 있습니다.", message: snapshot.gps?.message || "" });
+      ocrMessage: snapshot.ocr?.message || "카메라에서 버스 번호를 찾고 있습니다.",
+      ocrStatus: snapshot.ocr?.status || "searching", ocrCapturedAt: snapshot.ocr?.capturedAt ?? null,
+      message: snapshot.gps?.message || "" });
     view.setStations((snapshot.gps?.candidates || []).map(match => ({ id: match.key,
       name: match.station?.station_name, distance_m: match.station?.distance_m,
       direction: match.arrival?.direction || match.direction })), selected?.key);
@@ -270,6 +284,11 @@
     view.setPaused(paused);
   }
   function showResult(result, capturedAt) {
+    // Apply revision-checked boarding first; an old in-flight frame must not
+    // restore obstacle warnings after the user manually confirms arrival.
+    boarding.accept(result, capturedAt);
+    if (!obstaclesEnabled(boardingState)) result = { ...result,
+      walking: { ...result.walking, detections: [], event: { enabled: false } } };
     lastResult = result;
     GOverlay.render(result, state => queueTiming({ kind: "overlay", frame_id: result.frame_id,
       captured_at_ms: result.captured_at_ms, status: state,
@@ -278,13 +297,12 @@
     $("stop-proximity-status").textContent = result.stop_proximity?.nearby ? "카메라에서 정류장 근접 추정" : "정류장 근접 관측 없음";
     coordinator.acceptCrosswalk(result.crosswalk?.event, capturedAt);
     coordinator.acceptWalkingSurface(result.walking_surface?.event, capturedAt);
-    walking.accept({ session_id: result.session_id, frame_id: result.frame_id,
+    if (obstaclesEnabled(boardingState)) walking.accept({ session_id: result.session_id, frame_id: result.frame_id,
       captured_at_ms: result.captured_at_ms, detections: result.walking.detections, event: result.walking.event,
       crossing_active: result.crosswalk?.event?.crossing_active === true,
       crosswalk_status: result.crosswalk?.event?.status }, capturedAt);
     traffic.accept({ session_id: result.session_id, frame_id: result.frame_id,
       detections: result.traffic.detections, event: result.traffic.event }, capturedAt);
-    boarding.accept(result, capturedAt);
     if (activeRoute) journey.accept(result.bus, result.bus?.captured_at_ms ?? result.captured_at_ms);
     view.render(result);
   }
@@ -304,20 +322,65 @@
         if (!blob || !running || paused || version !== generation || shownVersion !== presentation) return;
         const encodedAt = performance.now(), capturedAt = started;
         const capturedAtMs = Math.round(performance.timeOrigin + capturedAt);
+        const cameraLongSide = Math.max(GCamera.video?.videoWidth || 0, GCamera.video?.videoHeight || 0);
+        let busBlob = null, busCapturedAtMs = null, busCaptureMs = null, busCaptureGapMs = null;
+        let busLongSide = null, busCaptureError = null;
+        const routeForFrame = activeRoute;
+        if (routeForFrame && (lastBusCaptureAtMs === null ||
+            capturedAtMs - lastBusCaptureAtMs >= settings.camera.bus_capture_interval_ms)) {
+          const busStarted = performance.now();
+          busCapturedAtMs = Math.round(performance.timeOrigin + busStarted);
+          try {
+            busBlob = await GCamera.capture(settings.camera.bus_capture_max_side,
+              settings.camera.bus_jpeg_quality);
+            if (!running || paused || version !== generation || shownVersion !== presentation ||
+                activeRoute !== routeForFrame) return;
+            if (busBlob) {
+              busCaptureMs = Math.round(performance.now() - busStarted);
+              busCaptureGapMs = lastBusCaptureAtMs === null ? null : busCapturedAtMs - lastBusCaptureAtMs;
+              lastBusCaptureAtMs = busCapturedAtMs;
+              busLongSide = cameraLongSide ? Math.min(settings.camera.bus_capture_max_side,
+                cameraLongSide) : null;
+            } else busCaptureError = "empty_frame";
+          } catch (error) {
+            busCaptureError = String(error?.name || "capture_error").slice(0, 80);
+            console.warn("버스 프레임 캡처 실패:", error);
+          }
+        }
         request = new AbortController();
         const sentAt = performance.now();
         if (selectedClip && capturedAtMs >= selectedClip.started_at_ms) {
           selectedClip.last_sent_at_ms = clipClock();
         }
-        const result = await GApi.frame(id, frameId + 1, capturedAtMs, blob, request.signal);
+        const result = await GApi.frame(id, frameId + 1, capturedAtMs, blob, request.signal,
+          busBlob, busCapturedAtMs);
         bufferClipFrame(selectedClip, result.frame_id, capturedAtMs, blob, result.walking?.mask_png);
         if (!running || version !== generation) return;
         frameId = result.frame_id; // Even an in-flight paused request advances the server sequence.
         const returnedAt = performance.now();
         if (!paused && !document.hidden && shownVersion === presentation) showResult(result, capturedAt);
+        const busTiming = {};
+        if (busBlob) {
+          busTiming.bus_capture_ms = busCaptureMs;
+          busTiming.bus_jpeg_bytes = busBlob.size;
+          if (busCaptureGapMs !== null) busTiming.bus_capture_gap_ms = busCaptureGapMs;
+          if (busLongSide !== null) busTiming.bus_long_side = busLongSide;
+          if (cameraLongSide) busTiming.camera_long_side = cameraLongSide;
+        }
+        if (busCaptureError) busTiming.bus_capture_error = busCaptureError;
+        const busSourceFrameId = result.bus?.frame_id;
+        if (Number.isInteger(busSourceFrameId) &&
+            Number.isFinite(result.bus?.captured_at_ms) &&
+            busSourceFrameId !== lastBusResultLoggedFrameId) {
+          lastBusResultLoggedFrameId = busSourceFrameId;
+          busTiming.bus_result_frame_id = busSourceFrameId;
+          busTiming.bus_result_age_ms = Math.max(0,
+            Math.round(performance.timeOrigin + returnedAt - result.bus.captured_at_ms));
+        }
         queueTiming({ kind: "frame", frame_id: frameId, captured_at_ms: capturedAtMs,
           capture_ms: Math.round(encodedAt - started), round_trip_ms: Math.round(returnedAt - sentAt),
           result_ms: Math.round(performance.now() - capturedAt),
+          ...busTiming,
           recording_active: Boolean(selectedClip && capturedAtMs >= selectedClip.started_at_ms &&
             (selectedClip.ended_at_ms === null || capturedAtMs < selectedClip.ended_at_ms)) });
       } catch (error) {
@@ -346,16 +409,22 @@
       if (version !== generation) return;
       $("camera").style.aspectRatio = `${info.width} / ${info.height}`;
       GOverlay.size(info.width, info.height); GRecorder.startPreview(); $("placeholder").hidden = true;
-      const created = await GApi.start(device, $("note").value.trim());
+      const created = await GApi.start(device, $("note").value.trim(), true);
       if (version !== generation) { await GApi.stop(created.session_id); return; }
       sessionId = created.session_id; running = true; paused = false; cameraLost = false; frameId = 0;
-      activeRoute = null; draftRoute = ""; lastResult = null; timingQueue = []; eventQueue = [];
+      activeRoute = null; lastBusCaptureAtMs = null; lastBusResultLoggedFrameId = null;
+      draftRoute = ""; draftEventId = null; lastResult = null;
+      timingQueue = []; eventQueue = [];
       clips = []; activeClip = null; bufferedBytes = 0; clearClipTimers();
       walking.start(sessionId, false, "walking"); traffic.start(sessionId, false, "traffic"); boarding.start(sessionId);
       tick = setInterval(() => {
         if (!paused && !document.hidden) { walking.tick(); traffic.tick(); boarding.tick(); coordinator.tick(); }
       }, settings.audio.tick_ms);
-      logTimer = setInterval(() => { void flushLogs(); }, 5000);
+      logTimer = setInterval(() => {
+        void flushLogs();
+        // 일시중지 중에도 페이지가 살아 있음을 알려 강제 종료된 세션과 구분한다.
+        if (sessionId) GApi.heartbeat(sessionId).catch(() => {});
+      }, 5000);
       view.setPaused(false); status("보행 안내를 시작했습니다. 정류장에 도착하면 버튼을 눌러 주세요."); scheduleFrame();
     } catch (error) {
       if (version !== generation) return;
@@ -386,7 +455,8 @@
     if (!GCamera.active()) return status("카메라가 종료되었습니다. 종료 후 다시 시작해 주세요.");
     presentation++; lastResult = null; view.render(null);
     paused = false; GCamera.resume(); GRecorder.resume(); player.recordingStream(); coordinator.start();
-    walking.start(sessionId, false, "walking"); traffic.start(sessionId, false, "traffic"); boarding.resume(); journey.resume();
+    if (obstaclesEnabled(boardingState)) walking.start(sessionId, false, "walking");
+    traffic.start(sessionId, false, "traffic"); boarding.resume(); journey.resume();
     view.setPaused(false); controls(); status("새 위치와 카메라 영상으로 안내를 재개합니다."); scheduleFrame();
   }
   async function stopTest({ finish = false } = {}) {
@@ -428,7 +498,8 @@
       } catch (error) { message = `세션 종료 확인이 필요합니다: ${error.message}`; }
       if (!pendingUploads.length && !pendingStopSessionId) uploadSessionId = null;
     }
-    sessionId = null; activeRoute = null; lastResult = null; stopping = false;
+    sessionId = null; activeRoute = null; lastBusCaptureAtMs = null;
+    lastBusResultLoggedFrameId = null; lastResult = null; stopping = false;
     view.setRoute(""); view.show(finish && id ? "finish" : "home"); view.setPaused(false); controls(); status(message);
     if (pendingUploads.length && !pendingStopSessionId) await uploadQueuedClips();
     else if (pendingStopSessionId) status(`${message} '영상 전송 다시 시도'로 종료 확인을 재시도할 수 있습니다.`);
@@ -447,7 +518,8 @@
     if (!running || starting || stopping) return;
     if (action === "record") return activeClip ? finishClip() : startClip();
     if (action === "pause") { automaticPause = false; return paused ? resumeTest() : pauseTest(); }
-    if (paused) return;
+    // 이전은 일시중지 중에도 화면을 벗어날 수 있어야 한다.
+    if (paused && action !== "back") return;
     if (action === "manual-arrival") {
       if (lastResult?.crosswalk?.event?.crossing_active && Date.now() - lastResult.captured_at_ms < 1500)
         return status("횡단 중에는 보행 안내를 계속합니다. 정류장에 멈춘 뒤 눌러 주세요.");
@@ -460,7 +532,12 @@
       else { view.setRoute(draftRoute); view.show("input"); }
     } else if (action === "back") {
       if (view.getScreen() === "confirm") { view.show("input"); return; }
-      if (activeRoute) { await boarding.reopen(); return; }
+      if (activeRoute) {
+        // 노선 입력 화면의 확인은 일시중지 중에 막히므로 안내를 재개한 뒤 다시 연다.
+        if (paused) await resumeTest();
+        if (!paused) await boarding.reopen();
+        return;
+      }
       if (["pending", "awaiting_stop"].includes(boardingState?.status)) await boarding.cancel();
       else await stopTest();
     } else if (action === "locate" && activeRoute) journey.start(activeRoute);

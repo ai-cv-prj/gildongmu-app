@@ -57,6 +57,7 @@ class RealtimeInference:
         """위험·음성·신호등 추적 기록을 새 세션 기준으로 비운다."""
         self.risk = RiskEngine(self.risk_settings, self.tracking_settings)
         self.voice = WalkingVoice()
+        self._obstacles_suspended = False
         self.stop_proximity = StopProximity(self.stop_proximity_settings)
         self.boarding = Boarding()
         self.crosswalk = CrosswalkSafetyEngine(self.crosswalk_settings)
@@ -67,25 +68,35 @@ class RealtimeInference:
     def predict(self, frame, frame_id, captured_at_ms):
         """원본 BGR 프레임에서 각 모델 결과와 처리 시간을 반환한다."""
         started = perf_counter()
-        detections = self.detector.predict(frame)
+        at_stop = self.boarding.at_stop
+        if not at_stop and self._obstacles_suspended:
+            self.risk.reset()
+            self.voice = WalkingVoice()
+        self._obstacles_suspended = at_stop
         class_map = self.segmenter.predict(frame)
         height, width = frame.shape[:2]
-        risk = self.risk.update(frame, detections, captured_at_ms / 1000,
-                                True, class_map, self.segmenter.label_ids,
-                                suppress_stop_hazard=self.boarding.stationary)
-        camera_view = risk.get("camera_view") or {}
-        risk["stop_proximity"] = self.stop_proximity.update(
-            risk["detections"], frame.shape, captured_at_ms / 1000,
-            camera_view=camera_view.get("status", "clear"),
-            state_reset=risk.get("state_reset", False),
-        )
-        self.risk.add_sidewalk_context(risk, class_map, self.segmenter.label_ids, frame.shape)
+        if at_stop:
+            risk = self.stopped_risk()
+            risk["stop_proximity"] = {"status": "suspended", "nearby": False}
+        else:
+            detections = self.detector.predict(frame)
+            risk = self.risk.update(frame, detections, captured_at_ms / 1000,
+                                    True, class_map, self.segmenter.label_ids)
+            risk["enabled"] = True
+            camera_view = risk.get("camera_view") or {}
+            risk["stop_proximity"] = self.stop_proximity.update(
+                risk["detections"], frame.shape, captured_at_ms / 1000,
+                camera_view=camera_view.get("status", "clear"),
+                state_reset=risk.get("state_reset", False),
+            )
+            self.risk.add_sidewalk_context(risk, class_map, self.segmenter.label_ids, frame.shape)
         signal = self.traffic.predict(frame, frame_id=frame_id,
                                       captured_at_ms=captured_at_ms)
-        suppress_non_green_crosswalk_voice(
-            risk, signal, class_map, self.segmenter.label_ids, frame.shape,
-            self.crosswalk_settings,
-        )
+        if not at_stop:
+            suppress_non_green_crosswalk_voice(
+                risk, signal, class_map, self.segmenter.label_ids, frame.shape,
+                self.crosswalk_settings,
+            )
         camera_stable = crosswalk_camera_stable(risk)
         crosswalk = self.crosswalk.update(
             class_map, self.segmenter.label_ids, frame.shape, signal,
@@ -98,14 +109,28 @@ class RealtimeInference:
         )
         risk["boarding"] = self.boarding.observe(
             risk["stop_proximity"], crossing_active=crosswalk["crossing_active"])
-        self.voice.observe(
-            risk, width, captured_at_ms / 1000,
-            crossing_active=crosswalk["crossing_active"],
-            signal=signal,
-            crosswalk_status=crosswalk["status"],
-        )
+        if self.boarding.at_stop:
+            # Clear even the frame that first confirms arrival, before publishing it.
+            risk = {**self.stopped_risk(), "stop_proximity": risk["stop_proximity"],
+                    "boarding": risk["boarding"]}
+            self._obstacles_suspended = True
+        else:
+            self.voice.observe(
+                risk, width, captured_at_ms / 1000,
+                crossing_active=crosswalk["crossing_active"],
+                signal=signal,
+                crosswalk_status=crosswalk["status"],
+            )
         # 영상 출력과 마찬가지로 일반 장애물 모델의 신호등 박스는 중복 표시하지 않는다.
         risk["detections"] = [item for item in risk["detections"]
                               if item.get("class_name") != "traffic_light"]
         return (risk, signal, crosswalk, walking_surface, class_map, self.segmenter.label_ids,
                 round((perf_counter() - started) * 1000))
+
+    @staticmethod
+    def stopped_risk():
+        """No obstacle boxes, remembered hazards or walking voice at a bus stop."""
+        return {"enabled": False, "detections": [], "level": "safe", "warning_text": "",
+                "roi": {}, "camera_view": {"status": "clear"}, "last_action": None,
+                "voice_action": None, "voice_text": None, "voice_event": None,
+                "voice_clear": True}

@@ -113,7 +113,7 @@ select { text-overflow: ellipsis; }
 .guidance-card p, .pause-card p { margin-top: 13px; color: #282828; }
 .guidance-card[data-tone="signal"] .cue-icon { background: #fcece8; color: #952e24; }
 .guidance-card[data-tone="approach"] .cue-icon { background: #e8f2ff; color: #214a75; }
-.guidance-card[data-tone="arrived"] .cue-icon { background: #edf6e6; color: #355723; }
+.guidance-card[data-tone="arrived"] .cue-icon, .guidance-card[data-tone="recognized"] .cue-icon { background: #edf6e6; color: #355723; }
 .pause-card .cue-icon { margin-bottom: 18px; }
 .camera { position: relative; width: 100%; aspect-ratio: 4 / 3; min-height: 180px; background: #171813; border-radius: 24px; overflow: hidden; margin: 18px 0; }
 .camera video, .camera canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }

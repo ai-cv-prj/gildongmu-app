@@ -59,6 +59,7 @@ def make_response(session_id, frame_id, captured_at_ms, frame, risk, signal, cro
             "detections": normalize_detections(risk["detections"], width, height),
             "event": {
                 "type": "walking_warning", "level": risk["level"],
+                "enabled": risk.get("enabled", True),
                 "warning_text": risk["warning_text"], "roi": risk["roi"],
                 "camera_view": risk["camera_view"],
                 "stationarity": risk.get("stationarity"),

@@ -20,7 +20,7 @@ from pydantic import ValidationError
 
 from backend.app import ClientTimingRequest, RecordingEventRequest, create_app
 from backend.response import normalize_detections
-from backend.session import SessionManager
+from backend.session import SessionError, SessionManager
 from src.video_audio import ffmpeg_executable
 from src.settings import load_app_config, load_paths
 
@@ -109,13 +109,36 @@ def test_session_response_contains_crosswalk_event(tmp_path):
     logged = json.loads((folder / "results.jsonl").read_text(encoding="utf-8"))
     assert logged["crosswalk"]["event"]["event_id"] == 4
     assert logged["walking_surface"]["event"]["event_id"] == 1
-    assert logged["frame_file"] == "frames/000001.jpg"
+    assert logged["frame_file"] is None
     assert logged["risk_diagnostics"][0]["track_id"] == 12
     assert logged["server_timing"]["processing_ms"] >= 0
     assert result["frame_file"] == logged["frame_file"]
-    saved = folder / logged["frame_file"]
-    assert saved.is_file()
-    assert cv2.imread(str(saved)).shape == frame.shape
+    assert not (folder / "frames").exists()
+
+
+def test_new_start_replaces_only_stale_session(tmp_path, monkeypatch):
+    """브라우저를 강제로 닫아 응답이 끊긴 세션만 새 시작 요청이 정리한다."""
+    clock = [1000.0]
+    monkeypatch.setattr("backend.session.time.monotonic", lambda: clock[0])
+    manager = SessionManager(tmp_path, model_factory=FakeModels,
+                             session_settings={**load_app_config()["session"], "stale_after_s": 30})
+    first = manager.start("Phone")
+    clock[0] += 25
+    manager.heartbeat(first["session_id"])
+    clock[0] += 25
+    with pytest.raises(SessionError, match="이미 진행 중"):
+        manager.start("Phone")
+    clock[0] += 10
+    second = manager.start("Phone")
+    assert second["session_id"] != first["session_id"]
+    summary = manager.stop(first["session_id"])
+    assert summary["session_id"] == first["session_id"]
+    assert "ended_at" in summary
+    folder = tmp_path / first["date"] / first["folder_name"]
+    assert "last_seen" not in json.loads((folder / "session.json").read_text(encoding="utf-8"))
+    with pytest.raises(SessionError):
+        manager.heartbeat(first["session_id"])
+    manager.stop(second["session_id"])
 
 
 def test_client_timing_is_saved_with_frame_and_audio_events(tmp_path):
@@ -138,11 +161,12 @@ def test_client_timing_is_saved_with_frame_and_audio_events(tmp_path):
     with pytest.raises(ValidationError):
         ClientTimingRequest(records=[{**records[0], "round_trip_ms": -1}])
     folder = tmp_path / session["date"] / session["folder_name"]
-    saved = [json.loads(line) for line in (folder / "client_timing.jsonl").read_text().splitlines()]
+    saved = [json.loads(line) for line in (folder / "events.jsonl").read_text().splitlines()]
     assert saved[0]["round_trip_ms"] == 140
     assert saved[1]["overlay_delay_ms"] == 152
     assert saved[2]["audio_delay_ms"] == 190
     assert saved[2]["action"] == "straight"
+    assert all(record["event_group"] == "client_timing" for record in saved)
     manager.stop(session_id)
     with pytest.raises(HTTPException) as error:
         route(session_id, ClientTimingRequest(records=records))
@@ -221,7 +245,7 @@ def test_mobile_session_flow(tmp_path, recording_fps):
     assert (folder / "camera_overlay.mp4").is_file()
     assert (folder / "camera.mp4").is_file()
     events = [json.loads(line) for line in
-              (folder / "recording_events.jsonl").read_text(encoding="utf-8").splitlines()]
+              (folder / "events.jsonl").read_text(encoding="utf-8").splitlines()]
     assert [(event["kind"], event["status"], event["source"]) for event in events] == [
         ("overlay", "saved", "server"), ("camera", "saved", "server")]
     for name in ("camera.mp4", "camera_overlay.mp4"):
@@ -356,7 +380,7 @@ def test_recording_failures_are_logged(tmp_path):
     assert saved["saved"] is True
 
     events = [json.loads(line) for line in
-              (folder / "recording_events.jsonl").read_text(encoding="utf-8").splitlines()]
+              (folder / "events.jsonl").read_text(encoding="utf-8").splitlines()]
     assert [(event["kind"], event["status"], event["source"]) for event in events] == [
         ("overlay", "empty", "browser"), ("camera", "empty", "server"),
         ("overlay", "failed", "server"), ("camera", "saved", "server")]
