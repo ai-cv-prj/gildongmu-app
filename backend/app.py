@@ -12,7 +12,7 @@ import logging
 import subprocess
 import threading
 import time
-from typing import Literal
+from typing import Annotated, Literal
 
 import cv2
 import numpy as np
@@ -45,6 +45,7 @@ class StartRequest(BaseModel):
 
     device_name: str = Field(min_length=1, max_length=80)
     note: str = Field(default="", max_length=500)
+    bus_highres: bool = False
 
 
 class StopRequest(BaseModel):
@@ -73,6 +74,14 @@ class ClientTimingRecord(BaseModel):
     captured_at_ms: int = Field(gt=0)
     occurred_at_ms: int | None = Field(default=None, gt=0)
     capture_ms: float | None = Field(default=None, ge=0)
+    bus_capture_ms: float | None = Field(default=None, ge=0)
+    bus_capture_error: str | None = Field(default=None, max_length=80)
+    bus_capture_gap_ms: float | None = Field(default=None, ge=0)
+    bus_result_frame_id: int | None = Field(default=None, ge=1)
+    bus_result_age_ms: float | None = Field(default=None, ge=0)
+    bus_jpeg_bytes: int | None = Field(default=None, ge=0)
+    bus_long_side: int | None = Field(default=None, ge=0)
+    camera_long_side: int | None = Field(default=None, ge=0)
     round_trip_ms: float | None = Field(default=None, ge=0)
     result_ms: float | None = Field(default=None, ge=0)
     overlay_delay_ms: float | None = Field(default=None, ge=0)
@@ -224,7 +233,8 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
             with clip_store.lock:
                 if export_busy():
                     raise SessionError("선택 영상 변환이 끝나면 새 테스트를 시작할 수 있습니다.")
-                created = sessions.start(request.device_name.strip(), request.note.strip())
+                created = sessions.start(request.device_name.strip(), request.note.strip(),
+                                         bus_highres=request.bus_highres)
             log.info("session started id=%s", created["session_id"])
             return created
         except SessionError as error:
@@ -234,7 +244,9 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
     # JPEG 한 프레임 추론
     @app.post("/api/sessions/{session_id}/frames")
     def frame(session_id: str, frame_id: int = Form(...), captured_at_ms: int = Form(...),
-              image: UploadFile = File(...)):
+              image: UploadFile = File(...),
+              bus_image: Annotated[UploadFile | None, File()] = None,
+              bus_captured_at_ms: Annotated[int | None, Form()] = None):
         """휴대폰 JPEG를 디코딩하고 도보와 신호를 함께 추론한다."""
         request_start_ns = time.perf_counter_ns()
         if frame_id < 1 or captured_at_ms <= 0:
@@ -246,11 +258,26 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
         minimum, maximum = upload["min_frame_side"], upload["max_frame_side"]
         if decoded is None or not minimum <= decoded.shape[0] <= maximum or not minimum <= decoded.shape[1] <= maximum:
             raise HTTPException(422, "읽을 수 있는 카메라 JPEG가 아닙니다.")
+        if (bus_image is None) != (bus_captured_at_ms is None):
+            raise HTTPException(422, "버스 프레임과 촬영 시간을 함께 보내세요.")
+        bus_content = None
+        bus_decoded = None
+        if bus_image is not None:
+            if not captured_at_ms <= bus_captured_at_ms <= captured_at_ms + 2000:
+                raise HTTPException(422, "버스 프레임 촬영 시간이 올바르지 않습니다.")
+            bus_content = bus_image.file.read(upload["max_jpeg_bytes"] + 1)
+            if not bus_content or len(bus_content) > upload["max_jpeg_bytes"]:
+                raise HTTPException(413, "버스 JPEG 크기가 허용 범위를 벗어났습니다.")
+            bus_decoded = cv2.imdecode(np.frombuffer(bus_content, dtype=np.uint8), cv2.IMREAD_COLOR)
+            if (bus_decoded is None or not minimum <= bus_decoded.shape[0] <= maximum
+                    or not minimum <= bus_decoded.shape[1] <= maximum):
+                raise HTTPException(422, "읽을 수 있는 버스 JPEG가 아닙니다.")
         try:
             return sessions.process(session_id, frame_id, captured_at_ms, decoded,
                                     request_start_ns=request_start_ns,
                                     decode_ms=round((time.perf_counter_ns()-request_start_ns)/1e6, 1),
-                                    image_bytes=content, save_live_frame=False)
+                                    image_bytes=content, save_live_frame=False,
+                                    bus_frame=bus_decoded, bus_captured_at_ms=bus_captured_at_ms)
         except SessionError as error:
             log.warning("frame rejected session=%s frame=%d: %s", session_id, frame_id, error)
             raise HTTPException(409, str(error)) from error

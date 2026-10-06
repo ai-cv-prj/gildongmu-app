@@ -64,6 +64,84 @@ def wait_result(recognizer, frame_id):
             and recognizer._latest["frame_id"] == frame_id, timeout=3)
 
 
+def test_prewarm_loads_without_ocr_and_target_can_arrive_during_load(ready_config):
+    loading = threading.Event()
+    finish_loading = threading.Event()
+
+    class LoadingPipeline(Pipeline):
+        def load(self):
+            super().load()
+            loading.set()
+            assert finish_loading.wait(3)
+
+    pipeline = LoadingPipeline()
+    worker = BusRecognizer(ready_config, lambda: pipeline)
+    frame = np.zeros((12, 12, 3), dtype=np.uint8)
+    try:
+        worker.prewarm()
+        assert loading.wait(3)
+        assert pipeline.calls == []
+        worker.set_target("first", "701")
+        worker.observe("first", frame, 1, 1000)
+        finish_loading.set()
+        wait_result(worker, 1)
+        assert pipeline.loads == 1
+        assert pipeline.reset == [("first", "701")]
+        assert [call[0] for call in pipeline.calls] == [1]
+        worker.set_target(None, None)
+        worker.prewarm()  # A loaded pipeline is reused without another GPU load.
+        assert pipeline.loads == 1
+    finally:
+        finish_loading.set()
+        worker.close()
+
+
+def test_missing_arrival_key_keeps_submitted_route_and_ocr_worker(ready_config, tmp_path, monkeypatch):
+    """An arrival API 503 must not disable OCR before or after number confirmation."""
+    import cv2
+    from fastapi.testclient import TestClient
+    from backend.app import create_app
+    from backend.session import SessionManager
+    from test_realtime_app import FakeModels
+
+    monkeypatch.setenv("SEOUL_BUS_API_KEY", "")
+    pipeline = Pipeline()
+    worker = BusRecognizer(ready_config, lambda: pipeline)
+    manager = SessionManager(tmp_path / "sessions", model_factory=FakeModels, bus_recognizer=worker)
+    with TestClient(create_app(manager, bus_config=ready_config)) as client:
+        readiness = client.get("/api/bus/status").json()
+        assert readiness["arrival_ready"] is False
+        assert readiness["recognition_ready"] is True
+        session_id = client.post("/api/sessions", json={"device_name": "Phone"}).json()["session_id"]
+        boarding_url = f"/api/sessions/{session_id}/boarding"
+        arrival = client.put(boarding_url, json={"action": "arrive"}).json()
+        arrival_id = arrival["arrival_event_id"]
+        client.put(boarding_url, json={"action": "stop_announced", "arrival_event_id": arrival_id}).raise_for_status()
+        client.put(boarding_url, json={"action": "submit", "arrival_event_id": arrival_id,
+                                       "bus_number": "143"}).raise_for_status()
+        params = {"bus_number": "143", "latitude": 37.5, "longitude": 127.0, "accuracy_m": 8}
+        response = client.get("/api/nearby-bus-arrival", params=params)
+        assert response.status_code == 503
+        assert response.json()["error"]["code"] == "bus_api_unconfigured"
+        ok, jpeg = cv2.imencode(".jpg", np.zeros((80, 100, 3), np.uint8))
+        assert ok
+        frame_url = f"/api/sessions/{session_id}/frames"
+        for frame_id, captured_at_ms in [(1, 1000), (2, 1050)]:
+            response = client.post(frame_url, data={"frame_id": frame_id, "captured_at_ms": captured_at_ms},
+                                   files={"image": ("frame.jpg", jpeg.tobytes(), "image/jpeg")})
+            response.raise_for_status()
+            if frame_id == 1:
+                wait_result(worker, 1)
+                assert client.get("/api/nearby-bus-arrival", params=params).status_code == 503
+        result = response.json()
+        assert result["boarding"]["status"] == "submitted"
+        assert result["boarding"]["bus_number"] == "143"
+        assert result["bus"]["status"] == "matched"
+        assert result["bus"]["event"]["matches"][0]["route_number"] == "143"
+        assert result["walking"]["detections"]
+        assert pipeline.route == "143"
+
+
 def test_worker_keeps_newest_frame_and_preserves_ocr_source_time(ready_config):
     pipeline = Pipeline(block=True)
     worker = BusRecognizer(ready_config, lambda: pipeline)

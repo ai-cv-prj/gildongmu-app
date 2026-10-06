@@ -88,7 +88,8 @@
           || now() < capturedAt || now() - capturedAt >= 1500) return;
       resultAt = capturedAt;
       frameMetadata = { frame_id: result.frame_id, captured_at_ms: result.captured_at_ms };
-      canStop = result.stop_proximity?.nearby === true && !result.crosswalk?.event?.crossing_active;
+      canStop = (result.stop_proximity?.nearby === true || result.boarding?.obstacle_detection_enabled === false)
+        && !result.crosswalk?.event?.crossing_active;
       apply(result.boarding);
       tick();
     }

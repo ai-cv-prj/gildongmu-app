@@ -65,7 +65,7 @@ function harness({ deferred = false, supplemental = false, watch = true } = {}) 
   };
 }
 
-test("GPS 권한 거절 후에도 번호를 안내하며 같은 차량의 확인 단계는 중복 발화하지 않는다", () => {
+test("GPS 권한 거절 후에도 번호를 안내하며 같은 차량의 후보 후 도착을 한 번 안내한다", () => {
   const app = harness();
   app.journey.start("143");
   app.deny();
@@ -78,10 +78,14 @@ test("GPS 권한 거절 후에도 번호를 안내하며 같은 차량의 확인
   app.finish();
   app.detect({ state: "matched_candidate" });
   assert.equal(app.journey.snapshot().ocr.confirmed, true);
-  assert.equal(app.spoken.length, 1);
+  assert.equal(app.spoken.length, 2);
+  assert.equal(app.spoken.at(-1).text, "143번 버스가 도착했습니다.");
+  app.finish();
+  app.detect({ state: "matched_candidate" });
+  assert.equal(app.spoken.length, 2);
   assert.equal(app.journey.snapshot().gps.status, "denied");
   app.detect({ id: 5, state: "matched_candidate" });
-  assert.equal(app.spoken.length, 2);
+  assert.equal(app.spoken.length, 3);
   app.journey.stop();
 });
 
@@ -97,6 +101,95 @@ test("OCR 장애는 GPS 조회와 정류장 도착정보를 중단하지 않는�
   assert.equal(app.journey.snapshot().gps.status, "ready");
   assert.equal(app.watches.size, 1);
   assert.match(app.spoken[0].text, /3분 후/);
+  app.journey.stop();
+});
+
+for (const code of ["bus_api_unconfigured", "bus_api_error", "network_error"]) {
+  test(`도착정보 실패(${code}) 후에도 목표 번호 후보·확정·다시 듣기가 동작한다`, async () => {
+    const app = harness();
+    app.setReply(Object.assign(new Error("도착정보 조회 실패"), { code }));
+    app.journey.start("143");
+    app.locate();
+    await flush();
+    assert.match(app.journey.snapshot().gps.message, /카메라.*계속/);
+    app.detect();
+    assert.equal(app.journey.snapshot().ocr.status, "candidate");
+    assert.match(app.spoken.at(-1).text, /143번으로 보이는/);
+    app.finish();
+    app.detect({ id: 5, state: "matched_candidate" });
+    assert.equal(app.journey.snapshot().ocr.confirmed, true);
+    assert.match(app.spoken.at(-1).text, /143번 버스가 도착했습니다/);
+    assert.equal(app.journey.snapshot().gps.selected, null);
+    app.finish();
+    assert.equal(app.journey.repeat(), true);
+    assert.match(app.spoken.at(-1).text, /143번 버스가 도착했습니다/);
+    app.journey.stop();
+  });
+}
+
+for (const [code, message] of [
+  ["bus_api_unconfigured", /인증키가 설정되지/],
+  ["bus_api_auth_failed", /인증에 실패/],
+  ["bus_api_unreachable", /API에 연결하지/],
+  ["bus_api_error", /API가 오류를 반환/],
+  ["bus_api_http_error", /API 요청에 실패/],
+  ["bus_api_invalid_response", /API 응답을 읽지/],
+]) {
+  test(`도착정보 오류 원인(${code})을 표시하고 원본 오류의 인증키는 표시하지 않는다`, async () => {
+    const app = harness();
+    app.setReply(Object.assign(new Error("upstream-url?serviceKey=private-key"), { code }));
+    app.journey.start("143");
+    app.locate();
+    await flush();
+    assert.match(app.journey.snapshot().gps.message, message);
+    assert.doesNotMatch(app.journey.snapshot().gps.message, /private-key|serviceKey/);
+    app.journey.stop();
+  });
+}
+
+test("API 미설정 시 위치 조회만 멈추고 OCR을 유지하며 재시작하면 도착정보를 재확인한다", async () => {
+  const app = harness({ supplemental: true });
+  app.setReply(Object.assign(new Error("인증키가 설정되지 않았습니다"), { code: "bus_api_unconfigured" }));
+  app.journey.start("143");
+  const oldWatch = [...app.watches.values()][0];
+  app.locate();
+  await flush();
+  assert.equal(app.journey.snapshot().gps.status, "unavailable");
+  assert.equal(app.watches.size, 0);
+  assert.equal(app.intervals.size, 1, "번호 인식의 유효 시간과 음성 처리는 계속한다");
+  const polls = app.polls.length;
+  app.step(25000);
+  oldWatch.success(app.position());
+  app.polls[0].error({ code: 1 });
+  await flush();
+  assert.equal(app.calls.length, 1);
+  assert.equal(app.polls.length, polls);
+  assert.equal(app.journey.snapshot().gps.status, "unavailable");
+  app.detect({ state: "matched_candidate" });
+  assert.equal(app.journey.snapshot().ocr.confirmed, true);
+  app.setReply({ matches: [match()] });
+  app.journey.start("143");
+  app.locate();
+  await flush();
+  assert.equal(app.calls.length, 2);
+  assert.equal(app.journey.snapshot().gps.status, "ready");
+  app.journey.stop();
+});
+
+test("촬영 시각이 없는 OCR 준비·모델 오류도 도착정보 상태와 구분해 표시한다", () => {
+  const app = harness();
+  app.journey.start("143");
+  app.deny();
+  app.journey.accept({ status: "loading", event: null, captured_at_ms: null });
+  assert.equal(app.journey.snapshot().ocr.status, "loading");
+  app.journey.accept({ status: "unavailable", event: null, captured_at_ms: null });
+  assert.equal(app.journey.snapshot().ocr.status, "error");
+  assert.match(app.journey.snapshot().ocr.message, /모델 파일/);
+  app.journey.accept({ status: "error", error: "bus_model_load_failed:RuntimeError", event: null, captured_at_ms: null });
+  assert.match(app.journey.snapshot().ocr.message, /모델.*불러오지/);
+  assert.equal(app.journey.snapshot().gps.status, "denied");
+  app.detect({ state: "matched_candidate" });
+  assert.equal(app.journey.snapshot().ocr.confirmed, true);
   app.journey.stop();
 });
 
@@ -222,19 +315,19 @@ test("같은 차량의 같은 도착 단계는 반복하지 않고 도착 임박
   app.journey.stop();
 });
 
-test("GPS 오차 30m 초과는 조회를 보류하며 API 오류도 20초 갱신 간격을 지킨다", async () => {
+test("GPS 오차 30m 초과는 조회를 보류하며 일시적 API 오류도 20초 갱신 간격을 지킨다", async () => {
   const app = harness();
   app.journey.start("143");
   app.locate({ accuracy: 31 });
   assert.equal(app.calls.length, 0);
   assert.equal(app.journey.snapshot().gps.status, "inaccurate");
-  const error = new Error("서울 버스 API 키가 필요합니다.");
-  error.code = "bus_api_key_missing";
+  const error = new Error("도착정보 서버 응답 오류");
+  error.code = "bus_api_error";
   app.setReply(error);
   app.locate({ accuracy: 30 });
   await flush();
   assert.equal(app.calls.length, 1);
-  assert.match(app.journey.snapshot().gps.message, /API 키/);
+  assert.match(app.journey.snapshot().gps.message, /카메라 번호 인식은 계속/);
   for (let i = 0; i < 19; i++) { app.step(1000); app.locate(); await flush(); }
   assert.equal(app.calls.length, 1);
   app.step(1000);

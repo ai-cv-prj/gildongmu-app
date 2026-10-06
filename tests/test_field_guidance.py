@@ -82,11 +82,13 @@ def test_new_hazard_does_not_repeat_an_unchanged_stop_action():
     assert result["voice_event"]["event_id"] == first
 
 
-def test_input_suppresses_stop_and_prior_memory_but_keeps_other_hazards():
+def stop_model():
     # Exercise the actual realtime orchestration without loading any weights.
     model = RealtimeInference.__new__(RealtimeInference)
     objects = [detection((0, 0, 85, 97), "transit_stop", 20)]
-    model.detector = SimpleNamespace(predict=lambda frame: objects)
+    calls = []
+    model.detector = SimpleNamespace(predict=lambda frame: calls.append(True) or objects)
+    model._obstacles_suspended = False
     model.segmenter = SimpleNamespace(predict=lambda frame: np.ones(frame.shape[:2], np.uint8), label_ids=LABELS)
     model.risk = engine(None, config={**CFG, "camera_view_guard_enabled": False})
     model.stop_proximity = StopProximity()
@@ -98,19 +100,45 @@ def test_input_suppresses_stop_and_prior_memory_but_keeps_other_hazards():
     model.walking_surface = SimpleNamespace(update=lambda *args, **kwargs: {})
     model.traffic = SimpleNamespace(predict=lambda *args, **kwargs: {
         "detections": [], "signal_state": "unknown", "selected_detection_index": None})
+    return model, objects, calls
+
+
+def assert_stopped(risk):
+    assert risk["enabled"] is False
+    assert risk["detections"] == []
+    assert risk["voice_action"] is None
+    assert risk["voice_event"] is None
+    assert risk["roi"] == {}
+    assert risk["boarding"]["obstacle_detection_enabled"] is False
+
+
+def test_automatic_arrival_disables_obstacles_through_input_and_bus_search():
+    model, objects, calls = stop_model()
     for i, ms in enumerate((1000, 1200, 1400), 1):
         risk, *_ = model.predict(FRAME, i, ms)
     assert model.boarding.status == "awaiting_stop"
-    assert risk["detections"][0]["risk_level"] == "danger"
-    model.boarding.act("stop_announced", 1)
-    risk, *_ = model.predict(FRAME, 4, 1600)
-    assert risk["detections"][0]["risk_level"] is None
-    assert risk["voice_action"] is None
-    assert not risk["advisories"]
+    assert_stopped(risk)
+    assert len(calls) == 3
     objects.append(detection((42, 40, 58, 88), "person", 0))
-    risk, *_ = model.predict(FRAME, 5, 1800)
-    assert risk["detections"][1]["alert_level"] == "danger"
-    assert risk["voice_action"] == "stop"
+    for i, action in enumerate((None, "stop_announced", "submit", "reopen"), 4):
+        if action:
+            model.boarding.act(action, 1, "143")
+        risk, *_ = model.predict(FRAME, i, 1000 + i * 200)
+        assert_stopped(risk)
+        assert len(calls) == 3, "Obstacle model must not run at the stop"
+    epoch = model.risk.epoch
     model.boarding.act("cancel", 1)
-    risk, *_ = model.predict(FRAME, 6, 2000)
+    risk, *_ = model.predict(FRAME, 8, 2800)
+    assert risk["enabled"] is True
+    assert len(calls) == 4
+    assert model.risk.epoch > epoch
     assert risk["detections"][0]["risk_level"] == "danger"
+
+
+def test_manual_arrival_disables_obstacles_without_detecting_a_stop():
+    model, objects, calls = stop_model()
+    objects.clear()
+    model.boarding.act("arrive")
+    risk, *_ = model.predict(FRAME, 1, 1000)
+    assert_stopped(risk)
+    assert not calls

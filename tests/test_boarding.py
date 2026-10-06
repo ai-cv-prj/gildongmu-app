@@ -82,7 +82,7 @@ def test_api_validates_session_arrival_and_logs_only_changed_actions(tmp_path):
     assert result["status"] == "cancelled"
     assert not client.get(url).json()["assumed_stationary"]
     folder = tmp_path / session["date"] / session["folder_name"]
-    records = [json.loads(line) for line in (folder / "boarding_events.jsonl").read_text().splitlines()]
+    records = [json.loads(line) for line in (folder / "events.jsonl").read_text().splitlines()]
     assert [record["action"] for record in records] == ["stop_announced", "cancel"]
     client.post("/api/sessions/stop", json={"session_id": session["session_id"]})
     assert client.put(url, json={"action": "cancel", "arrival_event_id": 1}).status_code == 409

@@ -12,6 +12,7 @@
     let active = false, paused = false, route = "", generation = 0;
     let watchId = null, ticker = null, request = null, tracker = null, location = null;
     let positionPoll = null, lastPositionPollAt = -Infinity, locationDenied = false;
+    let arrivalUnavailable = false;
     let lastLookupAt = -Infinity, lastLookupPosition = null, lastOcrAt = -Infinity;
     let observationStartedAt = 0;
     let manualStationKey = null, gps = {}, ocr = {}, arrivalEntry = null;
@@ -66,6 +67,7 @@
       positionPoll = null;
       lastPositionPollAt = -Infinity;
       locationDenied = false;
+      arrivalUnavailable = false;
       tracker = newTracker();
       if (preserveSelection && previous) {
         tracker.announcementStops = previous.announcementStops;
@@ -135,7 +137,10 @@
         dynamic: true, text: item.message, kind: item.key,
         validUntil: monotonicNow() + Math.max(0, item.capturedAt + limits.busDetectionWindowMs - now()),
         metadata: { bus_route: route, track_id: item.track_id, channel: "ocr" },
-        onStart: () => { item.started = true; emit("bus_ocr_speech_started", { text: item.message }); },
+        onStart: () => { item.started = true; emit("bus_ocr_speech_started", {
+          text: item.message, captured_at_ms: item.capturedAt, track_id: item.track_id ?? null,
+          voice_delay_ms: Math.max(0, now() - item.capturedAt),
+        }); },
         onComplete: () => {
           if (!validGeneration(token)) return;
           ocrAnnounced.add(item.key);
@@ -221,7 +226,7 @@
     }
 
     async function lookup() {
-      if (!active || paused || request || !freshLocation()) return;
+      if (!active || paused || arrivalUnavailable || request || !freshLocation()) return;
       const token = generation;
       const sampled = location;
       const controller = new AbortController();
@@ -245,10 +250,26 @@
       } catch (error) {
         if (!validGeneration(token) || controller.signal.aborted || error?.name === "AbortError") return;
         const searching = ["nearby_station_not_found", "bus_route_not_nearby"].includes(error?.code);
+        const unconfigured = error?.code === "bus_api_unconfigured";
         tracker.lastNearbyResult = null;
-        gpsUnavailable(searching ? "searching" : "error", searching
+        if (unconfigured) {
+          // Only arrival lookup needs the API key. Keep the OCR timer and speech alive.
+          arrivalUnavailable = true;
+          if (watchId !== null) geolocation?.clearWatch?.(watchId);
+          watchId = null;
+          positionPoll = null;
+          location = null;
+        }
+        gpsUnavailable(searching ? "searching" : unconfigured ? "unavailable" : "error", searching
           ? `현재 위치 30m 안에서 ${route}번 정류장을 찾고 있습니다.`
-          : `버스 도착정보를 가져오지 못했습니다. ${error?.message || "서버 연결을 확인해 주세요."}`);
+          : `${{
+            bus_api_unconfigured: "서버에 버스 API 인증키가 설정되지 않았습니다.",
+            bus_api_auth_failed: "버스 API 인증에 실패해 도착정보를 사용할 수 없습니다.",
+            bus_api_unreachable: "서울시 버스 API에 연결하지 못해 도착정보를 사용할 수 없습니다.",
+            bus_api_error: "서울시 버스 API가 오류를 반환해 도착정보를 사용할 수 없습니다.",
+            bus_api_http_error: "서울시 버스 API 요청에 실패해 도착정보를 사용할 수 없습니다.",
+            bus_api_invalid_response: "서울시 버스 API 응답을 읽지 못해 도착정보를 사용할 수 없습니다.",
+          }[error?.code] || "도착정보를 사용할 수 없습니다."} 카메라 번호 인식은 계속됩니다.`);
         emit("bus_arrival_error", { code: error?.code || "lookup_failed" });
       } finally {
         if (request === controller) request = null;
@@ -256,7 +277,7 @@
     }
 
     function positionReceived(position, token) {
-      if (!validGeneration(token)) return;
+      if (!validGeneration(token) || arrivalUnavailable) return;
       const coords = position?.coords;
       if (location && Number.isFinite(position?.timestamp) && position.timestamp < location.position.timestamp) return;
       if (!coords || !Number.isFinite(coords.latitude) || Math.abs(coords.latitude) > 90
@@ -282,7 +303,7 @@
     }
 
     function locationFailed(error, token) {
-      if (!validGeneration(token)) return;
+      if (!validGeneration(token) || arrivalUnavailable) return;
       // 보조 조회의 일시적인 실패가 방금 받은 정상 watch 위치를 지우지 않게 한다.
       if (error?.code !== 1 && freshLocation()) {
         emit("bus_location_error", { code: error?.code || null });
@@ -303,7 +324,7 @@
     }
 
     function pollPosition() {
-      if (!active || paused || locationDenied || positionPoll
+      if (!active || paused || arrivalUnavailable || locationDenied || positionPoll
           || typeof geolocation?.getCurrentPosition !== "function"
           || now() - lastPositionPollAt < 5000) return;
       const token = generation;
@@ -331,7 +352,7 @@
         request.abort();
         request = null;
         lastLookupAt = now();
-        gpsUnavailable("error", "버스 도착정보 응답이 지연되어 다시 조회를 준비합니다.");
+        gpsUnavailable("error", "도착정보 응답이 늦어 다시 조회합니다. 카메라 번호 인식은 계속됩니다.");
         emit("bus_arrival_error", { code: "lookup_timeout" });
       }
       if (location && !freshLocation() && !["stale", "inaccurate"].includes(gps.status)) {
@@ -385,14 +406,40 @@
       return snapshot();
     }
 
+    function recognitionMessage(result) {
+      if (result.status === "loading" || result.status === "idle") return `${route}번 버스 번호 인식을 준비하고 있습니다.`;
+      if (result.status === "unavailable") return "카메라 번호 인식에 필요한 모델 파일이 없습니다.";
+      const code = typeof result.error === "string" ? result.error : result.error?.code || "";
+      if (code.startsWith("bus_model_load_failed")) return "카메라 번호 인식 모델을 불러오지 못했습니다. 종료 후 다시 시작해 주세요.";
+      return result.message || result.error?.message || "카메라 번호 인식 중 오류가 발생했습니다. 다음 영상을 다시 확인합니다.";
+    }
+
+    function recognitionState(status, message, capturedAt = null) {
+      ocr = { status, message, confirmed: false, routeNumber: null, capturedAt };
+      ocrPending = null;
+      clearSpeech("bus-ocr");
+      publish();
+    }
+
     function accept(result, capturedAtMs = result?.captured_at_ms) {
       if (!active || paused || !result) return;
       const event = result.event || result;
       if (event.target_route && normalize(event.target_route) !== route) return;
-      const capturedAt = Number(capturedAtMs);
-      if (!Number.isFinite(capturedAt) || capturedAt < observationStartedAt
+      const preparing = ["loading", "idle"].includes(result.status);
+      const failed = event.errors?.length || ["error", "unavailable", "disabled"].includes(result.status);
+      const capturedAt = capturedAtMs == null ? NaN : Number(capturedAtMs);
+      // Loading/missing-model failures can arrive before the worker has a source frame.
+      if (!Number.isFinite(capturedAt)) {
+        if (preparing || failed) recognitionState(preparing ? "loading" : "error", recognitionMessage(result));
+        return;
+      }
+      if (capturedAt < observationStartedAt
           || capturedAt < lastOcrAt || capturedAt > now()) return;
       lastOcrAt = capturedAt;
+      if (preparing) {
+        recognitionState("loading", recognitionMessage(result), capturedAt);
+        return;
+      }
       if (!freshCapture(capturedAt)) {
         ocr = { status: "stale", message: "카메라 결과가 늦게 도착했습니다. 현재 번호를 다시 확인합니다.",
           routeNumber: null, confirmed: false, capturedAt };
@@ -401,7 +448,6 @@
         publish();
         return;
       }
-      const failed = event.errors?.length || ["error", "unavailable", "disabled"].includes(result.status);
       const matches = (failed ? [] : Array.isArray(event.matches) ? event.matches : [])
         .filter(item => normalize(item.route_number) === route
           && ["recognized_single", "matched_candidate"].includes(item.state))
@@ -412,7 +458,7 @@
         // 단일 프레임에서 번호가 안 읽혀도 3초 이내 근거의 안내 문장을 잘라 버리지 않는다.
         if (!failed && ["candidate", "confirmed"].includes(ocr.status) && freshCapture(ocr.capturedAt)) return;
         ocr = { status: failed ? "error" : "searching", confirmed: false, routeNumber: null, capturedAt,
-          message: failed ? (result.message || result.error?.message || "버스 번호 인식을 사용할 수 없습니다. GPS 도착정보는 계속 확인합니다.")
+          message: failed ? recognitionMessage(result)
             : `${route}번 버스 번호를 찾고 있습니다.` };
         ocrPending = null;
         if (failed || !speakingOcr?.started) clearSpeech("bus-ocr");
@@ -420,12 +466,12 @@
         return;
       }
       const confirmed = shown.state === "matched_candidate";
-      const message = confirmed ? `카메라에서 ${route}번 버스 번호를 확인했습니다.` : `${route}번으로 보이는 버스가 있습니다.`;
+      const message = confirmed ? `${route}번 버스가 도착했습니다.` : `${route}번으로 보이는 버스가 있습니다.`;
       ocr = { status: confirmed ? "confirmed" : "candidate", message, routeNumber: route, confirmed, capturedAt,
         trackId: shown.track_id ?? null };
       select.observeBusDetection(tracker, { routeNumber: route, capturedAtMs: capturedAt,
         confidence: shown.token_score, trackId: shown.track_id });
-      const key = `${shown.track_id ?? "unknown"}:${route}`;
+      const key = `${shown.track_id ?? "unknown"}:${route}:${confirmed ? "confirmed" : "candidate"}`;
       ocrPending = { ...shown, key, message, capturedAt };
       publish();
       sayOcr();

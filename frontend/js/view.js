@@ -17,6 +17,7 @@
   function create({ onAction = () => {}, onSubmitRoute = () => {}, onRateChange = () => {},
     onTextScaleChange = () => {}, onStationChange = () => {} } = {}) {
     let screen = "welcome", paused = false, busy = false;
+    let obstacleDetection = true;
     let bus = {}, lastResult = null, currentCue = DEFAULT_CUES.walk;
     let micMode = null, destroyed = false, stationCount = 0, speechSession = false;
     let clipState = { active: false, count: 0, max: 5, available: false };
@@ -62,7 +63,7 @@
       if (!result) return null;
       const age = Date.now() - result.captured_at_ms;
       if (!Number.isFinite(age) || age < -1000 || age >= 1500) return null;
-      const walking = result.walking?.event || {};
+      const walking = obstacleDetection && result.walking?.event?.enabled !== false ? result.walking?.event || {} : {};
       const crosswalk = result.crosswalk?.event || {};
       const surface = result.walking_surface?.event || {};
       const signal = result.traffic?.event || {};
@@ -88,11 +89,26 @@
       }
       return null;
     }
+    function busCue() {
+      if (!BUS_SCREENS.has(screen) || bus.route !== readRoute()) return null;
+      if (bus.ocrStatus === "error") return { label: "카메라 번호 인식", title: "번호 인식을 사용할 수 없어요.",
+        copy: bus.ocrMessage, icon: "alert", tone: "search" };
+      if (bus.ocrStatus === "loading") return { label: "카메라 번호 인식", title: "번호 인식을 준비하고 있어요.",
+        copy: bus.ocrMessage, icon: "scan", tone: "search" };
+      const age = Date.now() - bus.ocrCapturedAt;
+      if (!Number.isFinite(bus.ocrCapturedAt) || age < 0 || age > 3000) return null;
+      if (!["candidate", "confirmed"].includes(bus.ocrStatus)) return null;
+      return { label: "카메라 번호 인식", title: bus.ocrMessage,
+        copy: "버스 번호와 주변 상황을 함께 확인해 주세요.",
+        icon: bus.ocrStatus === "confirmed" ? "check" : "bus",
+        tone: bus.ocrStatus === "confirmed" ? "recognized" : "search" };
+    }
     function render(result) {
       lastResult = result || null;
       if (!CAMERA_SCREENS.has(screen) || paused) return;
-      paintCue(hazardCue(lastResult) || DEFAULT_CUES[screen]);
+      paintCue(hazardCue(lastResult) || busCue() || DEFAULT_CUES[screen]);
     }
+    function setObstacleDetection(enabled) { obstacleDetection = enabled; render(lastResult); }
     function updateControls() {
       all("[data-action], [data-mic], #route-form input, button[form='route-form']").forEach(element => {
         const action = element.dataset.action;
@@ -167,6 +183,7 @@
         $(id).hidden = !bus[key] || (key === "message" && [bus.gpsMessage, bus.ocrMessage].includes(bus[key]));
       }
       if (bus.status) $("bus-target").dataset.status = String(bus.status);
+      render(lastResult);
     }
     function setStations(stations = [], selectedId = null) {
       const select = $("bus-stations"), previous = select.value;
@@ -301,7 +318,7 @@
       listeners.forEach(remove => remove());
     }
     show("welcome", { focus: false });
-    return { show, render, setBus, setStations, setPaused, setBusy, setClipState, setStatus, setRoute, readRoute,
+    return { show, render, setObstacleDetection, setBus, setStations, setPaused, setBusy, setClipState, setStatus, setRoute, readRoute,
       setSettings, announce, getScreen: () => screen, getGuidance, destroy };
   }
   window.GView = { create };

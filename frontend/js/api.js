@@ -20,18 +20,22 @@ window.GApi = (() => {
 
   // 휴대폰 모델로 테스트 세션 생성
   /** 추론 모델 로딩이 끝나면 세션 번호를 반환한다. */
-  function start(deviceName, note) {
+  function start(deviceName, note, busHighres = false) {
     return fetch("/api/sessions", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ device_name: deviceName, note }) }).then(result);
+      body: JSON.stringify({ device_name: deviceName, note, bus_highres: busHighres }) }).then(result);
   }
 
   // JPEG 한 장 전송
   /** 한 번에 한 장의 카메라 프레임을 전송한다. */
-  function frame(sessionId, frameId, capturedAtMs, blob, signal) {
+  function frame(sessionId, frameId, capturedAtMs, blob, signal, busBlob = null, busCapturedAtMs = null) {
     const body = new FormData();
     body.append("frame_id", String(frameId));
     body.append("captured_at_ms", String(capturedAtMs));
     body.append("image", blob, "frame.jpg");
+    if (busBlob && busCapturedAtMs !== null) {
+      body.append("bus_image", busBlob, "bus-frame.jpg");
+      body.append("bus_captured_at_ms", String(busCapturedAtMs));
+    }
     return fetch(`/api/sessions/${sessionId}/frames`, { method: "POST", body, signal }).then(result);
   }
 

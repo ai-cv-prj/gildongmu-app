@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import re
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -76,11 +77,27 @@ class ClipStore:
         if not 1 <= clip_id <= MAX_CLIPS:
             raise ClipError(f"클립 번호는 1~{MAX_CLIPS}여야 합니다.")
         clip = folder / "clips" / f"clip_{clip_id:03d}"
-        if create:
+        if create and not (clip / "manifest.json").is_file():
             (clip / "chunks").mkdir(parents=True, exist_ok=True)
             (clip / "frames").mkdir(exist_ok=True)
             (clip / "masks").mkdir(exist_ok=True)
         return clip
+
+    @staticmethod
+    def _cleanup_inputs(clip, manifest):
+        """Remove render inputs only after the durable final outputs exist."""
+        if manifest.get("storage_version") != 2 or manifest.get("state") not in ("ready", "no_frames"):
+            return
+        original = clip / Path(manifest["original_path"]).name
+        if not original.is_file() or (manifest["state"] == "ready" and not (clip / "inference.mp4").is_file()):
+            return
+        for name in ("chunks", "frames", "masks"):
+            try:
+                if (clip / name).exists():
+                    shutil.rmtree(clip / name)
+            except OSError:
+                # A cleanup failure must not turn a playable clip into a failed export.
+                log.warning("clip input cleanup failed: %s", clip / name, exc_info=True)
 
     @staticmethod
     def _manifest(clip):
@@ -187,6 +204,9 @@ class ClipStore:
                     return {"saved": True, "clip_id": clip_id, "frame_id": frame_id}
                 raise ClipError("같은 번호의 선택 프레임 내용이 다릅니다.", 409)
             if manifest:
+                if any(item["frame_id"] == frame_id and item["captured_at_ms"] == captured_at_ms
+                       and item.get("sha256") == digest for item in manifest.get("frames", [])):
+                    return {"saved": True, "clip_id": clip_id, "frame_id": frame_id}
                 raise ClipError("완료된 클립에 새 선택 프레임을 추가할 수 없습니다.", 409)
             # The metadata is written last. A restart between those writes may
             # leave JPEG/mask files with no committed frame; retry replaces them.
@@ -305,9 +325,8 @@ class ClipStore:
             except ClipError:
                 target.unlink(missing_ok=True)
                 raise
-            for path in chunks:
-                path.unlink()
             manifest = {
+                "storage_version": 2,
                 "clip_id": clip_id, "started_at_ms": started_at_ms, "ended_at_ms": ended_at_ms,
                 "duration_ms": ended_at_ms - started_at_ms, "mime_type": mime_type,
                 "original_duration_ms": actual_duration_ms,
@@ -318,6 +337,8 @@ class ClipStore:
                 "completed_at": datetime.now(timezone.utc).isoformat(),
             }
             _write_json(clip / "manifest.json", manifest)
+            for path in chunks:
+                path.unlink()
             log.info("clip accepted session=%s clip=%03d bytes=%d frames=%d", session_id, clip_id, size_bytes, len(frames))
             return manifest, True
 
@@ -347,6 +368,8 @@ class ClipStore:
                     manifest = self._manifest(self._clip(session_file.parent, clip_id))
                     if manifest and manifest.get("state") in ("pending", "rendering"):
                         yield session_id, clip_id
+                    elif manifest:
+                        self._cleanup_inputs(self._clip(session_file.parent, clip_id), manifest)
             except (OSError, ValueError, ClipError):
                 continue
 
@@ -403,7 +426,10 @@ class ClipStore:
         try:
             with self.lock:
                 manifest = self._manifest(clip)
-                if not manifest or manifest["state"] == "ready":
+                if not manifest:
+                    return
+                if manifest["state"] in ("ready", "no_frames"):
+                    self._cleanup_inputs(clip, manifest)
                     return
                 manifest["state"] = "rendering"
                 _write_json(clip / "manifest.json", manifest)
@@ -414,6 +440,7 @@ class ClipStore:
                     manifest["state"] = "no_frames"
                     manifest["error"] = "선택 구간에서 처리된 추론 프레임이 없습니다."
                     _write_json(clip / "manifest.json", manifest)
+                    self._cleanup_inputs(clip, manifest)
                 return
             rows = {}
             with (folder / "results.jsonl").open(encoding="utf-8") as source:
@@ -455,6 +482,7 @@ class ClipStore:
                                                  round(1000 / self.recording_fps)))
                     concat.extend([f"file '{name}'", "option framerate 1000", f"duration {duration_ms / 1000:.6f}"])
                     timeline.append({"frame_id": frame_id, "captured_at_ms": meta["captured_at_ms"],
+                                     "sha256": meta["sha256"],
                                      "clip_offset_ms": meta["captured_at_ms"] - manifest["started_at_ms"],
                                      "video_pts_ms": meta["captured_at_ms"] - first_at,
                                      "duration_ms": duration_ms, "mask": meta.get("mask", False)})
@@ -470,17 +498,15 @@ class ClipStore:
                 if encoded.returncode:
                     raise RuntimeError(encoded.stderr[-500:] or "ffmpeg 변환 실패")
                 temporary.replace(clip / "inference.mp4")
-            _write_json(clip / "timeline.json", {
-                "clip_id": clip_id, "started_at_ms": manifest["started_at_ms"],
-                "ended_at_ms": manifest["ended_at_ms"], "first_frame_offset_ms": first_at - manifest["started_at_ms"],
-                "frames": timeline,
-            })
             with self.lock:
                 manifest = self._manifest(clip)
                 manifest["state"] = "ready"
                 manifest["error"] = None
-                manifest["timeline_path"] = f"clips/clip_{clip_id:03d}/timeline.json"
+                manifest["storage_version"] = 2
+                manifest["first_frame_offset_ms"] = first_at - manifest["started_at_ms"]
+                manifest["frames"] = timeline
                 _write_json(clip / "manifest.json", manifest)
+                self._cleanup_inputs(clip, manifest)
             log.info("clip rendered session=%s clip=%03d frames=%d", session_id, clip_id, len(entries))
         except Exception as error:
             log.exception("clip export failed session=%s clip=%03d", session_id, clip_id)

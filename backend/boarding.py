@@ -18,12 +18,17 @@ class Boarding:
     def stationary(self):
         return self.status == "pending"
 
+    @property
+    def at_stop(self):
+        return self.status in ("awaiting_stop", "pending", "submitted")
+
     def snapshot(self):
         return {"status": self.status, "arrival_event_id": self.arrival_event_id,
                 "arrival_source": self.arrival_source,
                 "bus_number": self.bus_number, "revision": self.revision,
                 "assumed_stationary": self.stationary,
-                "stop_hazard_suppressed": self.stationary}
+                "stop_hazard_suppressed": self.at_stop,
+                "obstacle_detection_enabled": not self.at_stop}
 
     def observe(self, proximity, *, crossing_active=False):
         # A historical arrival alone must not open the form after leaving a stop.

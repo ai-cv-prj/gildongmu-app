@@ -83,6 +83,9 @@ def load_app_config(config_path=DEFAULT_APP_CONFIG):
     for key in ("width", "height", "capture_max_side"):
         number(camera, key, 1, 16384, integer=True)
     number(camera, "jpeg_quality", 0, 1)
+    number(camera, "bus_capture_max_side", 1, 16384, integer=True)
+    number(camera, "bus_jpeg_quality", 0, 1)
+    number(camera, "bus_capture_interval_ms", 100, 5000, integer=True)
     number(camera, "encoder_timeout_ms", 1, 300000, integer=True)
     number(camera, "resume_delay_ms", 0, 60000, integer=True)
     recording = section(config, "recording")
@@ -103,6 +106,8 @@ def load_app_config(config_path=DEFAULT_APP_CONFIG):
         raise ValueError("upload.min_frame_side는 max_frame_side 이하여야 합니다.")
     if not upload["min_frame_side"] <= camera["capture_max_side"] <= upload["max_frame_side"]:
         raise ValueError("camera.capture_max_side는 업로드 허용 크기 범위여야 합니다.")
+    if not upload["min_frame_side"] <= camera["bus_capture_max_side"] <= upload["max_frame_side"]:
+        raise ValueError("camera.bus_capture_max_side는 업로드 허용 크기 범위여야 합니다.")
     session = section(config, "session")
     number(session, "folder_note_max_length", 1, 500, integer=True)
     try:
@@ -151,6 +156,7 @@ def browser_settings(app, audio):
     return deepcopy({
         "camera": {key: app["camera"][key] for key in (
             "facing_mode", "width", "height", "capture_max_side", "jpeg_quality",
+            "bus_capture_max_side", "bus_jpeg_quality", "bus_capture_interval_ms",
             "encoder_timeout_ms", "resume_delay_ms",
         )},
         "recording": {key: app["recording"][key] for key in (

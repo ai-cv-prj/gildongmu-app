@@ -12,6 +12,9 @@ camera:
   height: 720
   capture_max_side: 640
   jpeg_quality: 0.72
+  bus_capture_max_side: 960
+  bus_jpeg_quality: 0.72
+  bus_capture_interval_ms: 300
   encoder_timeout_ms: 2000
   resume_delay_ms: 100
 

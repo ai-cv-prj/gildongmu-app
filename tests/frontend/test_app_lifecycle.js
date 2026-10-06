@@ -13,6 +13,7 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
   let recordStarts = 0, recordStops = 0;
   const timeline = [], uploads = [];
   const timers = new Map(), intervals = new Map(), frames = [], guides = [], journeyStarts = [], renders = [], statuses = [];
+  const captures = [], startModes = [];
   const elements = new Map();
   const node = id => {
     if (!elements.has(id)) elements.set(id, { value: id === "device" ? "test phone" : "", style: {},
@@ -20,25 +21,28 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
     return elements.get(id);
   };
   const view = { setSettings() {}, show(value) { screen = value; }, getScreen: () => screen,
-    setBusy() {}, setStatus(text) { statuses.push(text); }, announce() {}, setRoute() {}, setBus() {},
+    setObstacleDetection() {}, setBusy() {}, setStatus(text) { statuses.push(text); }, announce() {}, setRoute() {}, setBus() {},
     setStations() {}, setPaused() {}, render(value) { renders.push(value); }, getGuidance: () => "안내" };
   const player = { setRate: value => value, recordingStream: () => null, cancel() { voice = null; },
     speak(text, validUntil, callbacks) { voice = { text, validUntil, ...callbacks }; callbacks.onStart?.(); return true; } };
   const settings = { audio: { tick_ms: 250, playback_timeout_ms: 15000, crosswalk_max_age_ms: 1500 },
-    camera: { capture_max_side: 640, jpeg_quality: .72 } };
+    camera: { capture_max_side: 640, jpeg_quality: .72, bus_capture_max_side: 960,
+      bus_jpeg_quality: .72, bus_capture_interval_ms: 300 } };
   const journey = { start(value) {
     route = value; journeyStarts.push(value); journeyPaused = false;
     journeyCallbacks.onChange({ route, gps: { status: "locating", candidates: [] }, ocr: {} });
   }, pause() { journeyPaused = true; }, resume() { if (route) journeyPaused = false; },
     stop() { route = null; journeyPaused = false; }, accept() {}, selectStop() {}, repeat() {} };
-  const api = { start: async () => { sessionsStarted++; return { session_id: "session-1" }; },
+  const api = { start: async (_device, _note, busHighres) => {
+    sessionsStarted++; startModes.push(busHighres); return { session_id: "session-1" }; },
     stop: async () => {
       stopAttempts++;
       if (stopFailsOnce && stopAttempts === 1) throw Object.assign(new Error("일시적 연결 실패"), { status: 503 });
       sessionsStopped++; timeline.push("stop"); return { frame_count: frames.length };
     },
-    frame(id, frameId, capturedAtMs, blob, signal) {
-      return new Promise((resolve, reject) => frames.push({ id, frameId, capturedAtMs, blob, signal, resolve, reject }));
+    frame(id, frameId, capturedAtMs, blob, signal, busBlob, busCapturedAtMs) {
+      return new Promise((resolve, reject) => frames.push({ id, frameId, capturedAtMs, blob, signal,
+        busBlob, busCapturedAtMs, resolve, reject }));
     },
     async boarding(_id, action, _event, number) {
       if (action === "arrive") busState = { status: "awaiting_stop", arrival_event_id: 1,
@@ -69,11 +73,13 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
     clearInterval(id) { intervals.delete(id); },
     GView: { create(options) { handlers = options; return view; } },
     GTts: { create: () => player }, GApi: api, GConfig: { get: () => settings, load: async () => settings },
-    GGuidance: { create() { const guide = { accepted: [], start() {}, stop() {}, tick() {},
+    GGuidance: { create() { const guide = { accepted: [], starts: 0, stops: 0, start() { this.starts++; }, stop() { this.stops++; }, tick() {},
       accept(value) { this.accepted.push(value); } }; guides.push(guide); return guide; } },
     GBusJourney: { create(options) { journeyCallbacks = options; return journey; } },
-    GCamera: { async start() { cameraActive = true; return { width: 640, height: 480 }; },
-      stop() { cameraActive = false; }, active: () => cameraActive, capture: async () => ({ size: 12 }),
+    GCamera: { video: { videoWidth: 1280, videoHeight: 720 },
+      async start() { cameraActive = true; return { width: 1280, height: 720 }; },
+      stop() { cameraActive = false; }, active: () => cameraActive,
+      capture: async maxSide => { captures.push(maxSide); return { size: 12, maxSide }; },
       pause() {}, resume() {}, setOnEnded(callback) { cameraEnded = callback; } },
     GRecorder: { startPreview() {}, stopPreview() {}, pause() {}, resume() {}, bytes: () => 0,
       startRaw(_onChunk, onEnded) { recording = true; recordStarts++; recorderEnded = onEnded;
@@ -96,7 +102,7 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
     captured_at_ms: frame.capturedAtMs, inference_ms: 10,
     walking: { detections: [], event: {} }, traffic: { detections: [], event: {} },
     boarding: { ...busState }, stop_proximity: { nearby: false } });
-  return { action, frames, guides, journeyStarts, renders, statuses, uploads, timeline,
+  return { action, frames, captures, startModes, guides, journeyStarts, renders, statuses, uploads, timeline,
     recordCounts: () => ({ starts: recordStarts, stops: recordStops, recording }), screen: () => screen,
     retryVisible: () => !node("retry-upload").hidden,
     resources: () => ({ cameraActive, sessionsStarted, sessionsStopped, timers: timers.size, intervals: intervals.size, route }),
@@ -111,7 +117,7 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
       const [id, timer] = [...timers].find(([, value]) => value.delay === 29750);
       timers.delete(id); now += 29750; timer.callback(); await flush();
     },
-    async respond(index) { frames[index].resolve(frameResult(frames[index])); await flush(); },
+    async respond(index, overrides = {}) { frames[index].resolve({ ...frameResult(frames[index]), ...overrides }); await flush(); },
     async finishVoice() { const done = voice; voice = null; done.onEnd(); await flush(); },
     async confirmRoute(value) { handlers.onSubmitRoute(value); await flush(); await action("confirm-route"); },
     async cameraEnd() { cameraActive = false; cameraEnded(); await flush(); },
@@ -128,6 +134,32 @@ test("정류장 수동 확인과 번호 확정은 서버 boarding을 거쳐 GPS/
   await app.confirmRoute("143");
   assert.equal(app.screen(), "search");
   assert.deepEqual(app.journeyStarts, ["143"]);
+  await app.action("end");
+});
+
+test("버스 노선 제출 후에도 보행 640px을 유지하고 버스 960px을 간격에 맞춰 전송한다", async () => {
+  const app = await harness();
+  await app.action("start");
+  assert.deepEqual(app.startModes, [true]);
+  await app.action("manual-arrival");
+  await app.finishVoice();
+  await app.confirmRoute("143");
+  const first = await app.capture();
+  assert.deepEqual(app.captures, [640, 960]);
+  assert.equal(app.frames[0].blob.maxSide, 640);
+  assert.equal(app.frames[0].busBlob.maxSide, 960);
+  assert.equal(app.frames[0].busCapturedAtMs, app.frames[0].capturedAtMs);
+  await app.respond(0); await first.pending;
+  app.setNow(250);
+  const second = await app.capture();
+  assert.deepEqual(app.captures, [640, 960, 640]);
+  assert.equal(app.frames[1].busBlob, null);
+  await app.respond(1); await second.pending;
+  app.setNow(500);
+  const third = await app.capture();
+  assert.deepEqual(app.captures, [640, 960, 640, 640, 960]);
+  assert.equal(app.frames[2].busBlob.maxSide, 960);
+  await app.respond(2); await third.pending;
   await app.action("end");
 });
 
@@ -319,5 +351,33 @@ test("브라우저 녹화기가 자체 종료되면 현재 구간을 즉시 버�
   assert.equal(app.recordCounts().starts, 2, "고장난 구간을 계속 붙잡고 있지 않는다");
   app.setNow(1200);
   await app.action("record");
+  await app.action("end");
+});
+
+test("정류장 도착 후 늦은 장애물 결과와 재개를 차단하고 취소하면 다시 안내한다", async () => {
+  const app = await harness();
+  await app.action("start");
+  await app.capture();
+  const walking = app.guides[0];
+  const stops = walking.stops;
+  await app.action("manual-arrival");
+  assert.equal(walking.stops, stops + 1);
+  await app.respond(0, { boarding: { status: "searching", revision: 0 },
+    walking: { detections: [{ class_name: "person" }], event: { level: "danger", voice_text: "멈추세요" } } });
+  assert.equal(walking.accepted.length, 0);
+  assert.equal(app.renders.at(-1).walking.event.enabled, false);
+  await app.finishVoice();
+  await app.confirmRoute("143");
+  const starts = walking.starts;
+  await app.action("pause");
+  await app.action("pause");
+  assert.equal(walking.starts, starts);
+  await app.action("back");
+  await app.action("back");
+  assert.equal(app.screen(), "walk");
+  assert.equal(walking.starts, starts + 1);
+  await app.capture();
+  await app.respond(1);
+  assert.equal(walking.accepted.length, 1);
   await app.action("end");
 });

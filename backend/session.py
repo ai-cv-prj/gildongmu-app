@@ -6,6 +6,7 @@ file_path: backend/session.py
 
 import json
 import hashlib
+import logging
 import re
 import threading
 import time
@@ -21,6 +22,9 @@ from backend.bus.config import load_bus_config
 from backend.bus.recognition import BusRecognizer
 from backend.response import make_response
 from src.settings import load_app_config
+
+
+log = logging.getLogger(__name__)
 
 
 class SessionError(Exception):
@@ -56,7 +60,7 @@ class SessionManager:
         self._completed_summaries = {}
 
     # 휴대폰 테스트 시작
-    def start(self, device_name, note=""):
+    def start(self, device_name, note="", bus_highres=False):
         """새 세션을 만들고 모델 추적 상태를 초기화한다."""
         with self.lock:
             if self.session is not None:
@@ -70,6 +74,12 @@ class SessionManager:
                 self.models.reset()
             self.models.boarding = Boarding()
             self.bus_recognizer.set_target(None, None)
+            prewarm = getattr(self.bus_recognizer, "prewarm", None)
+            if bus_highres and prewarm is not None:
+                try:
+                    prewarm()
+                except Exception:
+                    log.exception("bus model prewarm could not start")
             session_id = uuid4().hex
             safe_device = safe_folder_part(device_name, "기종미상")
             safe_note = safe_folder_part(note, max_length=self.settings["folder_note_max_length"])
@@ -87,12 +97,12 @@ class SessionManager:
                     break
                 except FileExistsError:
                     index += 1
-            (folder / "frames").mkdir()
             self.session = {
                 "id": session_id, "device_name": device_name, "note": note,
                 "date": date, "folder_name": folder_name,
                 "started_at": started_at.astimezone(timezone.utc).isoformat(),
                 "frame_count": 0, "last_frame_id": 0, "last_capture_ms": None,
+                "bus_highres": bool(bus_highres),
                 "folder": folder,
             }
             (folder / "session.json").write_text(json.dumps({
@@ -103,7 +113,8 @@ class SessionManager:
 
     # 한 프레임 처리와 JSONL 기록
     def process(self, session_id, frame_id, captured_at_ms, frame, request_start_ns=None,
-                decode_ms=None, image_bytes=None, save_live_frame=True):
+                decode_ms=None, image_bytes=None, save_live_frame=False,
+                bus_frame=None, bus_captured_at_ms=None):
         """요청 순서를 검증하고 세 모델 결과를 저장한다."""
         with self.lock:
             processing_start_ns = time.perf_counter_ns()
@@ -114,6 +125,16 @@ class SessionManager:
                 raise SessionError("프레임 번호가 연속적이지 않습니다.")
             if session["last_capture_ms"] is not None and captured_at_ms <= session["last_capture_ms"]:
                 raise SessionError("촬영 시간이 이전 프레임보다 늦지 않습니다.")
+            if bus_frame is not None and not session["bus_highres"]:
+                raise SessionError("이 세션은 버스 전용 프레임을 사용하지 않습니다.")
+            bus_submission_error = None
+            if bus_frame is not None:
+                # Offer the high-resolution source before the walking inference.
+                # The worker can run while the walking response is prepared.
+                try:
+                    self.bus_recognizer.observe(session_id, bus_frame, frame_id, bus_captured_at_ms)
+                except Exception as error:
+                    bus_submission_error = f"bus_recognition_unavailable:{type(error).__name__}"
             risk, signal, crosswalk, walking_surface, class_map, label_ids, elapsed = self.models.predict(
                 frame, frame_id, captured_at_ms,
             )
@@ -125,14 +146,23 @@ class SessionManager:
                                    class_map, label_ids, elapsed)
             # OCR runs on a separate newest-frame worker. Its own source timestamp
             # stays attached to cached results, and it cannot fail walking guidance.
-            try:
-                result["bus"] = self.bus_recognizer.observe(session_id, frame, frame_id, captured_at_ms)
-            except Exception as error:
+            bus_result = None
+            if bus_submission_error is None:
+                try:
+                    bus_source = None if session["bus_highres"] else frame
+                    bus_result = self.bus_recognizer.observe(
+                        session_id, bus_source, frame_id, bus_captured_at_ms or captured_at_ms)
+                except Exception as error:
+                    bus_submission_error = f"bus_recognition_unavailable:{type(error).__name__}"
+            if bus_submission_error is not None:
                 result["bus"] = {"status": "error", "event": None, "detections": [],
                                  "captured_at_ms": None, "frame_id": None,
-                                 "error": f"bus_recognition_unavailable:{type(error).__name__}"}
+                                 "error": bus_submission_error}
+            else:
+                result["bus"] = bus_result
             if save_live_frame:
                 frame_file = Path("frames") / f"{frame_id:06d}.jpg"
+                (session["folder"] / "frames").mkdir(exist_ok=True)
                 encoded, jpeg = cv2.imencode(".jpg", frame)
                 if not encoded:
                     raise SessionError("추론 프레임 이미지를 저장할 수 없습니다.")
@@ -195,8 +225,7 @@ class SessionManager:
             if result != previous:
                 record = {"at": datetime.now(timezone.utc).isoformat(),
                           "action": action, **result}
-                with (self.session["folder"] / "boarding_events.jsonl").open("a", encoding="utf-8") as file:
-                    file.write(json.dumps(record, ensure_ascii=False) + "\n")
+                self._append_events("boarding", [record])
             return result
 
     def record_bus_events(self, session_id, events):
@@ -204,12 +233,17 @@ class SessionManager:
         with self.lock:
             if self.session is None or self.session["id"] != session_id:
                 raise SessionError("진행 중인 세션이 없습니다.")
-            path = self.session["folder"] / "bus_events.jsonl"
-            with path.open("a", encoding="utf-8") as file:
-                for event in events:
-                    record = {**event, "session_id": session_id,
-                              "server_at": datetime.now(timezone.utc).isoformat()}
-                    file.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n")
+            self._append_events("bus", [
+                {**event, "session_id": session_id, "server_at": datetime.now(timezone.utc).isoformat()}
+                for event in events
+            ])
+
+    def _append_events(self, group, records):
+        """Append diagnostics to one file while the caller holds the session lock."""
+        with (self.session["folder"] / "events.jsonl").open("a", encoding="utf-8") as file:
+            for record in records:
+                file.write(json.dumps({**record, "event_group": group}, ensure_ascii=False,
+                                      allow_nan=False) + "\n")
 
     def close(self):
         """Release the optional OCR worker during server shutdown."""
@@ -220,9 +254,7 @@ class SessionManager:
         with self.lock:
             if self.session is None or self.session["id"] != session_id:
                 raise SessionError("진행 중인 세션이 없습니다.")
-            with (self.session["folder"] / "client_timing.jsonl").open("a", encoding="utf-8") as file:
-                for record in records:
-                    file.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n")
+            self._append_events("client_timing", records)
 
     # 휴대폰 테스트 종료
     def stop(self, session_id):
@@ -303,7 +335,4 @@ class SessionManager:
                 "at": datetime.now(timezone.utc).isoformat(),
                 "kind": kind, "status": status, "source": source, "detail": detail,
             }
-            with (self.session["folder"] / "recording_events.jsonl").open(
-                "a", encoding="utf-8"
-            ) as file:
-                file.write(json.dumps(event, ensure_ascii=False) + "\n")
+            self._append_events("recording", [event])

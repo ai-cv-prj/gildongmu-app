@@ -217,13 +217,14 @@ window.GOverlay = (() => {
         return onDrawn("stale");
       }
       if (mask) ctx.drawImage(mask, 0, 0, canvas.width, canvas.height);
-      const roi = result.walking?.event?.roi || {};
+      const obstacles = result.walking?.event?.enabled !== false && result.boarding?.obstacle_detection_enabled !== false;
+      const roi = obstacles ? result.walking?.event?.roi || {} : {};
       for (const points of roi.corridor_polygons || [roi.corridor_polygon])
         polygon(points, "#4ce3fa", "#4ce3fa20");
       polygon(roi.immediate_polygon, "#ff88ba", "#ff88ba24");
       crosswalkRoi(result.crosswalk?.event);
       walkingSurfaceRoi(result.walking_surface?.event);
-      boxes(result.walking?.detections, "walking");
+      if (obstacles) boxes(result.walking?.detections, "walking");
       boxes(result.traffic?.detections, "traffic");
       // OCR finishes independently; only boxes from a recent capture belong on the live camera.
       const busAge = typeof performance !== "undefined" && Number.isFinite(performance.timeOrigin)
@@ -231,10 +232,10 @@ window.GOverlay = (() => {
       if (Number.isFinite(result.bus?.captured_at_ms) && busAge >= 0 && busAge <= 400)
         boxes(result.bus?.detections, "bus");
       crosswalkSafety(result.crosswalk?.event);
-      actionStatus(result.walking?.event);
+      if (obstacles) actionStatus(result.walking?.event);
       crosswalkStatus(result.crosswalk?.event);
       walkingSurfaceStatus(result.walking_surface?.event);
-      stopDiagnostic(result.stop_proximity);
+      if (obstacles) stopDiagnostic(result.stop_proximity);
       onDrawn("drawn");
     };
     if (!result.walking?.mask_png) return draw(null);

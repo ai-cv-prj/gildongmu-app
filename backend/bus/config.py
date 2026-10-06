@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 
 import yaml
+from dotenv import dotenv_values
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -93,8 +94,13 @@ class BusServiceSettings:
 
     @classmethod
     def from_config(cls, config: BusConfig) -> "BusServiceSettings":
+        # Direct uvicorn starts must read the same project .env as run.sh.
+        # An explicit process value (including empty) takes precedence.
+        api_key = os.getenv("SEOUL_BUS_API_KEY")
+        if api_key is None:
+            api_key = dotenv_values(ROOT / ".env", encoding="utf-8-sig").get("SEOUL_BUS_API_KEY")
         return cls(
-            seoul_bus_api_key=os.getenv("SEOUL_BUS_API_KEY", ""),
+            seoul_bus_api_key=(api_key or "").strip(),
             seoul_bus_api_timeout_sec=config.arrival_timeout_sec,
             seoul_bus_station_radius_m=config.station_radius_m,
             seoul_bus_max_station_distance_m=config.max_station_distance_m,
