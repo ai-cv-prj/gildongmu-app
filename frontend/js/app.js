@@ -256,9 +256,17 @@
       if (next.status === "pending" && previous?.status !== "pending") {
         // 새 정류장 도착에서는 이전 도착 때 입력한 번호를 지우고, 노선 변경(reopen)에서만 이어서 보여 준다.
         if (next.arrival_event_id !== draftEventId) { draftRoute = ""; draftEventId = null; }
-        view.setRoute(draftRoute); view.show("input");
-      } else if (next.status === "awaiting_stop") status("멈춤 안내가 끝나면 탑승할 버스 번호를 입력해 주세요.");
-      else if (next.status === "cancelled" && previous?.status !== "cancelled") {
+        if (!["input", "confirm"].includes(view.getScreen())) {
+          view.setRoute(draftRoute); view.show("input");
+        }
+      } else if (next.status === "awaiting_stop") {
+        if (next.arrival_source === "user_confirmed" && previous?.status !== "awaiting_stop") {
+          view.setRoute(draftRoute); view.show("input");
+          status("멈춤 안내 중입니다. 버스 번호를 입력해 주세요.");
+        } else if (next.arrival_source !== "user_confirmed") {
+          status("멈춤 안내가 끝나면 탑승할 버스 번호를 입력해 주세요.");
+        }
+      } else if (next.status === "cancelled" && previous?.status !== "cancelled") {
         view.show("walk"); status("버스 찾기를 취소했습니다. 보행 안내를 계속합니다.");
       }
     }
@@ -526,6 +534,8 @@
       if (boardingState?.status === "pending") return view.show("input");
       await boarding.arrive(); boarding.tick();
     } else if (action === "confirm-route") {
+      if (boardingState?.status === "awaiting_stop")
+        return status("멈춤 안내가 끝나면 버스 찾기를 시작할 수 있어요.");
       if (draftRoute) await boarding.submit(draftRoute);
     } else if (action === "edit-route") {
       if (boardingState?.status === "submitted") await boarding.reopen();
@@ -543,7 +553,7 @@
     } else if (action === "locate" && activeRoute) journey.start(activeRoute);
     else if (action === "repeat") {
       if (activeRoute) journey.repeat();
-      else speak(view.getGuidance() || "정류장에 도착하면 정류장 도착 버튼을 눌러 주세요.");
+      else speak(view.getGuidance() || "정류장에 도착하면 버스 번호 입력 버튼을 눌러 주세요.");
     }
   }
   try {

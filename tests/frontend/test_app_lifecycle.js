@@ -130,9 +130,13 @@ test("정류장 수동 확인과 번호 확정은 서버 boarding을 거쳐 GPS/
   const app = await harness();
   await app.action("start");
   await app.action("manual-arrival");
-  await app.finishVoice();
-  assert.equal(app.screen(), "input");
+  assert.equal(app.screen(), "input", "멈춤 안내와 동시에 번호 입력 화면을 연다");
   await app.confirmRoute("143");
+  assert.equal(app.screen(), "confirm");
+  assert.deepEqual(app.journeyStarts, [], "멈춤 안내 중에는 버스 찾기를 시작하지 않는다");
+  await app.finishVoice();
+  assert.equal(app.screen(), "confirm", "멈춤 안내가 끝나도 작성 중인 확인 화면을 유지한다");
+  await app.action("confirm-route");
   assert.equal(app.screen(), "search");
   assert.deepEqual(app.journeyStarts, ["143"]);
   await app.action("end");

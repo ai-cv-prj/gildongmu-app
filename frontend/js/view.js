@@ -163,7 +163,7 @@
       $("bus-target").hidden = !busScreen || paused;
       $("stage-button").dataset.action = busScreen ? "end" : "manual-arrival";
       $("stage-icon").setAttribute("href", busScreen ? "#icon-power" : "#icon-pin");
-      updateText($("stage-label"), busScreen ? "종료" : "정류장 도착");
+      updateText($("stage-label"), busScreen ? "종료" : "버스 번호 입력");
       $("walk-end").hidden = busScreen;
       if (screen === "input") routeError("");
       render(lastResult);
