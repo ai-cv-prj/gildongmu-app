@@ -99,6 +99,7 @@ class WalkingVoiceTests(unittest.TestCase):
                     voice = WalkingVoice()
                     voice.last_action = previous
                     voice.last_steps = 1 if previous in ("left", "right") else None
+                    voice.last_action_since = 1.0
                     with patch("src.walking_voice.walking_action", return_value=current):
                         first = voice.observe(prediction(level="monitor"), 100, 1.0)
                         if current == previous:
@@ -118,6 +119,36 @@ class WalkingVoiceTests(unittest.TestCase):
                         confirmed = voice.observe(
                             prediction(level="monitor"), 100, 1.0 + delay)
                         self.assertEqual(confirmed, messages[current])
+
+    # 좌우 확정 시점 기준 직진 전환 확인
+    def test_lateral_to_straight_uses_lateral_confirmation_time(self):
+        """
+        좌우 확정 후 3초가 되는 시점까지 직진이면 유지 시작 시점과 무관하게 안내한다.
+        """
+        message = ("천천히 가세요.", "walking-straight.mp3")
+        for previous in ("left", "right"):
+            with self.subTest(previous=previous, straight_before_threshold=True):
+                voice = WalkingVoice()
+                voice.last_action, voice.last_steps = previous, 1
+                voice.last_action_since = 0.0
+                with patch("src.walking_voice.walking_action", return_value="straight"):
+                    self.assertIsNone(
+                        voice.observe(prediction(level="monitor"), 100, 2.0)
+                    )
+                    self.assertIsNone(
+                        voice.observe(prediction(level="monitor"), 100, 2.999)
+                    )
+                    self.assertEqual(
+                        voice.observe(prediction(level="monitor"), 100, 3.0), message
+                    )
+            with self.subTest(previous=previous, straight_after_threshold=True):
+                voice = WalkingVoice()
+                voice.last_action, voice.last_steps = previous, 1
+                voice.last_action_since = 0.0
+                with patch("src.walking_voice.walking_action", return_value="straight"):
+                    self.assertEqual(
+                        voice.observe(prediction(level="monitor"), 100, 3.0), message
+                    )
 
     # 같은 행동의 none 후 재생 기준 확인
     def test_same_action_replay_requires_configured_none_duration(self):
