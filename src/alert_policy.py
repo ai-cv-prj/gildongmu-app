@@ -19,8 +19,15 @@ class AlertPolicy:
 
     def _spatial_match(self,state,item,timestamp,current_ids):
         same_class = state["class_id"]==item["class_id"]
+        bridge_s = self.cfg["id_bridge_s"]
+        # A single missed frame must not split a confirmed, clipped near object.
+        if (same_class and state.get("near_contact_confirmed", False)
+                and state["level"] == "danger"
+                and (item.get("geometry") or {}).get("bottom_clipped", False)
+                and "static_path_candidate" in item["reasons"]):
+            bridge_s = max(bridge_s, self.cfg["reset_gap_s"])
         if ((not same_class and not self.cfg["class_bridge_enabled"]) or
-                timestamp-state["last_seen"]>self.cfg["id_bridge_s"]):
+                timestamp-state["last_seen"]>bridge_s):
             return False
         old_id,new_id=state["track_id"],item["track_id"]
         threshold=self.cfg["event_match_iou"]
@@ -69,7 +76,32 @@ class AlertPolicy:
             status="active" if raw!="monitor" else "observed"
             hold_reason=None
             release_reason=None
-            if LEVEL[raw]>=LEVEL[old]:
+            g = item.get("geometry") or {}
+            # Bottom clipping censors contact distance, but does not disprove
+            # a near contact already confirmed for this matched object.
+            clipped_near_contact = (
+                old == "danger" and raw == "caution"
+                and state.get("near_contact_confirmed", False)
+                and state.get("class_name") == item.get("class_name")
+                and 0 < timestamp-state["last_seen"] <= self.cfg["reset_gap_s"]
+                and "static_path_candidate" in item["reasons"]
+                and not item.get("release_evidence")
+                and g.get("bottom_clipped", False)
+                and max(g.get("corridor_overlap", 0), g.get("immediate_overlap", 0))
+                    >= self.cfg["overlap_threshold"]
+                and (not self.cfg["wide_roi_priority_enabled"]
+                     or g.get("central_immediate_overlap", 0) >= self.cfg["overlap_threshold"]
+                     or (g.get("point", [0, 0])[1] >= self.cfg["side_danger_y"]
+                         and g.get("close_candidate", False)))
+            )
+            if clipped_near_contact:
+                new = "danger"
+                status = "held"
+                hold_reason = "near_contact_bottom_clipped"
+                item["reasons"].append(hold_reason)
+                state["last_support"] = timestamp
+                state["clear_since"] = state["clear_target"] = None
+            elif LEVEL[raw]>=LEVEL[old]:
                 state["last_support"]=timestamp
                 state["clear_since"]=None
                 state["clear_target"]=None
@@ -95,7 +127,10 @@ class AlertPolicy:
                 else:
                     release_reason="uncertainty_timeout"
                     status="uncertain"
-            g = item.get("geometry") or {}
+            state["near_contact_confirmed"] = (
+                raw == "danger" and "static_near_contact" in item["reasons"]
+                and not g.get("bottom_clipped", False)
+            ) or clipped_near_contact
             near_now = bool(g.get("close_candidate") or g.get("side_proximity") or
                             g.get("immediate_overlap",0)>=self.cfg["overlap_threshold"])
             if near_now:
