@@ -107,7 +107,7 @@ crosswalk_safety:
   # 빨간불·신호 미확인 중 장애물 음성 억제
   non_green_obstacle_voice_suppression: true
   non_green_obstacle_crosswalk_threshold: 0.20
-  non_green_obstacle_nonwalkable_threshold: 0.20
+  non_green_obstacle_nonwalkable_threshold: 0.50
   non_green_obstacle_contact_half_height: 0.02
 
 # 보행로 이탈 안내
