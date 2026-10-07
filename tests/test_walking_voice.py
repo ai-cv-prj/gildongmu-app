@@ -154,6 +154,36 @@ class WalkingVoiceTests(unittest.TestCase):
                         messages[action],
                     )
 
+    # none 후 다른 행동의 즉시 재생 확인
+    def test_different_action_after_none_is_announced_immediately(self):
+        """
+        none 유지시간과 관계없이 이전과 다른 행동은 첫 감지 시 바로 안내한다.
+        """
+        messages = {
+            "left": ("왼쪽으로 한 걸음", "walking-move-left-one.mp3"),
+            "right": ("오른쪽으로 한 걸음", "walking-move-right-one.mp3"),
+            "straight": ("천천히 가세요.", "walking-straight.mp3"),
+            "stop": ("멈추세요", "walking-stop.mp3"),
+        }
+        actions = ("left", "right", "straight", "stop")
+        for previous in actions:
+            for current in actions:
+                if current == previous:
+                    continue
+                with self.subTest(previous=previous, current=current):
+                    voice = WalkingVoice()
+                    voice.last_action = previous
+                    voice.last_steps = 1 if previous in ("left", "right") else None
+                    with patch("src.walking_voice.walking_action", return_value=None):
+                        self.assertIsNone(
+                            voice.observe(prediction(level="monitor"), 100, 1.0)
+                        )
+                    with patch("src.walking_voice.walking_action", return_value=current):
+                        self.assertEqual(
+                            voice.observe(prediction(level="monitor"), 100, 1.001),
+                            messages[current],
+                        )
+
     # 하단 발자국의 35·30·35 구역 침범 확인
     def test_direction_uses_footprint_overlap_with_intrusion_thresholds(self):
         """최대 겹침 구역과 기준 이상 침범한 인접 구역을 모두 반환한다."""
