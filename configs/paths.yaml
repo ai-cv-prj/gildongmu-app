@@ -20,7 +20,7 @@ voice_dir: frontend/audio/voice
 mask2former_weights: weights/walking/mask2former
 
 # 장애물 검출 가중치
-yolo_weights: weights/walking/yolo/yolo26n_pedestrian29_stop_v1.pt
+yolo_weights: weights/walking/yolo/yolo26n_pedestrian29_stop_v3.pt
 
 # 신호등·횡단보도 검출 가중치
 traffic_weights: weights/traffic/best_YOLO_v2.pt

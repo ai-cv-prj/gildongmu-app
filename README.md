@@ -154,7 +154,7 @@ gildongmu-app/
 │   │   │   ├── preprocessor_config.json
 │   │   │   └── model.safetensors
 │   │   └── yolo/
-│   │       └── yolo26n_pedestrian29_stop_v1.pt
+│   │       └── yolo26n_pedestrian29_stop_v3.pt
 │   └── traffic/
 │       ├── best_YOLO_v2.pt
 │       └── best_MobileNet.pt
@@ -170,7 +170,7 @@ gildongmu-app/
 | 파일 | 용도 |
 | --- | --- |
 | `weights/walking/mask2former/` | 3클래스 분할 모델과 전처리 설정 |
-| `weights/walking/yolo/yolo26n_pedestrian29_stop_v1.pt` | 장애물 검출 모델 |
+| `weights/walking/yolo/yolo26n_pedestrian29_stop_v3.pt` | 장애물 검출 모델 |
 | `weights/traffic/best_YOLO_v2.pt` | 보행자 신호등·횡단보도 검출 모델 |
 | `weights/traffic/best_MobileNet.pt` | 신호등 색상 분류 모델 |
 | `data/samples/input/` | 추론할 MP4 입력 폴더 |
