@@ -99,7 +99,7 @@ class ClientTimingRecord(BaseModel):
     audio_delay_ms: float | None = Field(default=None, ge=0)
     status: str | None = Field(default=None, max_length=40)
     source: str | None = Field(default=None, max_length=20)
-    action: Literal["left", "straight", "right", "stop"] | None = None
+    action: Literal["left", "right", "stop"] | None = None
     event_ids: list[int] = Field(default_factory=list, max_length=20)
     recording_active: bool = False
 

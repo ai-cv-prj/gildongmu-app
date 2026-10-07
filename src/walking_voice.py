@@ -22,21 +22,17 @@ DISTANCE_TIE_RATIO = GUIDANCE["walking_distance_tie_ratio"]
 TWO_STEP_ENTER_RATIO = GUIDANCE["walking_two_step_enter_ratio"]
 TWO_STEP_EXIT_RATIO = GUIDANCE["walking_two_step_exit_ratio"]
 LATERAL_CONFIRM_S = GUIDANCE.get("walking_lateral_confirm_ms", 200) / 1000
-STRAIGHT_CONFIRM_S = GUIDANCE.get("walking_straight_confirm_ms", 3000) / 1000
 FROM_STOP_CONFIRM_S = GUIDANCE.get("walking_from_stop_confirm_ms", 500) / 1000
 REPEAT_NONE_S = GUIDANCE.get("walking_repeat_none_ms", 3000) / 1000
 STOP_REPEAT_NONE_S = GUIDANCE.get("walking_stop_repeat_none_ms", 1000) / 1000
 ACTION_MESSAGES = {
     ("left", 1): ("왼쪽으로 한 걸음", "walking-move-left-one.mp3"),
     ("left", 2): ("왼쪽으로 두 걸음", "walking-move-left-two.mp3"),
-    "straight": ("천천히 가세요.", "walking-straight.mp3"),
     ("right", 1): ("오른쪽으로 한 걸음", "walking-move-right-one.mp3"),
     ("right", 2): ("오른쪽으로 두 걸음", "walking-move-right-two.mp3"),
     "stop": ("멈추세요", "walking-stop.mp3"),
 }
 VEHICLE_CLASSES = frozenset({"car", "bus", "truck", "motorcycle"})
-NON_GREEN_SIGNAL_STATES = frozenset({"red", "unknown"})
-CROSSWALK_WAIT_STATUSES = frozenset({"used", "eligible"})
 
 
 # 이전 행동과 다음 행동에 맞는 음성 확정 시간 선택
@@ -48,8 +44,6 @@ def transition_confirm_s(previous_action, next_action):
         return 0.0
     if previous_action == "stop":
         return FROM_STOP_CONFIRM_S
-    if next_action == "straight":
-        return STRAIGHT_CONFIRM_S
     return LATERAL_CONFIRM_S
 
 
@@ -285,41 +279,25 @@ def movement_steps(items, action, image_width, previous_steps=None):
 
 # 위험 분포를 최종 이동 행동으로 변환
 def walking_action(prediction, image_width, crossing_active=False, stationary_voice=False):
-    """횡단 상태에 맞는 위험 분포와 좌우 안전도를 하나의 행동으로 바꾼다."""
+    """위험 분포에 따라 좌우 회피·정지 또는 안내 없음으로 판단한다."""
     dangers = guidance_items(prediction, "danger", crossing_active, stationary_voice)
     if any("predicted_moving_conflict" in item.get("reasons", []) for item in dangers):
         return "stop"
     directions = {direction for item in dangers
                   for direction in warning_directions(item, image_width)}
-    if not directions:
+    if "center" not in directions:
         return None
-    if directions in ({"left"}, {"right"}, {"left", "right"}):
-        return "straight"
     if directions == {"left", "center"}:
         return "right"
     if directions == {"center", "right"}:
         return "left"
     if directions == {"left", "center", "right"}:
         all_people = all(item.get("class_name") == "person" for item in dangers)
-        return "straight" if all_people else "stop"
+        return None if all_people else "stop"
     if directions == {"center"}:
         cautions = guidance_items(prediction, "caution", crossing_active, stationary_voice)
         return safer_side(dangers, cautions, image_width) or "stop"
     return "stop"
-
-
-# 횡단보도 대기 중 직진 음성 제외 조건 확인
-def suppress_waiting_straight(signal, action):
-    """빨간불 또는 확인 불가 신호에서 전방 횡단보도 직진 안내를 제외한다."""
-    if action != "straight" or not isinstance(signal, dict):
-        return False
-    if signal.get("signal_state") not in NON_GREEN_SIGNAL_STATES:
-        return False
-    diagnostics = signal.get("crosswalk_diagnostics") or {}
-    if diagnostics.get("eligible_count", 0) > 0:
-        return True
-    return any(item.get("crosswalk_status") in CROSSWALK_WAIT_STATUSES
-               for item in signal.get("crosswalks", []))
 
 
 class WalkingVoice:
@@ -330,7 +308,6 @@ class WalkingVoice:
         """마지막 안내 행동과 저장 영상용 오디오 이벤트를 빈 상태로 시작한다."""
         self.last_action = None
         self.last_steps = None
-        self.last_action_since = None
         self.events = []
         self.pending_action = None
         self.pending_since = None
@@ -348,7 +325,6 @@ class WalkingVoice:
                 or self.epoch is not None and self.epoch != prediction.get("state_epoch", 0)):
             self.hazards.clear()
             self.last_action = self.last_steps = None
-            self.last_action_since = None
             self.pending_action = self.pending_since = self.clear_since = None
         self.previous_time = timestamp
         self.epoch = prediction.get("state_epoch", 0)
@@ -377,9 +353,9 @@ class WalkingVoice:
         return {**prediction, "detections": current + retained}, len(retained)
 
     # 현재 프레임의 신규 위험 안내 기록
-    def observe(self, prediction, image_width, output_time_s, crossing_active=False, signal=None,
+    def observe(self, prediction, image_width, output_time_s, crossing_active=False,
                 crosswalk_status=None):
-        """횡단 상태와 신호 대기 조건을 반영해 변경된 행동 음원만 예약한다."""
+        """횡단 상태와 음성 후보 조건을 반영해 변경된 회피·정지 음원만 예약한다."""
         prediction.pop("voice_text", None)
         prediction.pop("voice_clip", None)
         prediction.pop("voice_event", None)
@@ -389,11 +365,10 @@ class WalkingVoice:
         display_action = walking_action(evidence, image_width)
         vehicle_only = crossing_active or crosswalk_status == "approach"
         raw_action = walking_action(evidence, image_width, vehicle_only, True)
-        if (prediction.get("boarding") or {}).get("assumed_stationary") and raw_action is not None:
-            # Keep the user stopped during input even when a side hazard would
-            # ordinarily allow straight movement.
-            raw_action = "stop"
         eligible = guidance_items(evidence, "danger", vehicle_only, True)
+        if (prediction.get("boarding") or {}).get("assumed_stationary") and eligible:
+            # 입력 중에는 측면 위험만 남아도 기존 정지 안내를 유지한다.
+            raw_action = "stop"
         raw_steps = movement_steps(
             eligible, raw_action, image_width,
             previous_steps if raw_action == previous_action else None,
@@ -411,24 +386,15 @@ class WalkingVoice:
                     >= repeat_none_s(self.last_action)):
                 self.last_action = None
                 self.last_steps = None
-                self.last_action_since = None
         else:
             if self.clear_since is not None and self.last_action is not None:
                 none_duration = output_time_s - self.clear_since
                 same_action = voice_action == self.last_action
-                lateral_to_straight = (self.last_action in ("left", "right")
-                                       and voice_action == "straight")
                 repeat_ready = none_duration + 1e-6 >= repeat_none_s(self.last_action)
-                # 좌우 안내 뒤 직진은 none이 3초 이상 유지된 경우에만 새로 안내한다.
-                if lateral_to_straight and not repeat_ready:
-                    self.last_action = voice_action
-                    self.last_steps = voice_steps
-                    self.last_action_since = output_time_s
                 # none 전후 행동이 다르면 새 안내로 보고 안정화 시간 없이 즉시 재생한다.
-                elif not same_action or repeat_ready:
+                if not same_action or repeat_ready:
                     self.last_action = None
                     self.last_steps = None
-                    self.last_action_since = None
             self.clear_since = None
             # 같은 방향의 걸음 수 변화도 동일 행동으로 보고 반복 안내하지 않는다.
             if voice_action == self.last_action:
@@ -441,20 +407,13 @@ class WalkingVoice:
                 if self.pending_action != candidate:
                     self.pending_action, self.pending_since = candidate, output_time_s
                 confirmation = transition_confirm_s(self.last_action, voice_action)
-                confirmation_since = self.pending_since
-                if (self.last_action in ("left", "right") and voice_action == "straight"
-                        and self.last_action_since is not None):
-                    confirmation_since = self.last_action_since
-                if output_time_s - confirmation_since + 1e-6 < confirmation:
+                if output_time_s - self.pending_since + 1e-6 < confirmation:
                     voice_action = self.last_action
                     voice_steps = self.last_steps
                 else:
                     self.pending_action = self.pending_since = None
             else:
                 self.pending_action = self.pending_since = None
-        if suppress_waiting_straight(signal, voice_action):
-            voice_action = None
-            voice_steps = None
         prediction["last_action"] = display_action
         prediction["voice_action"] = voice_action
         prediction["voice_steps"] = voice_steps
@@ -497,7 +456,6 @@ class WalkingVoice:
             return None
         self.last_action = voice_action
         self.last_steps = voice_steps
-        self.last_action_since = output_time_s
         prediction["voice_text"] = message[0]
         self.events.append((output_time_s, message[1]))
         prediction["voice_clip"] = message[1]
