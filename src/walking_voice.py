@@ -179,6 +179,8 @@ def guidance_items(prediction, level, crossing_active=False, stationary_voice=Fa
         return []
     stationary = (stationary_voice
                   and (prediction.get("stationarity") or {}).get("status") == "stationary")
+    if stationary:
+        return []
     return [item for item in prediction.get("detections", [])
             if item.get("alert_level", item.get("risk_level")) == level
             and item.get("warning_primary", True)
@@ -186,8 +188,6 @@ def guidance_items(prediction, level, crossing_active=False, stationary_voice=Fa
             and (not crossing_active or item.get("class_name") in VEHICLE_CLASSES
                  or item.get("class_name") == "bicycle" and rapid_approach_hazard(item))
             and not item.get("risk_suppressed_reason")
-            and (not stationary
-                 or bool((item.get("geometry") or {}).get("stationary_voice_eligible")))
             and (level != "danger" or inside_voice_roi(item) or rapid_approach_hazard(item))]
 
 

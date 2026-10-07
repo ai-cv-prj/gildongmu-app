@@ -229,9 +229,6 @@ risk:
   stationary_p80_motion_per_s: 0.050
   stationary_scale_change_per_s: 0.030
   stationary_min_points: 12
-  # 정지 중에는 분홍색 ROI의 아래 절반에 들어온 객체만 음성 안내
-  stationary_voice_roi_fraction: 0.50
-  stationary_voice_overlap_threshold: 0.10
 
   # 경고 유지와 출력
   release_hold_s: 0.5

@@ -86,7 +86,7 @@ class CrosswalkVoice:
         return events
 
 
-# 세 안내 종류를 전역 우선순위로 병합
+# 저장 영상의 모든 안내를 전역 우선순위로 병합
 def prioritize_voice_events(walking_events, traffic_events, crosswalk_events,
                             walking_surface_events=()):
     """상위 음성이 재생 중인 시점의 하위 이벤트를 폐기해 단일 재생 시간축을 만든다."""
@@ -123,12 +123,12 @@ def prioritize_voice_events(walking_events, traffic_events, crosswalk_events,
                 active_source = None
                 active_clip = None
             continue
-        walking_action_changed = (source == "walking" and active_source == "walking"
-                                  and priority == active_priority)
-        crosswalk_direction_changed = (source == "crosswalk" and active_source == "crosswalk"
-                                       and clip != active_clip)
+        same_source_urgent_change = (source == active_source
+                                     and priority == active_priority
+                                     and priority <= 4
+                                     and clip != active_clip)
         if (time_s < active_end - 1e-9 and priority >= active_priority
-                and not walking_action_changed and not crosswalk_direction_changed):
+                and not same_source_urgent_change):
             continue
         result.append((time_s, clip))
         active_end = time_s + clip_duration(clip)
