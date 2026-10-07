@@ -35,6 +35,22 @@
     onTextScaleChange: textScale => { preferences.textScale = textScale; savePreferences(); } });
   view.setSettings(preferences); view.show("welcome", { focus: false }); view.setBusy(true);
 
+  let diagnosticAction = null;
+  window.GFetchDiagnostics?.setContextProvider(() => ({
+    session_id: sessionId || pendingStopSessionId || pendingCheckSessionId || uploadSessionId,
+    screen: view.getScreen(), ui_action: diagnosticAction, running,
+    recording_active: Boolean(activeClip), pending_upload_count: pendingUploads.length,
+  }));
+  window.GFetchDiagnostics?.subscribe(summary => {
+    const button = $("save-error-log"), label = $("fetch-error-log-status");
+    if (button) button.hidden = summary.count === 0;
+    if (label) {
+      label.hidden = summary.count === 0;
+      label.textContent = `연결 오류 ${summary.count}건 · 미전송 ${summary.pending}건` +
+        (summary.storageAvailable ? " · 이 기기에 기록됨" : " · 창을 닫기 전에 오류 로그를 저장해 주세요");
+    }
+  });
+
   function savePreferences() {
     try { localStorage.setItem(preferenceKey, JSON.stringify(preferences)); } catch (_) {}
   }
@@ -728,6 +744,12 @@
     else if (pendingStopSessionId) status(`${message} '영상 전송 다시 시도'로 종료 확인을 재시도할 수 있습니다.`);
   }
   async function act(action) {
+    diagnosticAction = action;
+    if (action === "save-error-log") {
+      try { window.GFetchDiagnostics?.download(); }
+      catch (_) { status("오류 로그 파일을 저장하지 못했습니다. 다시 시도해 주세요."); }
+      return;
+    }
     if (!ready) return;
     cancelRatePreview();
     diagnostic("user_action", { reason: action });
@@ -849,7 +871,8 @@
     clearTimeout(timer); clearInterval(tick); clearInterval(logTimer);
     journey.stop(); boarding.stop(); walking.stop(); traffic.stop(); coordinator.stop();
     void Promise.resolve(finalizingClip).finally(() => GCamera.stop());
-    if (id) void fetch("/api/sessions/stop", { method: "POST", keepalive: true,
+    const stopFetch = window.GFetchDiagnostics?.fetch || fetch;
+    if (id) void stopFetch("/api/sessions/stop", { method: "POST", keepalive: true,
       headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: id }) }).catch(() => {});
   });
 })();

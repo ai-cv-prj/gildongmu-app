@@ -29,7 +29,7 @@ function harness() {
   });
   const actionButtons = [["camera-left", "settings-type"], ["stage-button", "manual-arrival"], ["walk-end", "end"],
     ["input-back", "back"], ["end-cancel", "cancel-end"], ["end-confirm", "confirm-end"], ["bus-number", "open-keypad"],
-    ["home-start", "start"], ["type-home", "settings-home"]].map(([id, action]) => {
+    ["home-start", "start"], ["type-home", "settings-home"], ["save-error-log", "save-error-log"]].map(([id, action]) => {
     const button = node(id); button.dataset.action = action; return button;
   });
   const mic = node("mic-button"); mic.dataset.mic = "input";
@@ -175,6 +175,14 @@ test("처리·일시중지 중에는 입력을 막으면서 종료와 뒤로가�
   assert.deepEqual(h.submissions, []); assert.deepEqual(h.keypadOpens, []);
   h.view.setPaused(false); h.submit();
   assert.deepEqual(h.submissions, ["143"]);
+  h.view.destroy();
+});
+
+test("설정 로딩 실패나 전송 처리 중에도 오류 로그 저장을 사용할 수 있다", () => {
+  const h = harness(); h.view.setBusy(true); h.view.setPaused(true);
+  assert.equal(h.node("save-error-log").disabled, false);
+  h.click("save-error-log");
+  assert.deepEqual(h.actions, ["save-error-log"]);
   h.view.destroy();
 });
 

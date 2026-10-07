@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 from backend.session import SessionError, SessionManager
 from backend.clips import ClipError, ClipStore, MAX_CHUNK_BYTES
 from backend.logger import configure_app_logging
+from backend.client_errors import ClientErrorStore, ClientFetchErrors, hub_source_id
 from backend.diagnostics import MAX_EVENT_BYTES, RequestCorrelationMiddleware, sanitize_events
 from backend.boarding import BoardingError
 from backend.bus.arrival import BusArrivalError, BusArrivalService
@@ -145,6 +146,8 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
         manager = SessionManager(resolve_path(paths["session_dir"]), session_settings=settings["session"],
                                  bus_config=bus_settings)
     sessions = manager
+    source_id = hub_source_id()
+    client_errors = ClientErrorStore(sessions.output_dir, source_id)
     clip_store = ClipStore(sessions, max_jpeg_bytes=upload["max_jpeg_bytes"],
                            recording_fps=recording_settings["fps"])
     exporter = ThreadPoolExecutor(max_workers=1, thread_name_prefix="clip-export")
@@ -190,6 +193,13 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
         response = await call_next(request)
         if request.url.path == "/" or request.url.path.startswith("/static/"):
             response.headers["Cache-Control"] = "no-store"
+        if source_id:
+            response.headers["X-Hub-Source-ID"] = source_id
+        request_id = request.headers.get("X-Client-Request-ID", "")
+        if request_id and len(request_id) <= 80 and request_id.replace("-", "").isalnum():
+            response.headers["X-Client-Request-ID"] = request_id
+            log.info("client request completed id=%s method=%s path=%s status=%s",
+                     request_id, request.method, request.url.path, response.status_code)
         return response
 
     app.mount("/audio", StaticFiles(directory=audio_directory(audio_config, paths_config)),
@@ -207,6 +217,11 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
     def health():
         """터널 스크립트가 서버 작동 여부를 확인한다."""
         return {"ok": True}
+
+    @app.post("/api/client-errors")
+    def record_fetch_errors(request: ClientFetchErrors):
+        """Accept pending fetch diagnostics even before or after a live session."""
+        return {"saved_ids": client_errors.append(request.records)}
 
     @app.get("/api/bus/status")
     def bus_status():
