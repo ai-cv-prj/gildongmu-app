@@ -1,0 +1,284 @@
+"""Authenticated collection and viewing of field-test artifacts; no inference imports."""
+
+import asyncio
+from dataclasses import dataclass
+import hashlib
+import hmac
+import json
+import os
+from pathlib import Path
+import re
+from typing import Annotated
+from urllib.parse import quote
+from uuid import uuid4
+
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, Response
+from fastapi.security import HTTPBasic, HTTPBasicCredentials, HTTPAuthorizationCredentials, HTTPBearer
+from starlette.concurrency import run_in_threadpool
+
+from result_hub.storage import Archive, SESSION_PATTERN, SOURCE_PATTERN, validate_json, validate_path
+
+
+STATIC = Path(__file__).parent / "static"
+
+
+@dataclass(frozen=True)
+class HubSettings:
+    storage_dir: Path
+    viewer_username: str
+    viewer_password: str
+    source_tokens: dict[str, str]
+    max_upload_bytes: int = 1024 * 1024 * 1024
+
+    @classmethod
+    def from_env(cls):
+        try:
+            tokens = json.loads(os.environ.get("HUB_SOURCE_TOKENS_JSON", "{}"))
+            limit = int(os.environ.get("HUB_MAX_UPLOAD_BYTES", str(1024 * 1024 * 1024)))
+        except (ValueError, TypeError) as error:
+            raise ValueError("HUB_SOURCE_TOKENS_JSON 또는 HUB_MAX_UPLOAD_BYTES 설정을 확인하세요.") from error
+        return cls(Path(os.environ.get("HUB_STORAGE_DIR", "data/result-hub")),
+                   os.environ.get("HUB_VIEWER_USERNAME", ""),
+                   os.environ.get("HUB_VIEWER_PASSWORD", ""), tokens, limit)
+
+    def validate(self):
+        if not self.viewer_username or len(self.viewer_username) > 80 or len(self.viewer_password) < 16:
+            raise ValueError("허브 조회 계정과 16자 이상의 HUB_VIEWER_PASSWORD를 설정하세요.")
+        if not isinstance(self.source_tokens, dict) or not self.source_tokens:
+            raise ValueError("HUB_SOURCE_TOKENS_JSON에 서버별 전송 토큰을 설정하세요.")
+        for source_id, token in self.source_tokens.items():
+            if not SOURCE_PATTERN.fullmatch(source_id) or not isinstance(token, str) or len(token) < 24:
+                raise ValueError("서버 ID는 영문·숫자·밑줄·하이픈 1~64자, 전송 토큰은 24자 이상이어야 합니다.")
+        if len(set(self.source_tokens.values())) != len(self.source_tokens):
+            raise ValueError("서버별 전송 토큰은 서로 달라야 합니다.")
+        if type(self.max_upload_bytes) is not int or self.max_upload_bytes <= 0:
+            raise ValueError("HUB_MAX_UPLOAD_BYTES는 양의 정수여야 합니다.")
+
+
+def _equal(left, right):
+    return hmac.compare_digest(left.encode("utf-8"), right.encode("utf-8"))
+
+
+def file_url(source_id, path):
+    return f"/api/files/{quote(source_id, safe='')}/{quote(path, safe='/')}"
+
+
+def create_app(settings=None):
+    settings = settings or HubSettings.from_env()
+    settings.validate()
+    archive = Archive(settings.storage_dir)
+    app = FastAPI(title="길동무 팀 결과 보관함", docs_url=None, redoc_url=None, openapi_url=None)
+    app.state.archive = archive
+    # A single publication stream keeps bounded memory/disk pressure across four uploaders.
+    upload_lock = asyncio.Lock()
+    basic = HTTPBasic(auto_error=False)
+    bearer = HTTPBearer(auto_error=False)
+
+    def viewer(credentials: Annotated[HTTPBasicCredentials | None, Depends(basic)]):
+        if credentials is None:
+            raise HTTPException(401, "조회 계정으로 로그인하세요.", headers={"WWW-Authenticate": 'Basic realm="Gildongmu results", charset="UTF-8"'})
+        user_ok = _equal(credentials.username, settings.viewer_username)
+        password_ok = _equal(credentials.password, settings.viewer_password)
+        if not (user_ok and password_ok):
+            raise HTTPException(401, "조회 계정을 확인하세요.", headers={"WWW-Authenticate": 'Basic realm="Gildongmu results"'})
+
+    def source(source_id: str, credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]):
+        expected = settings.source_tokens.get(source_id)
+        if credentials is None or expected is None or not _equal(credentials.credentials, expected):
+            raise HTTPException(401, "전송 서버 인증에 실패했습니다.")
+
+    def checked_path(source_id, path, *, create_parent=False):
+        try:
+            return archive.file(source_id, path, create_parent=create_parent)
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+
+    @app.middleware("http")
+    async def response_headers(request, call_next):
+        response = await call_next(request)
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+            "media-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'"
+        )
+        return response
+
+    @app.get("/api/health")
+    def health():
+        return {"ok": True}
+
+    @app.head("/api/ingest/{source_id}/{path:path}", dependencies=[Depends(source)])
+    def artifact_head(source_id: str, path: str):
+        checked_path(source_id, path)
+        try:
+            info = archive.info(source_id, path)
+        except OSError as error:
+            raise HTTPException(503, "저장소를 확인할 수 없습니다.") from error
+        if info is None:
+            raise HTTPException(404, "아직 수집되지 않은 파일입니다.")
+        return Response(headers={"X-Content-SHA256": info["sha256"], "Content-Length": str(info["size"])})
+
+    @app.put("/api/ingest/{source_id}/{path:path}", dependencies=[Depends(source)])
+    async def ingest(source_id: str, path: str, request: Request):
+        checked_path(source_id, path)
+        digest = request.headers.get("x-content-sha256", "")
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise HTTPException(400, "X-Content-SHA256 해시가 필요합니다.")
+        limit = min(settings.max_upload_bytes, 2 * 1024 * 1024) if path.endswith(".json") else settings.max_upload_bytes
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            if not content_length.isascii() or not content_length.isdecimal():
+                raise HTTPException(400, "Content-Length 값이 올바르지 않습니다.")
+            if int(content_length) > limit:
+                raise HTTPException(413, "파일 크기 제한을 초과했습니다.")
+        temporary = None
+        try:
+            async with upload_lock:
+                target = checked_path(source_id, path, create_parent=True)
+                temporary = target.parent / f".upload-{uuid4().hex}"
+                size = 0
+                hasher = hashlib.sha256()
+                with temporary.open("xb") as output:
+                    async for chunk in request.stream():
+                        size += len(chunk)
+                        if size > limit:
+                            raise HTTPException(413, "파일 크기 제한을 초과했습니다.")
+                        hasher.update(chunk)
+                        await run_in_threadpool(output.write, chunk)
+                    await run_in_threadpool(output.flush)
+                    await run_in_threadpool(os.fsync, output.fileno())
+                if content_length is not None and int(content_length) != size:
+                    raise HTTPException(400, "전송 크기가 Content-Length와 일치하지 않습니다.")
+                if hasher.hexdigest() != digest:
+                    raise HTTPException(422, "전송한 파일의 SHA-256이 일치하지 않습니다.")
+                try:
+                    await run_in_threadpool(validate_json, path, temporary)
+                except ValueError as error:
+                    raise HTTPException(422, str(error)) from error
+                await run_in_threadpool(temporary.replace, target)
+                info = await run_in_threadpool(archive.record, source_id, path, digest)
+                return {"ok": True, **info}
+        except OSError as error:
+            raise HTTPException(503, "결과 저장에 실패했습니다. 저장 공간과 권한을 확인하세요.") from error
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+
+    read = APIRouter(dependencies=[Depends(viewer)])
+
+    @read.get("/")
+    def index():
+        return FileResponse(STATIC / "index.html", media_type="text/html")
+
+    @read.get("/static/{name}")
+    def static(name: str):
+        if name not in ("app.js", "app.css"):
+            raise HTTPException(404)
+        return FileResponse(STATIC / name)
+
+    @read.get("/api/sources")
+    def sources():
+        entries = archive.entries()
+        source_ids = sorted(set(settings.source_tokens) | {row["source_id"] for row in entries})
+        return {"sources": [{
+            "source_id": source_id,
+            "last_received_at": max((row["received_at"] for row in entries if row["source_id"] == source_id), default=None),
+            "session_count": sum(row["source_id"] == source_id and row["path"].endswith("/session.json") for row in entries),
+        } for source_id in source_ids]}
+
+    @read.get("/api/sessions")
+    def sessions(source_id: str | None = None, q: str = Query(default="", max_length=200)):
+        entries = archive.entries(source_id or None)
+        rows = []
+        for entry in entries:
+            if not entry["path"].endswith("/session.json"):
+                continue
+            source_id = entry["source_id"]
+            value = archive.read_json(source_id, entry["path"])
+            if value is None:
+                continue
+            session_id = entry["path"].split("/")[1]
+            if q and q.casefold() not in " ".join(str(value.get(key, "")) for key in (
+                    "device_name", "note", "started_at", "date", "folder_name")).casefold() + " " + source_id.casefold():
+                continue
+            prefix = f"sessions/{session_id}/"
+            related = [item for item in entries if item["source_id"] == source_id and item["path"].startswith(prefix)]
+            manifests = [archive.read_json(source_id, item["path"]) or {} for item in related if item["path"].endswith("/manifest.json")]
+            rows.append({**{key: value.get(key) for key in ("device_name", "note", "started_at", "ended_at", "frame_count")},
+                         "source_id": source_id, "session_id": session_id,
+                         "received_at": max(item["received_at"] for item in related),
+                         "clip_count": len(manifests),
+                         "ready_clip_count": sum(item.get("state") == "ready" for item in manifests)})
+        rows.sort(key=lambda row: row.get("started_at") or "", reverse=True)
+        return {"sessions": rows}
+
+    def public_entry(entry):
+        return {key: entry[key] for key in ("path", "size", "received_at")} | {
+            "url": file_url(entry["source_id"], entry["path"])}
+
+    @read.get("/api/sessions/{source_id}/{session_id}")
+    def session_detail(source_id: str, session_id: str):
+        if not SESSION_PATTERN.fullmatch(session_id):
+            raise HTTPException(404)
+        prefix = f"sessions/{session_id}/"
+        checked_path(source_id, prefix + "session.json")
+        value = archive.read_json(source_id, prefix + "session.json")
+        if value is None:
+            raise HTTPException(404, "세션을 찾을 수 없습니다.")
+        entries = [entry for entry in archive.entries(source_id) if entry["path"].startswith(prefix)]
+        paths = {entry["path"] for entry in entries}
+        clips = []
+        for entry in sorted(entries, key=lambda row: row["path"]):
+            if not entry["path"].endswith("/manifest.json"):
+                continue
+            manifest = archive.read_json(source_id, entry["path"])
+            if manifest is None:
+                continue
+            folder = entry["path"].rsplit("/", 1)[0] + "/"
+            # Derive URLs from the allowlist rather than trusting uploaded paths or URLs.
+            original = next((folder + name for name in ("original.webm", "original.mp4") if folder + name in paths), None)
+            inference = folder + "inference.mp4"
+            clips.append({**manifest, "original_url": file_url(source_id, original) if original else None,
+                          "inference_url": file_url(source_id, inference) if inference in paths and manifest.get("state") == "ready" else None,
+                          "manifest_url": file_url(source_id, entry["path"])})
+        return {"source_id": source_id, "session_id": session_id, "session": value,
+                "files": [public_entry(entry) for entry in entries], "clips": clips,
+                "provenance": archive.read_json(source_id, prefix + "provenance.json")}
+
+    @read.get("/api/logs")
+    def logs(source_id: str | None = None):
+        return {"logs": [{"source_id": entry["source_id"], **public_entry(entry)}
+                         for entry in archive.entries(source_id or None) if entry["path"].startswith("logs/")]}
+
+    @read.get("/api/files/{source_id}/{path:path}")
+    def artifact(source_id: str, path: str, download: bool = False):
+        target = checked_path(source_id, path)
+        if not target.is_file():
+            raise HTTPException(404, "아직 수집되지 않은 파일입니다.")
+        suffix = target.suffix
+        media = {".mp4": "video/mp4", ".webm": "video/webm", ".json": "application/json"}.get(suffix, "text/plain; charset=utf-8")
+        return FileResponse(target, media_type=media, filename=target.name,
+                            content_disposition_type="attachment" if download else "inline")
+
+    @read.get("/api/preview/{source_id}/{path:path}")
+    def preview(source_id: str, path: str, lines: int = Query(default=200, ge=1, le=1000)):
+        target = checked_path(source_id, path)
+        if target.suffix in (".mp4", ".webm"):
+            raise HTTPException(400, "텍스트 파일만 미리 볼 수 있습니다.")
+        if not target.is_file():
+            raise HTTPException(404, "아직 수집되지 않은 파일입니다.")
+        with target.open("rb") as stream:
+            size = stream.seek(0, 2)
+            offset = max(0, size - 1024 * 1024)
+            stream.seek(offset)
+            data = stream.read(1024 * 1024)
+        if offset:
+            data = data.partition(b"\n")[2]
+        text_lines = data.decode("utf-8", errors="replace").splitlines()
+        return {"text": "\n".join(text_lines[-lines:]), "truncated": offset > 0 or len(text_lines) > lines}
+
+    app.include_router(read)
+    return app

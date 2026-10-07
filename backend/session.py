@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo
 import cv2
 
 from backend.boarding import Boarding
+from backend.provenance import process_snapshot, write_snapshot
 from backend.bus.config import load_bus_config
 from backend.bus.recognition import BusRecognizer
 from backend.response import make_response
@@ -50,6 +51,7 @@ class SessionManager:
     def __init__(self, output_dir, model_factory=None, session_settings=None,
                  bus_recognizer=None, bus_config=None):
         """모델은 첫 세션 시작 시에만 로딩하고 이후 세션에서 재사용한다."""
+        self.runtime_snapshot = process_snapshot()
         self.output_dir = Path(output_dir)
         self.settings = session_settings if session_settings is not None else load_app_config()["session"]
         self.model_factory = model_factory
@@ -104,6 +106,7 @@ class SessionManager:
                     break
                 except FileExistsError:
                     index += 1
+            write_snapshot(folder, self.runtime_snapshot)
             self._last_frame_key = None
             self._last_frame_result = None
             self.session = {

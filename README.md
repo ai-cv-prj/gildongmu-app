@@ -552,3 +552,19 @@ node --test tests/frontend/test_*.js tests/frontend/test_*.cjs
 | [ROI 및 위험 검토](docs/roi_and_risk_review_20260921.md) | ROI 성능 측정과 영상 검토 |
 | [위험 판단 개선](docs/risk_revision_implementation_20260921.md) | ROI 확장과 위험 해제 기준 |
 | [공통 ROI 설계](docs/risk_shared_profile_20260921.md) | 공통 진행 경로와 측면 위험 판단 |
+
+## 10. 팀 결과 중앙 조회 (Docker)
+
+각 팀원 서버에서 분석 앱과 코드 수정을 계속하면서, 사용자 PC의 Docker 조회 서버에
+`test-result`의 영상·분석 결과·로그를 모아 같은 브라우저 주소로 확인할 수 있습니다.
+조회 서버는 GPU나 모델 가중치 없이 실행되며, 각 서버의 동기화 프로그램이 변경 결과를 전송합니다.
+
+```bash
+# 조회용 PC에서 최초 1회
+python -m scripts.init_hub_env
+docker compose --env-file .env.hub -f compose.hub.yaml up -d --build
+```
+
+HTTPS 주소와 개별 업로드 토큰을 설정한 각 팀원 서버에서는 `python -m scripts.sync_results`를
+별도 실행합니다. 인증 설정·WSL Docker 준비·영상 보관·재시도·코드 변경 절차는
+[팀 결과 중앙 조회 서버 안내](docs/result_hub.md)를 따릅니다.

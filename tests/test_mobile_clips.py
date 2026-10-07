@@ -348,7 +348,7 @@ def test_session_events_share_one_log_and_keep_their_payloads(tmp_path):
     manager.update_boarding(session_id, "arrive")
     manager.stop(session_id)
     folder = manager.completed_folder(session_id)
-    assert {path.name for path in folder.iterdir()} == {"session.json", "results.jsonl", "events.jsonl"}
+    assert {path.name for path in folder.iterdir()} == {"session.json", "results.jsonl", "events.jsonl", "provenance.json"}
     events = [json.loads(line) for line in (folder / "events.jsonl").read_text().splitlines()]
     assert [event["event_group"] for event in events] == ["client_timing", "bus", "recording", "boarding"]
     assert events[0]["kind"] == "audio" and events[0]["frame_id"] == 1

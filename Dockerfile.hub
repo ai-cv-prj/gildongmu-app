@@ -1,0 +1,20 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+COPY requirements-hub.txt ./requirements-hub.txt
+RUN python -m pip install --no-cache-dir -r requirements-hub.txt \
+    && groupadd --gid 1000 hub \
+    && useradd --uid 1000 --gid hub --no-create-home --shell /usr/sbin/nologin hub \
+    && mkdir /data \
+    && chown hub:hub /data
+
+COPY --chown=hub:hub result_hub ./result_hub
+
+USER hub
+EXPOSE 8080
+
+CMD ["python", "-m", "uvicorn", "result_hub.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]

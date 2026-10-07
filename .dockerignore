@@ -1,0 +1,10 @@
+# Only the CPU-only result viewer enters the build context.
+**
+!Dockerfile.hub
+!requirements-hub.txt
+!result_hub/
+!result_hub/**
+**/__pycache__/
+**/*.pyc
+**/.env
+**/.env.*

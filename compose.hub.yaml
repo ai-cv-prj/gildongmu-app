@@ -1,0 +1,53 @@
+services:
+  result-hub:
+    build:
+      context: .
+      dockerfile: Dockerfile.hub
+    restart: unless-stopped
+    user: "${HUB_UID:?Run python -m scripts.init_hub_env}:${HUB_GID:?Run python -m scripts.init_hub_env}"
+    ports:
+      - "127.0.0.1:${HUB_PORT:-8080}:8080"
+    environment:
+      HUB_STORAGE_DIR: /data
+      HUB_VIEWER_USERNAME: ${HUB_VIEWER_USERNAME:?Run python -m scripts.init_hub_env}
+      HUB_VIEWER_PASSWORD: ${HUB_VIEWER_PASSWORD:?Run python -m scripts.init_hub_env}
+      HUB_SOURCE_TOKENS_JSON: ${HUB_SOURCE_TOKENS_JSON:?Run python -m scripts.init_hub_env}
+    volumes:
+      - type: bind
+        source: ./data/result-hub
+        target: /data
+        bind:
+          create_host_path: false
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=3).read()"
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  quick-tunnel:
+    image: cloudflare/cloudflared:2026.8.2
+    profiles: [quick-tunnel]
+    command: [tunnel, --no-autoupdate, --url, "http://result-hub:8080"]
+    restart: unless-stopped
+    depends_on:
+      result-hub:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
