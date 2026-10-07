@@ -101,6 +101,121 @@ window.GOverlay = (() => {
     }
   }
 
+  // 버스 모드에서는 화면과 저장 영상에 같은 인식 상태와 큰 노선 번호를 표시한다.
+  function busScene(result, age) {
+    const bus = result.bus || {}, event = bus.event || {};
+    const target = String(result.target_route || event.target_route || "");
+    const failed = ["error", "unavailable", "disabled"].includes(bus.status) || event.errors?.length;
+    const preparing = ["loading", "idle"].includes(bus.status);
+    const fresh = Number.isFinite(age) && age >= 0 && age <= 3000;
+    const evidence = !failed && !preparing && fresh
+      ? [...(event.recognized_routes || []), ...(event.matches || [])]
+        .filter(item => item.route_number && ["recognized_single", "matched_candidate"].includes(item.state))
+      : [];
+    const isTarget = item => item.is_target !== false && String(item.route_number) === target;
+    evidence.sort((left, right) => Number(isTarget(right)) - Number(isTarget(left))
+      || Number(right.state === "matched_candidate") - Number(left.state === "matched_candidate")
+      || (Number(right.token_score) || 0) - (Number(left.token_score) || 0));
+    // Share the spoken recognition lifecycle: a single unreadable frame must not flicker the card.
+    const guidance = result.bus_guidance;
+    const guidanceAge = Number.isFinite(guidance?.capturedAt)
+      && typeof performance !== "undefined" && Number.isFinite(performance.timeOrigin)
+      ? performance.timeOrigin + performance.now() - guidance.capturedAt : Infinity;
+    const shown = !failed && !preparing && guidance?.routeNumber
+      && ["candidate", "confirmed", "other"].includes(guidance.status)
+      && guidanceAge >= 0 && guidanceAge <= 3000
+      ? { route_number: guidance.routeNumber, is_target: guidance.isTarget,
+          state: guidance.confirmed ? "matched_candidate" : "recognized_single" }
+      : evidence[0];
+    const scale = canvas.width / 360;
+    const mint = "#21d7bb", amber = "#ffd166", muted = "#b9c5d5";
+    const colorFor = item => isTarget(item) && item.state === "matched_candidate" ? mint : amber;
+    const rounded = (x, y, width, height, radius, fill, stroke) => {
+      ctx.fillStyle = fill;
+      ctx.strokeStyle = stroke;
+      if (typeof ctx.roundRect === "function") {
+        ctx.beginPath();
+        ctx.roundRect(x, y, width, height, radius);
+        if (fill) ctx.fill();
+        if (stroke) ctx.stroke();
+      } else {
+        if (fill) ctx.fillRect(x, y, width, height);
+        if (stroke) ctx.strokeRect(x, y, width, height);
+      }
+    };
+    const fittedText = (text, x, y, fontSize, maxWidth, color) => {
+      ctx.font = `bold ${fontSize}px system-ui`;
+      while (ctx.measureText(text).width > maxWidth && fontSize > 8 * scale) {
+        fontSize -= scale;
+        ctx.font = `bold ${fontSize}px system-ui`;
+      }
+      ctx.fillStyle = color;
+      ctx.fillText(text, x, y);
+    };
+    ctx.save();
+    // A bus can move substantially during OCR: geometry expires sooner than the text evidence.
+    if (!failed && !preparing && age >= 0 && age <= 400) {
+      const detections = bus.detections || [];
+      for (const item of detections) {
+        const box = item.box;
+        const bounds = item.xyxy || (box ? [box.x1, box.y1, box.x2, box.y2] : []);
+        if (bounds.length !== 4 || !bounds.every(Number.isFinite)) continue;
+        const [x1, y1, x2, y2] = bounds.map(value => Math.max(0, Math.min(1, value)));
+        if (x2 <= x1 || y2 <= y1) continue;
+        const x = x1 * canvas.width, y = y1 * canvas.height;
+        const width = (x2 - x1) * canvas.width, height = (y2 - y1) * canvas.height;
+        const isNumber = item.class_name === "route_number" || item.class_id === 1;
+        const match = evidence.find(entry => entry.track_id != null && entry.track_id === item.track_id);
+        const color = match ? colorFor(match) : amber;
+        ctx.strokeStyle = isNumber ? "#ffffff" : color;
+        ctx.lineWidth = (isNumber ? 1.5 : 3) * scale;
+        rounded(x, y, width, height, (isNumber ? 2 : 6) * scale, null, ctx.strokeStyle);
+        // OCR crops remain visible, but only validated evidence labels the whole bus with a number.
+        if (isNumber) continue;
+        const label = match ? String(match.route_number) : "번호 확인 중";
+        ctx.font = `bold ${match ? 32 * scale : 15 * scale}px system-ui`;
+        const labelWidth = Math.min(canvas.width - 16 * scale, ctx.measureText(label).width + 16 * scale);
+        const labelHeight = (match ? 44 : 27) * scale;
+        const labelX = Math.max(8 * scale, Math.min(x, canvas.width - labelWidth - 8 * scale));
+        const labelY = Math.min(canvas.height - labelHeight - 8 * scale,
+          Math.max(130 * scale, y - labelHeight - 5 * scale));
+        rounded(labelX, labelY, labelWidth, labelHeight, 6 * scale, color, null);
+        fittedText(label, labelX + 8 * scale, labelY + labelHeight - 8 * scale,
+          (match ? 32 : 15) * scale, labelWidth - 16 * scale, "#071e23");
+      }
+    }
+    const x = 12 * scale, y = 12 * scale, width = canvas.width - 24 * scale;
+    const height = 108 * scale, padding = 12 * scale;
+    const accent = shown ? colorFor(shown) : muted;
+    ctx.lineWidth = 1.5 * scale;
+    rounded(x, y, width, height, 12 * scale, "rgba(9, 20, 36, 0.94)", accent);
+    const heading = shown ? isTarget(shown) ? "인식한 버스 번호" : "다른 버스 번호" : "버스 번호 인식";
+    fittedText(heading, x + padding, y + 22 * scale, 11 * scale, width * .48, "#edf3fa");
+    if (target) {
+      const targetLabel = `찾는 번호 ${target}`;
+      ctx.font = `bold ${11 * scale}px system-ui`;
+      const targetWidth = Math.min(width * .48, ctx.measureText(targetLabel).width);
+      fittedText(targetLabel, x + width - padding - targetWidth, y + 22 * scale,
+        11 * scale, width * .48, muted);
+    }
+    const title = shown ? String(shown.route_number)
+      : failed ? "번호 인식을 사용할 수 없어요"
+      : preparing ? "번호 인식을 준비하고 있어요"
+      : !fresh && Number.isFinite(bus.captured_at_ms) ? "번호를 다시 확인하고 있어요"
+      : "버스를 찾고 있어요";
+    const confirmedTarget = shown && isTarget(shown) && shown.state === "matched_candidate";
+    const detail = confirmedTarget ? null : shown ? isTarget(shown)
+      ? `${shown.route_number}번 버스 인식 중`
+      : `다른 노선 · 목표 ${target || "입력한 번호"}번`
+      : failed ? "번호 인식 상태를 확인해 주세요"
+      : preparing ? "잠시만 기다려 주세요" : "버스 방향으로 유지해 주세요";
+    fittedText(title, x + padding, y + (confirmedTarget ? 88 : shown ? 78 : 64) * scale,
+      (confirmedTarget ? 56 : shown ? 52 : 23) * scale, width - padding * 2, accent);
+    if (detail) fittedText(detail, x + padding, y + (shown ? 99 : 88) * scale, 11 * scale,
+      width - padding * 2, "#edf3fa");
+    ctx.restore();
+  }
+
   // 현장 테스트용 정류장 판정. 캔버스에 그리므로 오버레이 영상에도 남는다.
   function stopDiagnostic(event, crosswalk, walkingSurface) {
     const state = event?.status || "unavailable";
@@ -259,6 +374,15 @@ window.GOverlay = (() => {
           && performance.timeOrigin + performance.now() - result.captured_at_ms > 400) {
         return onDrawn("stale");
       }
+      const busMode = result.bus_mode === true
+        || (result.bus_mode !== false && Boolean(result.bus?.event?.target_route));
+      const busAge = Number.isFinite(result.bus?.captured_at_ms)
+        && typeof performance !== "undefined" && Number.isFinite(performance.timeOrigin)
+        ? performance.timeOrigin + performance.now() - result.bus?.captured_at_ms : Infinity;
+      if (busMode) {
+        busScene(result, busAge);
+        return onDrawn("drawn");
+      }
       if (mask) ctx.drawImage(mask, 0, 0, canvas.width, canvas.height);
       const obstacles = result.walking?.event?.enabled !== false && result.boarding?.obstacle_detection_enabled !== false;
       const roi = obstacles ? result.walking?.event?.roi || {} : {};
@@ -271,8 +395,6 @@ window.GOverlay = (() => {
       if (obstacles) boxes(result.walking?.detections, "walking");
       boxes(result.traffic?.detections, "traffic");
       // OCR finishes independently; only boxes from a recent capture belong on the live camera.
-      const busAge = typeof performance !== "undefined" && Number.isFinite(performance.timeOrigin)
-        ? performance.timeOrigin + performance.now() - result.bus?.captured_at_ms : Infinity;
       if (Number.isFinite(result.bus?.captured_at_ms) && busAge >= 0 && busAge <= 400)
         boxes(result.bus?.detections, "bus");
       crosswalkSafety(result.crosswalk?.event);
@@ -283,7 +405,8 @@ window.GOverlay = (() => {
         result.crosswalk?.event, result.walking_surface?.event);
       onDrawn("drawn");
     };
-    if (!result.walking?.mask_png) return draw(null);
+    if (result.bus_mode === true || (result.bus_mode !== false && result.bus?.event?.target_route)
+        || !result.walking?.mask_png) return draw(null);
     const mask = new Image();
     mask.onload = () => draw(mask);
     mask.onerror = () => draw(null);

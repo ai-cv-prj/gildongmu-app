@@ -9,6 +9,7 @@ function harness() {
   const nodes = new Map(), actions = [], submissions = [], spoken = [], focused = [], keypadOpens = [], keypadCloses = [];
   const keypadErrors = [];
   function node(id) {
+    if (id.startsWith("guidance-")) return null;
     if (!nodes.has(id)) {
       const handlers = new Map(), classes = new Set(), properties = new Map();
       nodes.set(id, { id, textContent: "", value: "", hidden: false, disabled: false, type: "button", dataset: {},
@@ -94,8 +95,10 @@ test("OCR·도착정보와 카메라 상태 변경은 사용자 초점을 빼앗
   const focusCount = h.focused.length;
   h.view.show("search"); h.view.setBus({ route: "143", ocrStatus: "confirmed", ocrCapturedAt: h.now(), ocrMessage: "143번 버스가 도착했습니다." });
   h.view.show("approach"); h.view.show("arrived"); h.view.render(null);
+  assert.match(h.view.getGuidance(), /^143번 버스가 도착했습니다/);
+  h.view.setBus({ ocrStatus: "other", ocrCapturedAt: h.now(), ocrMessage: "604번 버스, 다른 노선." });
+  assert.match(h.view.getGuidance(), /^604번 버스, 다른 노선/);
   assert.equal(h.focused.length, focusCount);
-  assert.equal(h.node("guidance-card").hidden, false);
   h.view.show("input");
   assert.equal(h.focused.at(-1), "input-first-button");
   assert.equal(h.keypadCloses.at(-1).restoreFocus, false);

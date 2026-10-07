@@ -24,7 +24,7 @@
     let keypad = null, lastActionAt = -Infinity;
     const listeners = [];
     const cameraPanel = document.querySelector('[data-panel="camera"]');
-    const film = window.GildongmuFilm.mount($("opening-film"), $("film-caption"), $("ending-film"));
+    const film = window.GildongmuFilm.mount($("opening-film"), $("film-caption"), $("ending-film"), $("input-art"));
     function bind(element, event, callback) {
       element.addEventListener(event, callback);
       listeners.push(() => element.removeEventListener(event, callback));
@@ -56,14 +56,6 @@
       $("route-error").hidden = !message;
       $("bus-number").setAttribute("aria-invalid", String(Boolean(message)));
       keypad?.setError(String(message || ""));
-    }
-    function paintCue(cue) {
-      currentCue = cue;
-      updateText($("guidance-label"), cue.label);
-      updateText($("guidance-title"), cue.title);
-      updateText($("guidance-copy"), cue.copy);
-      $("guidance-icon").setAttribute("href", `#icon-${cue.icon}`);
-      $("guidance-card").dataset.tone = cue.tone;
     }
     function hazardCue(result) {
       if (!result) return null;
@@ -103,18 +95,16 @@
         copy: bus.ocrMessage, icon: "scan", tone: "search" };
       const age = Date.now() - bus.ocrCapturedAt;
       if (!Number.isFinite(bus.ocrCapturedAt) || age < 0 || age > 3000) return null;
-      if (!["candidate", "confirmed"].includes(bus.ocrStatus)) return null;
+      if (!["candidate", "confirmed", "other"].includes(bus.ocrStatus)) return null;
       return { label: "카메라 번호 인식", title: bus.ocrMessage,
-        copy: "버스 번호와 주변 상황을 함께 확인해 주세요.",
+        copy: bus.ocrStatus === "other" ? "찾는 버스의 번호를 계속 확인합니다." : "버스 번호와 주변 상황을 함께 확인해 주세요.",
         icon: bus.ocrStatus === "confirmed" ? "check" : "bus",
         tone: bus.ocrStatus === "confirmed" ? "recognized" : "search" };
     }
     function render(result) {
       lastResult = result || null;
       if (!CAMERA_SCREENS.has(screen) || paused) return;
-      const cue = hazardCue(lastResult) || busCue();
-      paintCue(cue || DEFAULT_CUES[screen]);
-      $("guidance-card").hidden = !cue;
+      currentCue = hazardCue(lastResult) || busCue() || DEFAULT_CUES[screen];
     }
     function setObstacleDetection(enabled) { obstacleDetection = enabled; render(lastResult); }
     function updateControls() {
@@ -149,7 +139,6 @@
       if (paused) speech.stop();
       cameraPanel.classList.toggle("is-paused", paused);
       $("pause-card").hidden = !paused;
-      if (paused) $("guidance-card").hidden = true;
       $("bus-target").hidden = paused || !BUS_SCREENS.has(screen);
       $("bus-details").hidden = paused || !BUS_SCREENS.has(screen);
       $("pause-button").setAttribute("aria-pressed", String(paused));
@@ -165,10 +154,11 @@
       if (previous !== next) { speech.stop(); keypad?.close({ restoreFocus: false }); }
       const panelName = CAMERA_SCREENS.has(screen) ? "camera" : screen;
       all("[data-panel]").forEach(panel => { panel.hidden = panel.dataset.panel !== panelName; });
-      if (screen === "welcome" && previous !== "welcome") film.restart();
-      film.setVisible(screen === "welcome");
-      const busScreen = BUS_SCREENS.has(screen);
       $("app").dataset.screen = screen;
+      if (screen === "welcome" && previous !== "welcome") film.restart();
+      if (film.setScene) film.setScene(screen);
+      else film.setVisible(screen === "welcome");
+      const busScreen = BUS_SCREENS.has(screen);
       updateText($("camera-title-text"), busScreen ? " 버스 인식 중" : "이동 안내 중");
       $("camera-route").hidden = !busScreen;
       $("camera-title").classList.toggle("bus-title", busScreen);

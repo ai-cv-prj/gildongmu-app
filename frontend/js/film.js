@@ -6,6 +6,9 @@
 (() => {
   'use strict';
   const DURATION = 28;
+  const END_DURATION = 9;
+  const END_STILL = 1.6;
+  const INPUT_STILL = 16.5;
   const INK = '#242424';
   const STROKE = 2.2;
   const source = {
@@ -419,19 +422,55 @@
     c.restore();
   }
 
-  function mount(canvas, caption, endingCanvas) {
-    const ctx = canvas.getContext('2d');
+  function drawEnding(c, t, width, height) {
+    c.save(); c.clearRect(0, 0, width, height);
+    const ratio = Math.min(width / 600, height / 455);
+    c.translate((width - ratio * 600) / 2, height - ratio * 455); c.scale(ratio, ratio);
+    c.globalAlpha *= Math.min(ease(span(t, 0, .3)), 1 - ease(span(t, END_DURATION - .4, END_DURATION)));
+    ground(c);
+    const bx = t < 2.6 ? 40 : mix(40, -1000, ease(span(t, 2.6, 5.2)));
+    drawBus(c, bx, 397, 900, t < 2.2, false);
+    if (t >= .5 && t < 1.4) {
+      const p = ease(span(t, .5, 1.4));
+      actor(c, 'hero', t < 1 ? 11 : Math.floor(t * 9) % 8,
+        mix(205, 240, p), mix(352, 394, p), mix(184, 260, p), ease(span(t, .5, .8)));
+    } else if (t >= 1.4) {
+      actor(c, 'hero', Math.floor(t * 9) % 8, mix(240, 560, span(t, 1.4, 8.6)), 394, 260);
+    }
+    c.restore();
+  }
+
+  function fit(canvas) {
+    if (!canvas) return null;
+    const r = canvas.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    const d = Math.min(window.devicePixelRatio || 1, 2);
+    const w = Math.round(r.width * d), h = Math.round(r.height * d);
+    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+    return [w, h];
+  }
+
+  function mount(canvas, caption, endingCanvas, inputCanvas) {
     const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
-    let time = 0, playing = !motion.matches, ready = true;
-    let visible = false, destroyed = false, previous = 0, raf = 0, lastCaption = '', lastSpeaker = '';
+    let time = 0, endTime = 0, scene = null, destroyed = false, previous = null, raf = 0;
+    let lastCaption = '', lastSpeaker = '';
+    function activeCanvas() {
+      return scene === 'welcome' ? canvas : scene === 'input' ? inputCanvas : scene === 'end' ? endingCanvas : null;
+    }
     function paint() {
-      if (destroyed) return;
-      if (ready && endingCanvas) poster(endingCanvas);
-      const r = canvas.getBoundingClientRect(); if (!r.width || !r.height) return;
-      const d = Math.min(window.devicePixelRatio || 1, 2);
-      const w = Math.round(r.width * d), h = Math.round(r.height * d);
-      if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
-      draw(ctx, time, w, h);
+      if (destroyed || document.hidden) return;
+      const target = activeCanvas(), size = fit(target);
+      if (!size) return;
+      const ctx = target.getContext('2d');
+      if (scene === 'end') {
+        drawEnding(ctx, motion.matches ? END_STILL : endTime, size[0], size[1]);
+        return;
+      }
+      if (scene === 'input') {
+        draw(ctx, INPUT_STILL, size[0], size[1]);
+        return;
+      }
+      draw(ctx, time, size[0], size[1]);
       const data = dialogue(time);
       if (caption && (data.text !== lastCaption || data.speaker !== lastSpeaker)) {
         caption.textContent = data.text; lastCaption = data.text; lastSpeaker = data.speaker;
@@ -442,36 +481,55 @@
         }
       }
     }
-    function cancel() { if (raf) cancelAnimationFrame(raf); raf = 0; previous = 0; }
-    function run() { if (!destroyed && ready && visible && playing && !raf && !document.hidden) raf = requestAnimationFrame(tick); }
-    function tick(now) {
-      if (destroyed || !ready || !visible || !playing || document.hidden) { previous = 0; raf = 0; return; }
-      if (previous) time = (time + Math.min((now - previous) / 1000, .1)) % DURATION;
-      previous = now; paint(); raf = requestAnimationFrame(tick);
+    function cancel() { if (raf) cancelAnimationFrame(raf); raf = 0; previous = null; }
+    function canAnimate() {
+      return !destroyed && !motion.matches && !document.hidden &&
+        (scene === 'welcome' || scene === 'end') && !!activeCanvas();
     }
-    const observer = new ResizeObserver(paint);
+    function run() {
+      if (canAnimate() && !raf) {
+        const r = activeCanvas().getBoundingClientRect();
+        if (r.width && r.height) raf = requestAnimationFrame(tick);
+      }
+    }
+    function tick(now) {
+      raf = 0;
+      if (!canAnimate()) { previous = null; return; }
+      if (previous !== null) {
+        const elapsed = Math.min((now - previous) / 1000, .1);
+        if (scene === 'end') endTime = (endTime + elapsed) % END_DURATION;
+        else time = (time + elapsed) % DURATION;
+      }
+      previous = now; paint(); run();
+    }
+    const observer = new ResizeObserver(() => { paint(); run(); });
     observer.observe(canvas);
     if (endingCanvas) observer.observe(endingCanvas);
-    function onVisibility() { cancel(); run(); }
-    function onMotion() { playing = !motion.matches; cancel(); paint(); run(); }
+    if (inputCanvas) observer.observe(inputCanvas);
+    function onVisibility() { cancel(); paint(); run(); }
+    function onMotion() { cancel(); paint(); run(); }
+    function setScene(value) {
+      if (destroyed || scene === value) return;
+      cancel(); scene = value;
+      if (scene === 'end') endTime = 0;
+      paint(); run();
+    }
     document.addEventListener('visibilitychange', onVisibility);
     motion.addEventListener('change', onMotion);
-    paint();
     return {
-      setVisible(value) { visible = value; cancel(); paint(); run(); },
-      restart() { time = 0; playing = !motion.matches; cancel(); paint(); run(); },
+      setScene,
+      setVisible(value) { setScene(value ? 'welcome' : null); },
+      restart() { time = 0; endTime = 0; cancel(); paint(); run(); },
       destroy() {
-        destroyed = true; visible = false; cancel(); observer.disconnect();
+        destroyed = true; scene = null; cancel(); observer.disconnect();
         document.removeEventListener('visibilitychange', onVisibility);
         motion.removeEventListener('change', onMotion);
       }
     };
   }
   function poster(canvas) {
-    const r = canvas.getBoundingClientRect(); if (!r.width) return;
-    const d = Math.min(window.devicePixelRatio || 1, 2);
-    canvas.width = Math.round(r.width * d); canvas.height = Math.round(r.height * d);
-    draw(canvas.getContext('2d'), 25.35, canvas.width, canvas.height);
+    const size = fit(canvas); if (!size) return;
+    draw(canvas.getContext('2d'), 25.35, size[0], size[1]);
   }
   globalThis.GildongmuFilm = { draw, mount, poster, description, dialogue, strokeWidth:STROKE, duration: DURATION };
 })();

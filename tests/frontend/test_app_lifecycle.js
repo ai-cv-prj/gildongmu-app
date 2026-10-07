@@ -16,7 +16,7 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
   let recordStarts = 0, recordStops = 0;
   const timeline = [], uploads = [];
   const timers = new Map(), intervals = new Map(), frames = [], guides = [], journeyStarts = [], renders = [], statuses = [];
-  const captures = [], startModes = [], cameraModeCalls = [];
+  const captures = [], startModes = [], cameraModeCalls = [], overlayRenders = [];
   const elements = new Map();
   const node = id => {
     if (!elements.has(id)) elements.set(id, { value: id === "device" ? "test phone" : "", style: {},
@@ -36,7 +36,8 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
     route = value; journeyStarts.push(value); journeyPaused = false;
     journeyCallbacks.onChange({ route, gps: { status: "locating", candidates: [] }, ocr: {} });
   }, pause() { journeyPaused = true; }, resume() { if (route) journeyPaused = false; },
-    stop() { route = null; journeyPaused = false; }, accept() {}, selectStop() {}, repeat() {} };
+    stop() { route = null; journeyPaused = false; }, accept() {}, selectStop() {}, repeat() {},
+    snapshot() { return { ocr: { status: "searching", routeNumber: null } }; } };
   const api = { start: async (_device, _note, busHighres) => {
     sessionsStarted++; startModes.push(busHighres); return { session_id: "session-1" }; },
     stop: async () => {
@@ -102,7 +103,7 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
         return { blob: { size: 12, type: "video/webm" }, started_at_ms: recordingStartedAt,
           ended_at_ms: Math.min(100000 + now, recordingStartedAt + 30000) }; } },
     GOverlay: { size() {}, clear() {}, snapshot: () => "cG5n",
-      render(_result, done) { done("drawn"); } },
+      render(result, done) { overlayRenders.push(result); done("drawn"); } },
     fetch: async () => ({}), addEventListener() {},
     queueMicrotask,
   };
@@ -117,7 +118,7 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
     captured_at_ms: frame.capturedAtMs, inference_ms: 10,
     walking: { detections: [], event: {} }, traffic: { detections: [], event: {} },
     boarding: { ...busState }, stop_proximity: { nearby: false } });
-  return { action, frames, captures, startModes, guides, journeyStarts, renders, statuses, uploads, timeline, routeSubmissions,
+  return { action, frames, captures, startModes, guides, journeyStarts, renders, statuses, uploads, timeline, routeSubmissions, overlayRenders,
     routeErrors, shownScreens, typeRoute(value) { routeInput = value; },
     async end() { await action("end"); await action("confirm-end"); },
     submit: value => handlers.onSubmitRoute(value),
@@ -259,6 +260,9 @@ test("버스 노선 제출 후에도 보행 640px을 유지하고 버스 960px�
   assert.equal(app.frames[0].busBlob.maxSide, 960);
   assert.equal(app.frames[0].busCapturedAtMs, app.frames[0].capturedAtMs);
   await app.respond(0); await first.pending;
+  assert.equal(app.overlayRenders[0].bus_mode, true);
+  assert.equal(app.overlayRenders[0].target_route, "143");
+  assert.equal(app.overlayRenders[0].bus_guidance.status, "searching");
   app.setNow(250);
   const second = await app.capture();
   assert.deepEqual(app.captures, [640, 960, 640]);

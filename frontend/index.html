@@ -39,11 +39,11 @@
       </div>
     </section>
     <section class="screen" data-panel="home" aria-labelledby="home-title" hidden>
-      <nav class="top-controls" aria-label="출발 준비 상단"><div class="primary-controls"><button class="touch-zone top-primary" type="button" data-action="settings-type">글자 크기 설정</button><button class="touch-zone" type="button" data-action="start">안내 시작</button></div></nav>
+      <nav class="top-controls" aria-label="출발 준비 상단"><div class="primary-controls"><button class="touch-zone" type="button" data-action="settings-type">글자 크기 설정</button><button class="touch-zone top-primary" type="button" data-action="start">안내 시작</button></div></nav>
       <div class="settings-content"><h1 id="home-title" tabindex="-1">음성 속도 설정</h1><div class="option-list" role="group" aria-labelledby="home-title"><button class="option" type="button" data-rate="1" aria-pressed="true">1x</button><button class="option" type="button" data-rate="1.5" aria-pressed="false">1.5x</button><button class="option" type="button" data-rate="2" aria-pressed="false">2x</button></div></div>
     </section>
     <section class="screen" data-panel="type" aria-labelledby="type-title" hidden>
-      <nav class="top-controls" aria-label="출발 준비 상단"><div class="primary-controls"><button class="touch-zone top-primary" type="button" data-action="settings-home">음성 속도 설정</button><button class="touch-zone" type="button" data-action="start">안내 시작</button></div></nav>
+      <nav class="top-controls" aria-label="출발 준비 상단"><div class="primary-controls"><button class="touch-zone" type="button" data-action="settings-home">음성 속도 설정</button><button class="touch-zone top-primary" type="button" data-action="start">안내 시작</button></div></nav>
       <div class="settings-content"><h1 id="type-title" tabindex="-1">글자 크기 설정</h1><div class="option-list" role="group" aria-labelledby="type-title"><button class="option" type="button" data-size="1" aria-pressed="true">크게</button><button class="option" type="button" data-size="1.2" aria-pressed="false">더 크게</button><button class="option" type="button" data-size="1.5" aria-pressed="false">최대</button></div></div>
     </section>
     <section class="screen input-screen" data-panel="input" aria-labelledby="input-title" hidden>
@@ -53,20 +53,18 @@
           <button class="auxiliary voice-button" type="button" data-mic="input" aria-label="버스 번호 음성 입력" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#icon-mic"/></svg><span id="mic-label">음성 입력</span></button>
         </form>
       </nav>
-      <div class="content"><h1 class="sr-only" id="input-title" tabindex="-1">버스 번호 입력</h1><p class="sr-only" id="route-hint">버스 번호 입력 버튼을 누르면 위쪽 키패드가 열립니다.</p><p class="error" id="route-error" role="alert" hidden></p></div>
+      <div class="content"><h1 class="sr-only" id="input-title" tabindex="-1">버스 번호 입력</h1><p class="sr-only" id="route-hint">버스 번호 입력 버튼을 누르면 위쪽 키패드가 열립니다.</p><p class="error" id="route-error" role="alert" hidden></p><div class="scene-art input-art" aria-hidden="true"><canvas id="input-art"></canvas></div></div>
     </section>
     <section class="screen camera-screen" data-panel="camera" aria-labelledby="camera-title" hidden>
       <nav class="top-controls" aria-label="화면 위쪽 안내 조작"><div class="primary-controls"><button class="touch-zone" type="button" id="camera-left" data-action="settings-type"><span id="camera-left-label">글자 크기 설정</span></button><button class="touch-zone top-primary" type="button" id="stage-button" data-action="manual-arrival"><span id="stage-label">버스 번호 입력</span></button></div><button class="auxiliary" type="button" data-action="end" id="walk-end">안내 종료</button></nav>
       <div class="content">
         <h1 class="main-title" id="camera-title" tabindex="-1"><span id="camera-route" class="route-emphasis" hidden></span><span id="camera-title-text">이동 안내 중</span></h1>
-        <div class="guidance-card" id="guidance-card" data-tone="walk" hidden><div class="card-caption"><svg class="icon" aria-hidden="true"><use id="guidance-icon" href="#icon-walk"/></svg><span id="guidance-label">이동 안내</span></div><h2 id="guidance-title">주변을 살피며 이동해 주세요.</h2><p id="guidance-copy">보행 위험과 신호를 확인하고 있어요.</p></div>
-        <div class="pause-card" id="pause-card" hidden><h2>잠시 멈췄어요.</h2><p>촬영과 안내가 중지됩니다.</p><button type="button" class="auxiliary" data-action="pause">안내 재개</button></div>
-      <div class="camera" id="camera"><video id="video" autoplay playsinline muted aria-label="후면 카메라 영상"></video><canvas id="overlay" aria-hidden="true"></canvas><canvas id="camera-view" role="img" aria-label="후면 카메라와 실시간 추론 결과"></canvas><div class="camera-placeholder" id="placeholder"><svg class="icon" aria-hidden="true"><use href="#icon-camera"/></svg><span>카메라를 준비하고 있어요.</span></div><span class="camera-badge" id="camera-badge">준비 중</span></div>
+      <div class="camera" id="camera"><video id="video" autoplay playsinline muted aria-label="후면 카메라 영상"></video><canvas id="overlay" aria-hidden="true"></canvas><canvas id="camera-view" role="img" aria-label="후면 카메라와 실시간 추론 결과"></canvas><div class="camera-placeholder" id="placeholder"><svg class="icon" aria-hidden="true"><use href="#icon-camera"/></svg><span>카메라를 준비하고 있어요.</span></div><span class="camera-badge" id="camera-badge">준비 중</span><div class="pause-card" id="pause-card" hidden><h2>잠시 멈췄어요.</h2><p>촬영과 안내가 중지됩니다.</p><button type="button" class="auxiliary" data-action="pause">안내 재개</button></div></div>
       </div>
     </section>
     <section class="screen" data-panel="end" aria-labelledby="end-title" hidden>
       <nav class="top-controls" aria-label="화면 위쪽 종료 확인"><div class="primary-controls"><button class="touch-zone" type="button" data-action="cancel-end">계속 안내</button><button class="touch-zone top-primary" type="button" data-action="confirm-end">안내 종료</button></div></nav>
-      <div class="content"><h1 class="main-title" id="end-title" tabindex="-1">안내를<br>종료할까요?</h1></div>
+      <div class="content"><h1 class="main-title" id="end-title" tabindex="-1">안내를<br>종료할까요?</h1><div class="scene-art end-art" aria-hidden="true"><canvas id="ending-film"></canvas></div></div>
     </section>
   <div class="keypad-layer" id="route-keypad-layer" hidden>
    <section class="keypad-sheet" id="route-keypad-dialog" role="dialog" aria-modal="true" aria-label="버스 번호 입력 팝업">
