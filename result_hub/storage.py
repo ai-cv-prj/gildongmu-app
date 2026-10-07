@@ -12,6 +12,13 @@ import stat
 from uuid import uuid4
 
 
+CATEGORIES = ("obstacle", "traffic_light", "bus")
+
+
+class CategoryConflict(Exception):
+    """Another teammate changed the classification since it was loaded."""
+
+
 SOURCE_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,64}")
 SESSION_PATTERN = re.compile(r"[0-9a-f]{32}")
 ARTIFACT_PATTERN = re.compile(
@@ -72,6 +79,10 @@ class Archive:
                 id TEXT PRIMARY KEY, source_id TEXT NOT NULL, kind TEXT NOT NULL,
                 path TEXT NOT NULL, deleted_at TEXT NOT NULL, manifest TEXT NOT NULL,
                 state TEXT NOT NULL, UNIQUE(source_id, path))""")
+            db.execute("""CREATE TABLE IF NOT EXISTS clip_categories (
+                source_id TEXT NOT NULL, session_id TEXT NOT NULL, clip_key TEXT NOT NULL,
+                categories TEXT NOT NULL, revision INTEGER NOT NULL,
+                PRIMARY KEY (source_id, session_id, clip_key))""")
         self._recover_trash()
 
     @contextmanager
@@ -162,6 +173,45 @@ class Archive:
             return value if isinstance(value, dict) else None
         except (OSError, ValueError, UnicodeError):
             return None
+
+    def category_index(self):
+        with self.connection() as db:
+            rows = db.execute("SELECT * FROM clip_categories").fetchall()
+        return {(row["source_id"], row["session_id"], row["clip_key"]): {
+            "categories": json.loads(row["categories"]), "category_revision": row["revision"]
+        } for row in rows}
+
+    def set_categories(self, source_id, session_id, clip_key, categories, revision):
+        # The API publication lock serializes this with uploads/deletion/restoration.
+        prefix = f"sessions/{session_id}/"
+        validate_path(source_id, prefix + "session.json")
+        if self.read_json(source_id, prefix + "session.json") is None:
+            raise FileNotFoundError("테스트 기록을 찾을 수 없습니다.")
+        if clip_key == "legacy":
+            exists = any(self.file(source_id, prefix + name).is_file()
+                         for name in ("camera.mp4", "camera_overlay.mp4"))
+        elif re.fullmatch(r"clip_[0-9]{3}", clip_key):
+            exists = self.read_json(source_id, prefix + f"clips/{clip_key}/manifest.json") is not None
+        else:
+            raise ValueError("클립 번호가 올바르지 않습니다.")
+        if not exists:
+            raise FileNotFoundError("영상 클립을 찾을 수 없습니다.")
+        if (not isinstance(categories, list) or len(categories) > 3
+                or any(not isinstance(value, str) or value not in CATEGORIES for value in categories)
+                or type(revision) is not int or revision < 0):
+            raise ValueError("영상 분류 값이 올바르지 않습니다.")
+        values = [value for value in CATEGORIES if value in categories]
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT revision FROM clip_categories WHERE source_id=? AND session_id=? AND clip_key=?",
+                             (source_id, session_id, clip_key)).fetchone()
+            if revision != (row["revision"] if row else 0):
+                raise CategoryConflict()
+            db.execute("""INSERT INTO clip_categories VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(source_id, session_id, clip_key) DO UPDATE SET
+                categories=excluded.categories, revision=excluded.revision""",
+                       (source_id, session_id, clip_key, json.dumps(values), revision + 1))
+        return {"category_key": clip_key, "categories": values, "category_revision": revision + 1}
 
     def is_deleted(self, source_id, path):
         """A deletion intent is also a tombstone, including during crash recovery."""

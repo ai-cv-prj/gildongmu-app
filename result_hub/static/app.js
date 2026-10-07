@@ -3,7 +3,7 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   const state = {
-    source: "", query: "", sessions: [], logs: [], selected: null, selectedLog: null,
+    source: "", query: "", category: "", categoryBusy: false, categoryDrafts: new Map(), sessions: [], logs: [], selected: null, selectedLog: null,
     listSignature: "", logSignature: "", sourceSignature: "", refreshVersion: 0,
     detailVersion: 0, logVersion: 0, refreshing: false, detailData: null,
     adminEnabled: false, admin: false, adminBusy: false, adminVersion: 0,
@@ -22,6 +22,7 @@
     failed: "변환 실패", unknown: "상태 확인 필요",
   };
 
+  const categoryNames = { obstacle: "장애물", traffic_light: "신호등", bus: "버스" };
 
   function el(tag, className, text) {
     const node = document.createElement(tag);
@@ -84,13 +85,14 @@
     $("notice").textContent = message || "";
     $("notice").hidden = !message;
   }
-  async function api(path, { method = "GET", admin = false, password = adminPassword } = {}) {
+  async function api(path, { method = "GET", admin = false, password = adminPassword, body } = {}) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15_000);
     try {
       const response = await fetch(path, {
         method, credentials: "same-origin", cache: "no-store", signal: controller.signal,
-        headers: { Accept: "application/json", ...(admin ? { "X-Hub-Admin-Password": password } : {}) },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        headers: { Accept: "application/json", ...(body === undefined ? {} : { "Content-Type": "application/json", "X-Hub-Request": "categories" }), ...(admin ? { "X-Hub-Admin-Password": password } : {}) },
       });
       let result;
       try { result = await response.json() || {}; } catch { result = {}; }
@@ -149,6 +151,10 @@
       const heading = el("span", "item-heading");
       heading.append(el("span", "device", scalar(item.device_name, "이름 없는 기기")), el("span", "source-tag", scalar(item.source_id)));
       row.append(heading, el("span", "item-date", date(item.started_at)), el("span", "item-note", scalar(item.note, "메모 없음")));
+      const badges = categoryBadges(item.categories);
+      if (item.categories?.length && item.unclassified_clip_count) badges.append(el("span", "category-badge category-unclassified", `미분류 ${count(item.unclassified_clip_count)}`));
+      row.append(badges);
+      if (state.category) row.append(el("span", "item-status", `선택한 종류의 클립 ${count(item.matched_clip_count)}개`));
       const captureStatus = item.ended_at ? "촬영 종료" : "종료 기록 없음";
       row.append(el("span", "item-status", `${captureStatus} · 클립 ${count(item.clip_count)}개 · 변환 완료 ${count(item.ready_clip_count)}개`));
       if (state.admin) {
@@ -168,9 +174,107 @@
         fragment.append(wrap);
       } else fragment.append(row);
     }
-    if (!state.sessions.length) fragment.append(el("p", "list-empty", state.query || state.source ? "조건에 맞는 테스트 기록이 없습니다." : "아직 수신한 테스트 기록이 없습니다."));
+    if (!state.sessions.length) fragment.append(el("p", "list-empty", state.query || state.source || state.category ? "조건에 맞는 테스트 기록이 없습니다." : "아직 수신한 테스트 기록이 없습니다."));
     $("session-list").replaceChildren(fragment);
     $("session-count").textContent = `${count(state.sessions.length)}개 기록`;
+  }
+  function categoryBadges(values) {
+    const wrap = el("span", "category-badges");
+    const categories = Array.isArray(values) ? values.filter(value => categoryNames[value]) : [];
+    for (const value of categories) wrap.append(el("span", `category-badge category-${value}`, categoryNames[value]));
+    if (!categories.length) wrap.append(el("span", "category-badge category-unclassified", "미분류"));
+    return wrap;
+  }
+  function clipMatches(clip) {
+    return !state.category || (state.category === "unclassified" ? !clip.categories?.length : (clip.categories || []).includes(state.category));
+  }
+  function updateClipCards(data) {
+    if (!state.selected || key(state.selected) !== key(data)) return;
+    for (const card of $("session-detail").querySelectorAll(".clip-card")) {
+      const clip = data.clips.find(item => item.category_key === card.categoryKey);
+      if (!clip) continue;
+      card.hidden = !clipMatches(clip);
+      if (card.hidden) for (const video of card.querySelectorAll("video")) video.pause();
+      card.querySelector(".clip-category-badges").replaceChildren(categoryBadges(clip.categories));
+    }
+    const note = $("session-detail").querySelector(".clip-filter-note");
+    if (note) note.textContent = state.category ? `${categoryNames[state.category] || "미분류"} 클립 ${data.clips.filter(clipMatches).length}개 / 전체 ${data.clips.length}개 · 다른 종류는 영상 종류 필터에서 선택하세요.` : "클립마다 종류를 따로 선택하고 저장하세요.";
+  }
+  function clearCategoryDrafts(data) {
+    const prefix = `${key(data)}:`;
+    for (const recordKey of state.categoryDrafts.keys()) if (recordKey.startsWith(prefix)) state.categoryDrafts.delete(recordKey);
+  }
+  function categoryEditor(data, clip) {
+    const form = el("form", "category-editor");
+    const recordKey = `${key(data)}:${clip.category_key}`;
+    const previous = state.categoryDrafts.get(recordKey);
+    const draft = previous?.dirty ? previous : {
+      categories: [...(clip.categories || [])], revision: clip.category_revision || 0, dirty: false,
+    };
+    state.categoryDrafts.set(recordKey, draft);
+    const fields = el("fieldset");
+    fields.append(el("legend", "", "영상 분류"));
+    form.append(el("p", "muted", "이 클립에 해당하는 항목을 모두 선택하세요. 원본·분석 영상에 함께 적용됩니다."));
+    const choices = [];
+    for (const [value, label] of Object.entries(categoryNames)) {
+      const input = el("input");
+      input.type = "checkbox";
+      input.value = value;
+      input.checked = draft.categories.includes(value);
+      input.disabled = state.categoryBusy;
+      const choice = el("label", "category-choice");
+      choice.append(input, el("span", "", label));
+      fields.append(choice);
+      choices.push(input);
+      input.addEventListener("change", () => {
+        draft.categories = choices.filter(node => node.checked).map(node => node.value);
+        draft.dirty = true;
+        state.categoryDrafts.set(recordKey, draft);
+        status.textContent = "변경한 분류를 저장해 주세요.";
+      });
+    }
+    const status = el("p", "category-status");
+    status.setAttribute("role", "status");
+    const save = el("button", "category-save", "분류 저장");
+    save.type = "submit";
+    save.disabled = state.categoryBusy;
+    form.append(fields, el("p", "muted", "중복 선택 가능 · 모두 해제하여 저장하면 미분류"), save, status);
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (state.categoryBusy || state.adminBusy) return;
+      state.categoryBusy = true;
+      save.disabled = true;
+      choices.forEach(node => { node.disabled = true; });
+      status.textContent = "분류를 저장하고 있습니다…";
+      try {
+        const result = await api(`/api/sessions/${encodeURIComponent(data.source_id)}/${encodeURIComponent(data.session_id)}/clips/${encodeURIComponent(clip.category_key)}/categories`, {
+          method: "PUT", body: { categories: draft.categories, revision: draft.revision },
+        });
+        Object.assign(clip, result.item);
+        draft.categories = [...result.item.categories];
+        draft.revision = result.item.category_revision;
+        draft.dirty = false;
+
+        // Update a replacement detail view as well, but never another selected record.
+        if (state.detailData && key(state.detailData) === key(data)) {
+          const current = state.detailData.clips.find(item => item.category_key === clip.category_key);
+          if (current) Object.assign(current, result.item);
+          updateClipCards(state.detailData);
+        }
+        status.textContent = "분류를 저장했습니다.";
+        await refresh();
+      } catch (error) {
+        status.textContent = error.message;
+      } finally {
+        state.categoryBusy = false;
+        for (const node of document.querySelectorAll(".category-save")) node.disabled = false;
+        for (const node of document.querySelectorAll(".category-choice")) {
+          const input = node.querySelector("input");
+          if (input) input.disabled = false;
+        }
+      }
+    });
+    return form;
   }
   function metadataItem(label, value, wide = false) {
     const pair = el("div", wide ? "wide" : "");
@@ -203,16 +307,20 @@
     } else pane.append(el("div", "video-empty", placeholder));
     return pane;
   }
-  function renderClip(clip) {
+  function renderClip(clip, data) {
     const card = el("article", "clip-card");
+    card.categoryKey = clip.category_key;
+    card.hidden = !clipMatches(clip);
     const status = Object.hasOwn(statusNames, clip.state) ? clip.state : "unknown";
     const heading = el("div", "clip-heading");
     const waitingForFiles = status === "ready" && (!sameOriginUrl(clip.original_url) || !sameOriginUrl(clip.inference_url));
-    heading.append(el("strong", "", `클립 ${scalar(clip.clip_id)}`), el("span", `badge ${waitingForFiles ? "pending" : status}`, waitingForFiles ? "영상 전송 대기" : statusNames[status]));
+    heading.append(el("strong", "", clip.legacy ? "세션 영상 (이전 저장 형식)" : `클립 ${scalar(clip.clip_id)}`), el("span", `badge ${waitingForFiles ? "pending" : status}`, waitingForFiles ? "영상 전송 대기" : statusNames[status]));
     const duration = Number(clip.duration_ms);
     const timing = Number.isFinite(duration) ? `${(duration / 1000).toFixed(1)}초 · ` : "";
     heading.append(el("span", "muted", `${timing}분석 프레임 ${count(clip.frame_count)}개`));
-    card.append(heading);
+    const badges = el("div", "clip-category-badges");
+    badges.append(categoryBadges(clip.categories));
+    card.append(heading, badges, categoryEditor(data, clip));
     const videos = el("div", "video-grid");
     videos.append(videoPane("원본 영상", clip.original_url, "원본 영상이 아직 수신되지 않았습니다."));
     videos.append(videoPane("분석 영상", clip.inference_url, status === "no_frames" ? "선택된 추론 프레임이 없어 분석 영상이 없습니다." : status === "failed" ? "영상 변환에 실패했습니다. 오류를 확인하세요." : "분석 영상 변환 또는 파일 전송을 기다리고 있습니다."));
@@ -268,7 +376,7 @@
     const title = el("div");
     title.append(el("h2", "", scalar(session.device_name, "테스트 상세")), el("div", "muted", `${scalar(data.source_id)} / ${scalar(data.session_id)}`));
     const actions = el("div", "detail-actions");
-    actions.append(button("상세 새로고침", () => selectSession(state.selected)));
+    actions.append(button("상세 새로고침", () => { if (state.categoryBusy) return; clearCategoryDrafts(data); selectSession(state.selected); }));
     if (state.admin) actions.append(adminButton("테스트 기록 삭제", () => deleteSessions([{ source_id: data.source_id, session_id: data.session_id }]), "danger-button"));
     heading.append(title, actions);
     fragment.append(heading);
@@ -277,17 +385,12 @@
     fragment.append(metadata);
     fragment.append(sectionHeading("영상 클립", "상세 새로고침으로 최신 수신 상태 확인"));
     const clips = Array.isArray(data.clips) ? data.clips : [];
+    const filterNote = el("p", "clip-filter-note muted");
+    filterNote.setAttribute("role", "status");
+    fragment.append(filterNote);
     if (!clips.length) fragment.append(el("p", "inline-empty", "아직 수신한 클립이 없습니다. 영상 선택·업로드 여부와 전송 도구 상태를 확인하세요. 촬영 종료만으로 영상 저장이 완료되지는 않습니다."));
-    for (const clip of clips) fragment.append(renderClip(clip));
+    for (const clip of clips) fragment.append(renderClip(clip, data));
     const allFiles = Array.isArray(data.files) ? data.files : [];
-    const legacyOriginal = allFiles.find((file) => String(file.path).endsWith("/camera.mp4"));
-    const legacyInference = allFiles.find((file) => String(file.path).endsWith("/camera_overlay.mp4"));
-    if (legacyOriginal || legacyInference) {
-      fragment.append(sectionHeading("세션 영상", "이전 저장 형식"));
-      const videos = el("div", "video-grid clip-card");
-      videos.append(videoPane("원본 영상", legacyOriginal?.url, "원본 영상이 아직 수신되지 않았습니다."), videoPane("분석 영상", legacyInference?.url, "분석 영상이 아직 수신되지 않았습니다."));
-      fragment.append(videos);
-    }
     fragment.append(sectionHeading("분석 결과 · 기록 파일"));
     const files = allFiles.filter((file) => !/\.(mp4|webm|mov|jpg|jpeg|png)$/i.test(String(file.path)));
     const list = el("div", "file-list");
@@ -314,6 +417,7 @@
       fragment.append(el("p", "provenance-note", "서버 시작 시 디스크에서 관측한 코드·설정과 모델 파일 정보를 확인할 수 있습니다. 실제 메모리에 로딩된 버전을 보증하는 기록은 아닙니다."), provenanceDownload(data.provenance));
     } else fragment.append(el("p", "provenance-note", "아직 수신한 실행 환경 정보가 없습니다."));
     container.replaceChildren(fragment);
+    updateClipCards(data);
   }
   async function selectSession(item) {
     if (!item) return;
@@ -365,7 +469,7 @@
     loadPreview(previewContainer, file.source_id, file, () => version === state.logVersion);
   }
   async function refresh(automatic = false) {
-    if (automatic && (document.hidden || state.refreshing || state.adminBusy || state.filterPending)) return;
+    if (automatic && (document.hidden || state.refreshing || state.adminBusy || state.categoryBusy || state.filterPending)) return;
     const version = ++state.refreshVersion;
     state.refreshing = true;
     $("refresh").disabled = true;
@@ -374,6 +478,7 @@
     if (state.source) parameters.set("source_id", state.source);
     const logParameters = new URLSearchParams(parameters);
     if (state.query) parameters.set("q", state.query);
+    if (state.category) parameters.set("category", state.category);
     try {
       const [sources, sessions, logs] = await Promise.all([
         api("/api/sources"), api(`/api/sessions?${parameters}`), api(`/api/logs?${logParameters}`),
@@ -510,6 +615,7 @@
     $("admin-toggle").disabled = value;
     $("refresh").disabled = value || state.refreshing;
     $("source-filter").disabled = value;
+    $("category-filter").disabled = value;
     $("search").disabled = value;
     $("trash-refresh").disabled = value;
     for (const node of document.querySelectorAll(".admin-action")) node.disabled = value;
@@ -633,6 +739,11 @@
     renderLogs();
     if (state.admin) renderTrash();
   }
+  $("category-filter").addEventListener("change", () => {
+    state.category = $("category-filter").value;
+    changingFilter();
+    refresh();
+  });
   $("source-filter").addEventListener("change", () => {
     state.source = $("source-filter").value;
     state.logs = [];

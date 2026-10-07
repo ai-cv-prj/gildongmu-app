@@ -9,19 +9,26 @@ import os
 from pathlib import Path
 import re
 import sqlite3
-from typing import Annotated
+from typing import Annotated, Literal
 from urllib.parse import quote
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
+from pydantic import BaseModel, ConfigDict, Field
 from fastapi.responses import FileResponse, Response
 from fastapi.security import HTTPBasic, HTTPBasicCredentials, HTTPAuthorizationCredentials, HTTPBearer
 from starlette.concurrency import run_in_threadpool
 
-from result_hub.storage import Archive, SESSION_PATTERN, SOURCE_PATTERN, validate_json, validate_path
+from result_hub.storage import CATEGORIES, CategoryConflict, Archive, SESSION_PATTERN, SOURCE_PATTERN, validate_json, validate_path
 
 
 STATIC = Path(__file__).parent / "static"
+
+
+class CategoryUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    categories: list[Literal["obstacle", "traffic_light", "bus"]] = Field(max_length=3)
+    revision: int = Field(ge=0)
 
 
 @dataclass(frozen=True)
@@ -101,7 +108,8 @@ def create_app(settings=None):
     def administrator(request: Request):
         if not settings.admin_password:
             raise HTTPException(403, "관리자 기능이 설정되지 않았습니다.")
-        # Destructive operations require a separate administrator credential.
+        # Destructive operations require a separate credential; classification uses
+        # the shared viewer account with its own same-origin request header.
         password = request.headers.get("x-hub-admin-password", "")
         if request.headers.get("sec-fetch-site") == "cross-site" or not _equal(password, settings.admin_password):
             raise HTTPException(403, "관리자 비밀번호를 확인하세요.")
@@ -257,8 +265,51 @@ def create_app(settings=None):
             "session_count": sum(row["source_id"] == source_id and row["path"].endswith("/session.json") for row in entries),
         } for source_id in source_ids]}
 
+    @read.put("/api/sessions/{source_id}/{session_id}/clips/{clip_key}/categories")
+    async def update_categories(source_id: str, session_id: str, clip_key: str, payload: CategoryUpdate, request: Request):
+        # Basic auth is ambient in browsers; require a non-simple same-origin request.
+        if (request.headers.get("x-hub-request") != "categories"
+                or request.headers.get("sec-fetch-site") == "cross-site"):
+            raise HTTPException(403, "허브 화면에서 분류를 저장하세요.")
+        try:
+            return await mutate_archive(archive.set_categories, source_id, session_id, clip_key,
+                                        payload.categories, payload.revision)
+        except CategoryConflict:
+            raise HTTPException(409, "다른 팀원이 분류를 변경했습니다. 상세 새로고침 후 다시 선택해 주세요.") from None
+
+    def session_clips(source_id, session_id, entries, classifications):
+        paths = {entry["path"] for entry in entries}
+        prefix = f"sessions/{session_id}/"
+        clips = []
+        for entry in sorted(entries, key=lambda row: row["path"]):
+            if not entry["path"].endswith("/manifest.json"):
+                continue
+            manifest = archive.read_json(source_id, entry["path"])
+            if manifest is None:
+                continue
+            folder = entry["path"].rsplit("/", 1)[0] + "/"
+            clip_key = entry["path"].split("/")[3]
+            original = next((folder + name for name in ("original.webm", "original.mp4") if folder + name in paths), None)
+            inference = folder + "inference.mp4"
+            clips.append({**manifest, "clip_id": int(clip_key.removeprefix("clip_")),
+                          "category_key": clip_key, "legacy": False,
+                          **classifications.get((source_id, session_id, clip_key), {"categories": [], "category_revision": 0}),
+                          "original_url": file_url(source_id, original) if original else None,
+                          "inference_url": file_url(source_id, inference) if inference in paths and manifest.get("state") == "ready" else None,
+                          "manifest_url": file_url(source_id, entry["path"])})
+        if any(prefix + name in paths for name in ("camera.mp4", "camera_overlay.mp4")):
+            clips.append({"clip_id": None, "category_key": "legacy", "legacy": True, "state": "ready",
+                          **classifications.get((source_id, session_id, "legacy"), {"categories": [], "category_revision": 0}),
+                          "original_url": file_url(source_id, prefix + "camera.mp4") if prefix + "camera.mp4" in paths else None,
+                          "inference_url": file_url(source_id, prefix + "camera_overlay.mp4") if prefix + "camera_overlay.mp4" in paths else None})
+        return clips
+
     @read.get("/api/sessions")
-    def sessions(source_id: str | None = None, q: str = Query(default="", max_length=200)):
+    def sessions(source_id: str | None = None, q: str = Query(default="", max_length=200),
+                 category: str = Query(default="", max_length=32)):
+        if category not in ("", "unclassified", *CATEGORIES):
+            raise HTTPException(400, "영상 분류 필터가 올바르지 않습니다.")
+        classifications = archive.category_index()
         entries = archive.entries(source_id or None)
         rows = []
         for entry in entries:
@@ -274,12 +325,20 @@ def create_app(settings=None):
                 continue
             prefix = f"sessions/{session_id}/"
             related = [item for item in entries if item["source_id"] == source_id and item["path"].startswith(prefix)]
-            manifests = [archive.read_json(source_id, item["path"]) or {} for item in related if item["path"].endswith("/manifest.json")]
+            clips = session_clips(source_id, session_id, related, classifications)
+            matches = [clip for clip in clips if not category
+                       or (category == "unclassified" and not clip["categories"])
+                       or category in clip["categories"]]
+            if category and not matches:
+                continue
+            categories = [value for value in CATEGORIES if any(value in clip["categories"] for clip in clips)]
             rows.append({**{key: value.get(key) for key in ("device_name", "note", "started_at", "ended_at", "frame_count")},
-                         "source_id": source_id, "session_id": session_id,
+                         "source_id": source_id, "session_id": session_id, "categories": categories,
+                         "unclassified_clip_count": sum(not clip["categories"] for clip in clips),
+                         "matched_clip_count": len(matches),
                          "received_at": max(item["received_at"] for item in related),
-                         "clip_count": len(manifests),
-                         "ready_clip_count": sum(item.get("state") == "ready" for item in manifests)})
+                         "clip_count": len(clips),
+                         "ready_clip_count": sum(item.get("state") == "ready" for item in clips)})
         rows.sort(key=lambda row: row.get("started_at") or "", reverse=True)
         return {"sessions": rows}
 
@@ -299,21 +358,7 @@ def create_app(settings=None):
         if value is None:
             raise HTTPException(404, "세션을 찾을 수 없습니다.")
         entries = [entry for entry in archive.entries(source_id) if entry["path"].startswith(prefix)]
-        paths = {entry["path"] for entry in entries}
-        clips = []
-        for entry in sorted(entries, key=lambda row: row["path"]):
-            if not entry["path"].endswith("/manifest.json"):
-                continue
-            manifest = archive.read_json(source_id, entry["path"])
-            if manifest is None:
-                continue
-            folder = entry["path"].rsplit("/", 1)[0] + "/"
-            # Derive URLs from the allowlist rather than trusting uploaded paths or URLs.
-            original = next((folder + name for name in ("original.webm", "original.mp4") if folder + name in paths), None)
-            inference = folder + "inference.mp4"
-            clips.append({**manifest, "original_url": file_url(source_id, original) if original else None,
-                          "inference_url": file_url(source_id, inference) if inference in paths and manifest.get("state") == "ready" else None,
-                          "manifest_url": file_url(source_id, entry["path"])})
+        clips = session_clips(source_id, session_id, entries, archive.category_index())
         return {"source_id": source_id, "session_id": session_id, "session": value,
                 "files": [public_entry(entry) for entry in entries], "clips": clips,
                 "provenance": archive.read_json(source_id, prefix + "provenance.json")}

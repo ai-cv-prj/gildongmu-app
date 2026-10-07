@@ -90,9 +90,9 @@ function harness({ adminEnabled = true } = {}) {
     trash: [], intercept: null, confirm: true,
   };
   for (const session of server.sessions) session.clips = [
-    { clip_id: 1, state: "ready" },
-    { clip_id: 2, state: "ready" },
-    { clip_id: 3, state: "ready" },
+    { clip_id: 1, category_key: "clip_001", categories: [], category_revision: 0, state: "ready" },
+    { clip_id: 2, category_key: "clip_002", categories: [], category_revision: 0, state: "ready" },
+    { clip_id: 3, category_key: "clip_003", categories: [], category_revision: 0, state: "ready" },
   ];
   const document = {
     body, hidden: false,
@@ -141,13 +141,31 @@ function harness({ adminEnabled = true } = {}) {
       }
       if (url.pathname === "/api/sources") return response({ sources: ["member1", "member2"].map(source_id => ({ source_id })) });
       if (url.pathname === "/api/sessions") {
-        return response({ sessions: server.sessions.filter(item => (!url.searchParams.get("source_id") || item.source_id === url.searchParams.get("source_id")) && (!url.searchParams.get("q") || item.device_name.includes(url.searchParams.get("q")))) });
+        const category = url.searchParams.get("category");
+        const rows = server.sessions.map(item => ({ ...item,
+          categories: ["obstacle", "traffic_light", "bus"].filter(value => item.clips.some(clip => clip.categories.includes(value))),
+          unclassified_clip_count: item.clips.filter(clip => !clip.categories.length).length,
+          matched_clip_count: item.clips.filter(clip => !category || (category === "unclassified" ? !clip.categories.length : clip.categories.includes(category))).length,
+        }));
+        return response({ sessions: rows.filter(item => (!category || item.matched_clip_count) && (!url.searchParams.get("source_id") || item.source_id === url.searchParams.get("source_id")) && (!url.searchParams.get("q") || item.device_name.includes(url.searchParams.get("q")))) });
       }
       if (url.pathname === "/api/logs") return response({ logs: server.logs.filter(item => !url.searchParams.get("source_id") || item.source_id === url.searchParams.get("source_id")) });
       if (url.pathname.startsWith("/api/sessions/")) {
         const [, , , source_id, session_id] = url.pathname.split("/");
         const item = server.sessions.find(item => item.source_id === source_id && item.session_id === session_id);
-        return response({ source_id, session_id, session: {}, clips: item.clips.map(clip => ({ ...clip })), files: [] });
+        if (url.pathname.endsWith("/categories")) {
+          assert.equal(options.method, "PUT");
+          assert.equal(options.headers["X-Hub-Request"], "categories");
+          assert.equal(options.headers["X-Hub-Admin-Password"], undefined);
+          const clip = item.clips.find(clip => clip.category_key === url.pathname.split("/")[6]);
+          assert.ok(clip, "mutation must identify a specific clip");
+          const payload = JSON.parse(options.body);
+          if (payload.revision !== (clip.category_revision || 0)) return response({ detail: "다른 팀원이 분류를 변경했습니다. 상세 새로고침 후 다시 선택해 주세요." }, 409);
+          clip.categories = payload.categories;
+          clip.category_revision = payload.revision + 1;
+          return response({ ok: true, item: { category_key: clip.category_key, categories: clip.categories, category_revision: clip.category_revision } });
+        }
+        return response({ source_id, session_id, session: {}, clips: item.clips.map(clip => ({ ...clip, categories: [...clip.categories] })), files: [] });
       }
       if (url.pathname.startsWith("/api/preview/")) return response({ text: "test log" });
       assert.fail(`Unexpected request ${path}`);
@@ -275,4 +293,120 @@ test("rejected admin credentials remove privileges and stop remaining batch requ
   assert.equal(h.$("trash-tab").hidden, true);
   assert.match(h.$("admin-status").textContent, /관리자 인증이 만료/);
   assert.equal(h.server.sessions.length, 3);
+});
+
+
+test("ordinary teammates save multiple categories and find a record under either category", async () => {
+  const h = harness({ adminEnabled: false }); await settle();
+  await h.$("session-list").querySelector("button").fire("click");
+  const form = h.$("session-detail").querySelector(".category-editor");
+  const inputs = form.querySelectorAll("input");
+  inputs[0].checked = true; await inputs[0].fire("change");
+  inputs[2].checked = true; await inputs[2].fire("change");
+  await form.fire("submit");
+  assert.deepEqual(h.server.sessions[0].clips[0].categories, ["obstacle", "bus"]);
+  assert.match(form.textContent, /분류를 저장했습니다/);
+  assert.match(h.$("session-list").textContent, /장애물버스/);
+  assert.equal(h.calls.some(call => call.path.startsWith("/api/admin/")), false);
+  for (const category of ["obstacle", "bus", "traffic_light", "unclassified"]) {
+    h.$("category-filter").value = category;
+    await h.$("category-filter").fire("change"); await settle();
+    assert.equal(h.$("session-list").querySelectorAll(".session-item").length,
+      category === "unclassified" ? 3 : category === "traffic_light" ? 0 : 1);
+  }
+});
+
+test("failed saves keep the draft; conflicts require reload and never overwrite teammates", async () => {
+  const h = harness(); await settle();
+  await h.$("session-list").querySelector("button").fire("click");
+  let form = h.$("session-detail").querySelector(".category-editor");
+  let input = form.querySelectorAll("input")[2];
+  input.checked = true; await input.fire("change");
+  h.server.intercept = (path, options) => options.method === "PUT" ? response({ detail: "저장 실패" }, 503) : undefined;
+  await form.fire("submit");
+  assert.match(form.textContent, /저장 실패/);
+  assert.equal(input.checked, true);
+  assert.equal(form.querySelector("button").disabled, false);
+  h.server.intercept = null;
+  h.server.sessions[0].clips[0].categories = ["traffic_light"];
+  h.server.sessions[0].clips[0].category_revision = 1;
+  await form.fire("submit");
+  assert.match(form.textContent, /다른 팀원/);
+  assert.deepEqual(h.server.sessions[0].clips[0].categories, ["traffic_light"]);
+  const reload = h.$("session-detail").querySelectorAll("button").find(node => node.textContent === "상세 새로고침");
+  await reload.fire("click"); await settle();
+  form = h.$("session-detail").querySelector(".category-editor");
+  const inputs = form.querySelectorAll("input");
+  assert.equal(inputs[1].checked, true);
+  for (const node of inputs) { node.checked = false; await node.fire("change"); }
+  await form.fire("submit");
+  assert.deepEqual(h.server.sessions[0].clips[0].categories, []);
+  assert.equal(h.server.sessions[0].clips[0].category_revision, 2);
+});
+
+test("saving a previous selection cannot assign its categories to another record", async () => {
+  const h = harness(); await settle();
+  await h.$("session-list").querySelector("button").fire("click");
+  const form = h.$("session-detail").querySelector(".category-editor");
+  const input = form.querySelectorAll("input")[2]; input.checked = true; await input.fire("change");
+  const gate = deferred();
+  h.server.intercept = (path, options) => options.method === "PUT" ? gate.promise : undefined;
+  const saving = form.fire("submit"); await settle();
+  await h.$("session-list").querySelectorAll(".session-item")[1].fire("click");
+  gate.resolve(response({ ok: true, item: { category_key: "clip_001", categories: ["bus"], category_revision: 1 } }));
+  await saving;
+  const nextForm = h.$("session-detail").querySelector(".category-editor");
+  assert.equal(nextForm.querySelectorAll("input")[2].checked, false);
+  assert.equal(nextForm.querySelector("button").disabled, false);
+});
+
+
+test("mixed clips save independently and filtering hides nonmatching clips within the same session", async () => {
+  const h = harness({ adminEnabled: false }); await settle();
+  await h.$("session-list").querySelector("button").fire("click");
+  const forms = h.$("session-detail").querySelectorAll(".category-editor");
+  assert.equal(forms.length, 3);
+  const choices = [[2], [1], [0, 2]];
+  for (let i = 0; i < forms.length; i++) {
+    const inputs = forms[i].querySelectorAll("input");
+    for (const index of choices[i]) { inputs[index].checked = true; await inputs[index].fire("change"); }
+    await forms[i].fire("submit");
+  }
+  assert.deepEqual(h.server.sessions[0].clips.map(clip => clip.categories), [["bus"], ["traffic_light"], ["obstacle", "bus"]]);
+  assert.equal(h.server.sessions[1].clips[0].categories.length, 0);
+  h.$("category-filter").value = "bus";
+  await h.$("category-filter").fire("change"); await settle();
+  assert.match(h.$("session-list").textContent, /선택한 종류의 클립 2개/);
+  await h.$("session-list").querySelector("button").fire("click");
+  let cards = h.$("session-detail").querySelectorAll(".clip-card");
+  assert.deepEqual(cards.map(card => card.hidden), [false, true, false]);
+  assert.match(h.$("session-detail").querySelector(".clip-filter-note").textContent, /버스 클립 2개/);
+  // Removing a matching category hides just that clip without changing its siblings.
+  const busForm = cards[0].querySelector(".category-editor");
+  const bus = busForm.querySelectorAll("input")[2]; bus.checked = false; await bus.fire("change");
+  await busForm.fire("submit");
+  assert.equal(cards[0].hidden, true);
+  assert.equal(cards[2].hidden, false);
+  assert.match(h.$("session-detail").querySelector(".clip-filter-note").textContent, /버스 클립 1개/);
+  assert.deepEqual(h.server.sessions[0].clips[2].categories, ["obstacle", "bus"]);
+  h.$("category-filter").value = "unclassified";
+  await h.$("category-filter").fire("change"); await settle();
+  await h.$("session-list").querySelector("button").fire("click");
+  cards = h.$("session-detail").querySelectorAll(".clip-card");
+  assert.deepEqual(cards.map(card => card.hidden), [false, true, true]);
+});
+
+
+test("unsaved sibling clip choices survive saving another clip and toggling admin mode", async () => {
+  const h = harness(); await settle();
+  await h.$("session-list").querySelector("button").fire("click");
+  let forms = h.$("session-detail").querySelectorAll(".category-editor");
+  const pending = forms[1].querySelectorAll("input")[1]; pending.checked = true; await pending.fire("change");
+  const bus = forms[0].querySelectorAll("input")[2]; bus.checked = true; await bus.fire("change");
+  await forms[0].fire("submit");
+  await h.login();
+  forms = h.$("session-detail").querySelectorAll(".category-editor");
+  assert.equal(forms[1].querySelectorAll("input")[1].checked, true);
+  await forms[1].fire("submit");
+  assert.deepEqual(h.server.sessions[0].clips.map(clip => clip.categories), [["bus"], ["traffic_light"], []]);
 });
