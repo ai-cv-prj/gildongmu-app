@@ -7,6 +7,7 @@
   let automaticPause = false, generation = 0, presentation = 0, cameraLost = false;
   let frameId = 0, timer, tick, request, frameTask;
   let connectionLost = false, stopFailureMessage = "", uploadStage = null;
+  let savedTestSettings = null, testSettingsSaveTask = null, testSettingsError = "";
   let boardingState = null, activeRoute = null, draftRoute = "", draftEventId = null, lastResult = null;
   let lastBusCaptureAtMs = null, lastBusResultLoggedFrameId = null;
   let busScreen = "search", beforeEnd = "walk", submittingRoute = false, routeSubmitToken = 0;
@@ -74,9 +75,55 @@
   function status(message) {
     view.setStatus(stopFailureMessage && !running && !starting ? `${stopFailureMessage} ${message}` : message);
   }
+  function readTestSettings() {
+    let device = $("device").value === "custom" ? $("custom-device").value.trim() : $("device").value;
+    if (device === "자동 감지") device = /iPhone/.test(navigator.userAgent) ? "iPhone"
+      : /Android/.test(navigator.userAgent) ? "Android" : "웹 브라우저";
+    return { device_name: device, note: $("note").value.trim() };
+  }
+  function testSettingsChanged() {
+    const value = readTestSettings();
+    return savedTestSettings && (value.device_name !== savedTestSettings.device_name || value.note !== savedTestSettings.note);
+  }
+  function updateTestSettingsControls() {
+    const locked = starting || stopping || Boolean(testSettingsSaveTask);
+    for (const id of ["device", "custom-device", "note"]) $(id).disabled = locked;
+    const button = $("save-test-settings"), label = $("test-settings-status");
+    button.hidden = !sessionId;
+    button.disabled = !running || locked || !testSettingsChanged();
+    button.textContent = testSettingsSaveTask ? "저장 중…" : "기종·메모 저장";
+    const message = testSettingsSaveTask ? "기종·메모를 저장하고 있습니다."
+      : testSettingsError || (starting ? "테스트를 시작하고 있습니다. 잠시 후 수정할 수 있습니다."
+        : stopping ? "테스트 기록을 저장하고 있습니다."
+        : running ? testSettingsChanged() ? "변경한 기종·메모를 현재 테스트에 반영하려면 저장을 눌러 주세요."
+          : "현재 테스트에 저장된 기종·메모입니다. 안내 중에도 수정하고 저장할 수 있습니다."
+        : "기종·메모는 안내 시작 시 저장됩니다. 안내 중에도 수정하고 저장할 수 있습니다.");
+    if (label.textContent !== message) label.textContent = message;
+    label.classList.toggle("error", Boolean(testSettingsError));
+  }
+  function saveTestSettings() {
+    if (testSettingsSaveTask) return testSettingsSaveTask;
+    if (!running || starting || stopping || !sessionId) return Promise.resolve(false);
+    const value = readTestSettings(), id = sessionId;
+    if (!value.device_name) {
+      testSettingsError = "휴대폰 기종을 입력한 뒤 저장해 주세요.";
+      updateTestSettingsControls();
+      return Promise.resolve(false);
+    }
+    if (!testSettingsChanged() && !testSettingsError) return Promise.resolve(true);
+    testSettingsError = "";
+    testSettingsSaveTask = Promise.resolve().then(() => GApi.updateMetadata(id, value.device_name, value.note))
+      .then(() => { savedTestSettings = value; return true; })
+      .catch(error => {
+        testSettingsError = `기종·메모를 저장하지 못했습니다: ${error.message}. 다시 저장해 주세요.`;
+        return false;
+      }).finally(() => { testSettingsSaveTask = null; updateTestSettingsControls(); });
+    updateTestSettingsControls();
+    return testSettingsSaveTask;
+  }
   function controls() {
     view.setBusy(!ready || starting || stopping || uploading || Boolean(boardingState?.busy));
-    for (const id of ["device", "custom-device", "note"]) $(id).disabled = running || starting;
+    updateTestSettingsControls();
     $("camera-badge").textContent = paused ? "일시중지" : running && connectionLost ? "연결 복구 중"
       : running ? "안내 중" : starting ? "준비 중" : "대기 중";
     $("camera-badge").classList.toggle("live", running && !paused && !connectionLost);
@@ -613,11 +660,9 @@
       diagnostic("start_blocked", { reason: "pending_clip_storage" });
       return status("이전 테스트 영상 저장 상태를 먼저 확인해 주세요.");
     }
-    let device = $("device").value === "custom" ? $("custom-device").value.trim() : $("device").value;
-    if (device === "자동 감지") device = /iPhone/.test(navigator.userAgent) ? "iPhone"
-      : /Android/.test(navigator.userAgent) ? "Android" : "웹 브라우저";
-    if (!device) return status("테스트 설정에서 휴대폰 기종을 입력해 주세요.");
-    starting = true; stopFailureMessage = "";
+    const testSettings = readTestSettings();
+    if (!testSettings.device_name) return status("테스트 설정에서 휴대폰 기종을 입력해 주세요.");
+    starting = true; stopFailureMessage = ""; testSettingsError = ""; savedTestSettings = null;
     diagnostic("session_start");
     const version = ++generation;
     coordinator.start();
@@ -627,8 +672,9 @@
       if (version !== generation) return;
       $("camera").style.aspectRatio = `${info.width} / ${info.height}`;
       GOverlay.size(info.width, info.height); GRecorder.startPreview(); $("placeholder").hidden = true;
-      const created = await GApi.start(device, $("note").value.trim(), true);
+      const created = await GApi.start(testSettings.device_name, testSettings.note, true);
       if (version !== generation) { await GApi.stop(created.session_id); return; }
+      savedTestSettings = testSettings;
       sessionId = created.session_id; running = true; paused = false; cameraLost = false; connectionLost = false; frameId = 0;
       diagnostic("session_started");
       activeRoute = null; lastBusCaptureAtMs = null; lastBusResultLoggedFrameId = null;
@@ -716,6 +762,9 @@
       await frameTask;
     }
     frameTask = null;
+    // Finish an explicit metadata save before closing the same server session.
+    if (testSettingsSaveTask) await testSettingsSaveTask;
+    const unsavedTestSettings = testSettingsChanged();
     let message = "안내를 종료했습니다.";
     if (id) {
       if (flushTask) await flushTask;
@@ -737,6 +786,9 @@
       if (!pendingUploads.length && !pendingStopSessionId) uploadSessionId = null;
     }
     diagnostic("session_stopped", { session_id: id, reason });
+    if (unsavedTestSettings) message += " 저장하지 않은 기종·메모 변경은 이번 기록에 반영되지 않았습니다.";
+    savedTestSettings = null;
+    testSettingsError = unsavedTestSettings ? "저장하지 않은 기종·메모 변경은 이번 기록에 반영되지 않았습니다." : "";
     sessionId = null; activeRoute = null; lastBusCaptureAtMs = null;
     lastBusResultLoggedFrameId = null; lastResult = null; stopping = false;
     view.setRoute(""); view.show(finish ? "welcome" : "home"); view.setPaused(false); controls(); status(message);
@@ -829,7 +881,16 @@
     journey = GBusJourney.create({ api: GApi, coordinator, onChange: busChanged, onStatus: status, onEvent: queueEvent });
     ready = true; controls(); status("준비되었습니다. 시작하기를 눌러 주세요.");
   } catch (error) { status(`${error.message} 서버를 확인한 뒤 새로고침해 주세요.`); return; }
-  $("device").addEventListener("change", () => { $("custom-device").hidden = $("device").value !== "custom"; });
+  for (const id of ["device", "custom-device", "note"]) {
+    const changed = () => {
+      $("custom-device").hidden = $("device").value !== "custom";
+      testSettingsError = "";
+      updateTestSettingsControls();
+    };
+    $(id).addEventListener("input", changed);
+    $(id).addEventListener("change", changed);
+  }
+  $("save-test-settings").addEventListener("click", () => { void saveTestSettings(); });
   GCamera.setOnExposureChange(report => {
     const text = {
       stopped: "카메라 종료 · 다음 시작 시 기본 촬영",

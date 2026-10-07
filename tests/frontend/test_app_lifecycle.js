@@ -18,10 +18,20 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
   let diagnosticContext = () => ({});
   const timers = new Map(), intervals = new Map(), frames = [], guides = [], journeyStarts = [], renders = [], statuses = [];
   const captures = [], startModes = [], cameraModeCalls = [], overlayRenders = [];
+  const startSettings = [], metadataUpdates = [];
   const elements = new Map();
   const node = id => {
-    if (!elements.has(id)) elements.set(id, { value: id === "device" ? "test phone" : "", style: {},
-      classList: { toggle() {} }, addEventListener() {} });
+    if (!elements.has(id)) {
+      const listeners = new Map();
+      elements.set(id, { value: id === "device" ? "test phone" : "", style: {},
+        classList: { toggle() {} },
+        addEventListener(type, callback) {
+          if (!listeners.has(type)) listeners.set(type, []);
+          listeners.get(type).push(callback);
+        },
+        dispatchEvent(event) { for (const callback of listeners.get(event.type) || []) callback(event); },
+      });
+    }
     return elements.get(id);
   };
   const view = { setSettings(value) { configuredPreferences = value; }, show(value) { screen = value; shownScreens.push(value); }, getScreen: () => screen,
@@ -40,8 +50,13 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
     stop() { route = null; journeyPaused = false; }, accept() {}, selectStop() {}, repeat() {},
     snapshot() { return { ocr: { status: "searching", routeNumber: null } }; } };
   const api = { isRetryable: error => error?.retryable === true || (!error?.status && error?.name === "TypeError"),
-    start: async (_device, _note, busHighres) => {
+    start: async (device, note, busHighres) => {
+    startSettings.push({ device_name: device, note });
     sessionsStarted++; startModes.push(busHighres); return { session_id: "session-1" }; },
+    updateMetadata: async (id, device, note) => {
+      const saved = { session_id: id, device_name: device, note };
+      metadataUpdates.push(saved); return saved;
+    },
     stop: async () => {
       stopAttempts++;
       if (stopFailsOnce && stopAttempts === 1) throw Object.assign(new Error("일시적 연결 실패"), { status: 503 });
@@ -128,7 +143,12 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
     captured_at_ms: frame.capturedAtMs, inference_ms: 10,
     walking: { detections: [], event: {} }, traffic: { detections: [], event: {} },
     boarding: { ...busState }, stop_proximity: { nearby: false } });
-  return { api, diagnostics, action, frames, captures, startModes, guides, journeyStarts, renders, statuses, uploads, timeline, routeSubmissions, overlayRenders,
+  return { api, node, startSettings, metadataUpdates,
+    async event(id, type, value) {
+      if (value !== undefined) node(id).value = value;
+      node(id).dispatchEvent({ type, target: node(id) }); await flush();
+    },
+    diagnostics, action, frames, captures, startModes, guides, journeyStarts, renders, statuses, uploads, timeline, routeSubmissions, overlayRenders,
     routeErrors, shownScreens, typeRoute(value) { routeInput = value; },
     async end() { await action("end"); await action("confirm-end"); },
     submit: value => handlers.onSubmitRoute(value),
@@ -792,4 +812,108 @@ test("추론 종료 원인과 영상 저장 확인 실패를 함께 표시하고
   assert.equal(failure.frame_id, 2);
   assert.equal(stopped.reason, "frame_failed");
   assert.equal(stopped.error_message, "JPEG decode rejected");
+});
+
+
+test("기종·메모는 안내·일시중지·번호 입력·설정·종료 확인에서도 현재 세션에 저장한다", async () => {
+  const app = await harness();
+  await app.event("device", "change", "custom");
+  await app.event("custom-device", "input", "  Galaxy S24  ");
+  await app.event("note", "input", "  시작 메모  ");
+  await app.action("start");
+  assert.deepEqual(app.startSettings, [{ device_name: "Galaxy S24", note: "시작 메모" }]);
+  for (const action of [null, "pause", "pause", "manual-arrival", "settings-type", "settings-home", "end"]) {
+    if (action) await app.action(action);
+    for (const id of ["device", "custom-device", "note"]) assert.equal(app.node(id).disabled, false);
+    const note = `메모 ${app.metadataUpdates.length}`;
+    await app.event("note", "input", `  ${note}  `);
+    assert.equal(app.node("save-test-settings").disabled, false);
+    assert.match(app.node("test-settings-status").textContent, /저장을 눌러/);
+    await app.event("save-test-settings", "click");
+    assert.deepEqual(app.metadataUpdates.at(-1), { session_id: "session-1", device_name: "Galaxy S24", note });
+    assert.equal(app.node("save-test-settings").disabled, true);
+    assert.match(app.node("test-settings-status").textContent, /현재 테스트에 저장된/);
+  }
+  assert.equal(app.resources().sessionsStarted, 1);
+  await app.action("confirm-end");
+});
+
+test("빈 직접 입력은 거부하고 저장 실패 시 입력과 오류를 유지하여 다시 저장한다", async () => {
+  const app = await harness();
+  await app.action("start");
+  await app.event("device", "change", "custom");
+  await app.event("custom-device", "input", "   ");
+  await app.event("save-test-settings", "click");
+  assert.equal(app.metadataUpdates.length, 0);
+  assert.match(app.node("test-settings-status").textContent, /기종을 입력/);
+  await app.event("custom-device", "input", "  Galaxy S25  ");
+  await app.event("note", "input", "  실패해도 유지할 메모  ");
+  const save = app.api.updateMetadata;
+  app.api.updateMetadata = async () => { throw new Error("연결 끊김"); };
+  await app.event("save-test-settings", "click");
+  assert.equal(app.node("note").value, "  실패해도 유지할 메모  ");
+  assert.equal(app.node("save-test-settings").disabled, false);
+  assert.match(app.node("test-settings-status").textContent, /저장하지 못했습니다.*연결 끊김/);
+  await app.action("pause");
+  assert.match(app.node("test-settings-status").textContent, /저장하지 못했습니다/);
+  app.api.updateMetadata = save;
+  await app.event("save-test-settings", "click");
+  assert.deepEqual(app.metadataUpdates.at(-1), { session_id: "session-1", device_name: "Galaxy S25", note: "실패해도 유지할 메모" });
+  await app.event("note", "input", "   ");
+  await app.event("save-test-settings", "click");
+  assert.equal(app.metadataUpdates.at(-1).note, "");
+  await app.end();
+});
+
+test("시작·저장·종료 중 입력을 잠그고 중복 저장을 합치며 저장 응답 뒤 세션을 종료한다", async () => {
+  const app = await harness();
+  const start = app.api.start;
+  let releaseStart;
+  app.api.start = (...args) => new Promise(resolve => { releaseStart = () => resolve(start(...args)); });
+  const starting = app.action("start");
+  await flush();
+  for (const id of ["device", "custom-device", "note"]) assert.equal(app.node(id).disabled, true);
+  releaseStart(); await starting;
+  await app.event("note", "input", "저장 중인 메모");
+  let releaseSave, saveCalls = 0;
+  app.api.updateMetadata = () => { saveCalls++; return new Promise(resolve => { releaseSave = resolve; }); };
+  await app.event("save-test-settings", "click");
+  await app.event("save-test-settings", "click");
+  assert.equal(saveCalls, 1);
+  for (const id of ["device", "custom-device", "note"]) assert.equal(app.node(id).disabled, true);
+  assert.match(app.node("test-settings-status").textContent, /저장하고 있습니다/);
+  let releaseStop;
+  const stop = app.api.stop;
+  app.api.stop = () => new Promise(resolve => { releaseStop = () => resolve(stop()); });
+  const ending = app.end(); await flush();
+  assert.equal(releaseStop, undefined, "저장 응답 전에는 서버 세션을 닫지 않는다");
+  releaseSave({}); await flush();
+  assert.equal(typeof releaseStop, "function");
+  for (const id of ["device", "custom-device", "note"]) assert.equal(app.node(id).disabled, true);
+  releaseStop(); await ending;
+  for (const id of ["device", "custom-device", "note"]) assert.equal(app.node(id).disabled, false);
+  assert.equal(app.resources().sessionsStopped, 1);
+  assert.doesNotMatch(app.statuses.at(-1), /반영되지 않았습니다/);
+});
+
+test("저장하지 않았거나 종료를 기다리던 저장이 실패한 변경은 기록에 반영됐다고 표시하지 않는다", async () => {
+  for (const pendingFailure of [false, true]) {
+    const app = await harness();
+    await app.action("start");
+    await app.event("note", "input", "아직 저장되지 않은 메모");
+    let rejectSave;
+    if (pendingFailure) {
+      app.api.updateMetadata = () => new Promise((_, reject) => { rejectSave = reject; });
+      await app.event("save-test-settings", "click");
+    }
+    const ending = app.end(); await flush();
+    if (pendingFailure) {
+      assert.equal(app.resources().sessionsStopped, 0);
+      rejectSave(new Error("저장 실패"));
+    }
+    await ending;
+    assert.match(app.statuses.at(-1), /저장하지 않은 기종·메모.*반영되지 않았습니다/);
+    assert.equal(app.node("note").value, "아직 저장되지 않은 메모");
+    assert.equal(app.resources().sessionsStopped, 1);
+  }
 });

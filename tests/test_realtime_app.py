@@ -330,6 +330,92 @@ def test_session_folder_uses_device_and_capture_time(tmp_path, monkeypatch):
     assert second["folder_name"] == first["folder_name"] + "_2"
 
 
+def test_active_session_metadata_is_saved_without_changing_session_state(tmp_path):
+    models = FakeModels()
+    manager = SessionManager(tmp_path, model_factory=lambda: models)
+    client = TestClient(create_app(manager))
+    started = client.post("/api/sessions", json={"device_name": "Original Phone", "note": "Before"}).json()
+    session_id = started["session_id"]
+    frame = np.zeros((80, 100, 3), dtype=np.uint8)
+    first_result = manager.process(session_id, 1, 1000, frame)
+    before = manager.session.copy()
+    folder = before["folder"]
+
+    response = client.put(f"/api/sessions/{session_id}/metadata",
+                          json={"device_name": "  Galaxy S24  ", "note": "  횡단보도 테스트  "})
+    assert response.status_code == 200
+    assert response.json() == {**started, "device_name": "Galaxy S24", "note": "횡단보도 테스트"}
+    assert manager.session == {**before, "device_name": "Galaxy S24", "note": "횡단보도 테스트"}
+    saved = json.loads((folder / "session.json").read_text(encoding="utf-8"))
+    assert saved == {key: value for key, value in manager.session.items() if key not in ("folder", "last_seen")}
+    assert models.resets == 0
+    assert not list(folder.glob(".*.tmp"))
+
+    # An in-flight frame retry and subsequent inference retain their original session state.
+    assert manager.process(session_id, 1, 1000, frame) == first_result
+    manager.process(session_id, 2, 2000, frame)
+    stopped = client.post("/api/sessions/stop", json={"session_id": session_id}).json()
+    assert stopped["device_name"] == "Galaxy S24"
+    assert stopped["note"] == "횡단보도 테스트"
+    assert stopped["frame_count"] == 2
+    assert stopped["folder_name"] == started["folder_name"]
+    assert stopped["storage_path"] == str(folder.resolve())
+    assert json.loads((folder / "session.json").read_text(encoding="utf-8"))["note"] == stopped["note"]
+
+
+@pytest.mark.parametrize("payload", [
+    {}, {"device_name": ""}, {"device_name": "  "}, {"device_name": "가" * 81},
+    {"device_name": "Phone", "note": "가" * 501},
+])
+def test_session_metadata_rejects_invalid_values(tmp_path, payload):
+    manager = SessionManager(tmp_path, model_factory=FakeModels)
+    client = TestClient(create_app(manager))
+    started = manager.start("Phone", "Keep this")
+    before = manager.session.copy()
+    manifest = before["folder"] / "session.json"
+    original = manifest.read_bytes()
+    response = client.put(f"/api/sessions/{started['session_id']}/metadata", json=payload)
+    assert response.status_code == 422
+    assert manager.session == before
+    assert manifest.read_bytes() == original
+
+
+def test_session_metadata_only_updates_the_matching_active_session(tmp_path):
+    manager = SessionManager(tmp_path, model_factory=FakeModels)
+    client = TestClient(create_app(manager))
+    payload = {"device_name": "Changed Phone", "note": "Changed note"}
+    assert client.put(f"/api/sessions/{'0' * 32}/metadata", json=payload).status_code == 409
+    first = manager.start("First Phone", "Keep this")
+    manager.stop(first["session_id"])
+    assert client.put(f"/api/sessions/{first['session_id']}/metadata", json=payload).status_code == 409
+    second = manager.start("Second Phone", "Original note")
+    before = manager.session.copy()
+    assert client.put(f"/api/sessions/{first['session_id']}/metadata", json=payload).status_code == 409
+    assert manager.session == before
+    response = client.put(f"/api/sessions/{second['session_id']}/metadata", json={"device_name": "Phone"})
+    assert response.status_code == 200
+    assert response.json()["note"] == ""
+    assert manager.stop(first["session_id"])["note"] == "Keep this"
+
+
+def test_session_metadata_failed_write_preserves_existing_values(tmp_path, monkeypatch):
+    manager = SessionManager(tmp_path, model_factory=FakeModels)
+    started = manager.start("Phone", "Keep this")
+    before = manager.session.copy()
+    manifest = before["folder"] / "session.json"
+    original = manifest.read_bytes()
+
+    def failed_replace(_source, _target):
+        raise OSError("Could not save metadata")
+
+    monkeypatch.setattr(type(manifest), "replace", failed_replace)
+    with pytest.raises(OSError, match="Could not save metadata"):
+        manager.update_metadata(started["session_id"], "New Phone", "New note")
+    assert manager.session == before
+    assert manifest.read_bytes() == original
+    assert not list(before["folder"].glob(".*.tmp"))
+
+
 # 손상 이미지와 큰 업로드 거부 확인
 def test_invalid_camera_frame(tmp_path):
     """서버가 디코딩할 수 없는 입력을 추론 모델에 전달하지 않는다."""

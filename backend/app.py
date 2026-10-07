@@ -51,6 +51,13 @@ class StartRequest(BaseModel):
     bus_highres: bool = False
 
 
+class SessionMetadataRequest(BaseModel):
+    """진행 중인 테스트의 기종과 메모를 받는다."""
+
+    device_name: str = Field(min_length=1, max_length=80)
+    note: str = Field(default="", max_length=500)
+
+
 class StopRequest(BaseModel):
     """종료할 세션 번호를 받는다."""
 
@@ -263,6 +270,16 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
             return created
         except SessionError as error:
             log.warning("session start failed: %s", error)
+            raise HTTPException(409, str(error)) from error
+
+    @app.put("/api/sessions/{session_id}/metadata")
+    def update_metadata(session_id: str, request: SessionMetadataRequest):
+        """진행 중인 테스트의 기종과 메모를 저장한다."""
+        if not request.device_name.strip():
+            raise HTTPException(422, "휴대폰 기종을 입력하세요.")
+        try:
+            return sessions.update_metadata(session_id, request.device_name.strip(), request.note.strip())
+        except SessionError as error:
             raise HTTPException(409, str(error)) from error
 
     # JPEG 한 프레임 추론

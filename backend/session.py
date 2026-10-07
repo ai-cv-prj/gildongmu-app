@@ -123,6 +123,25 @@ class SessionManager:
             return {"session_id": session_id, "device_name": device_name,
                     "date": date, "folder_name": folder_name}
 
+    def update_metadata(self, session_id, device_name, note=""):
+        """저장 경로와 추론 상태를 유지하며 진행 중인 테스트 정보를 저장한다."""
+        with self.lock:
+            session = self.session
+            if session is None or session["id"] != session_id:
+                raise SessionError("진행 중인 세션이 없습니다. 다시 시작하세요.")
+            saved = {key: value for key, value in session.items() if key not in ("folder", "last_seen")}
+            saved.update(device_name=device_name, note=note)
+            path = session["folder"] / "session.json"
+            temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+            try:
+                temporary.write_text(json.dumps(saved, ensure_ascii=False, indent=2), encoding="utf-8")
+                temporary.replace(path)
+            finally:
+                temporary.unlink(missing_ok=True)
+            session.update(device_name=device_name, note=note)
+            return {"session_id": session_id, "device_name": device_name, "note": note,
+                    "date": session["date"], "folder_name": session["folder_name"]}
+
     # 한 프레임 처리와 JSONL 기록
     def process(self, session_id, frame_id, captured_at_ms, frame, request_start_ns=None,
                 decode_ms=None, image_bytes=None, save_live_frame=False,

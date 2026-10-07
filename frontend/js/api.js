@@ -107,6 +107,14 @@ window.GApi = (() => {
       { operation: "session_start", timeout_ms: 120000 });
   }
 
+  /** 진행 중인 테스트의 기종과 메모를 저장한다. */
+  function updateMetadata(sessionId, deviceName, note) {
+    return request(`/api/sessions/${encodeURIComponent(sessionId)}/metadata`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ device_name: deviceName, note }),
+    }, { operation: "session_metadata", session_id: sessionId });
+  }
+
   // JPEG 한 장 전송
   /** 한 번에 한 장의 카메라 프레임을 전송한다. */
   function frame(sessionId, frameId, capturedAtMs, blob, signal, busBlob = null, busCapturedAtMs = null) {
@@ -234,6 +242,6 @@ window.GApi = (() => {
       { operation: "session_stop", session_id: sessionId }, true);
   }
 
-  return { config, start, frame, recording, camera, uploadClip, clips, recordingEvent, timings, heartbeat, boarding, stop,
+  return { config, start, updateMetadata, frame, recording, camera, uploadClip, clips, recordingEvent, timings, heartbeat, boarding, stop,
     nearbyBusArrival, busStatus, busEvents, isRetryable };
 })();

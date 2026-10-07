@@ -101,6 +101,56 @@ test("HTTP validation failures and non-idempotent session creation are never aut
   assert.doesNotMatch(JSON.stringify(start.events), /private device|private note/);
 });
 
+test("session metadata updates send JSON to the encoded session path and return saved values", async () => {
+  const saved = { session_id: "test/session", device_name: "Galaxy S24", note: "야외 테스트" };
+  const h = harness(async () => response(saved));
+  assert.deepEqual(await h.api.updateMetadata("test/session", "Galaxy S24", "야외 테스트"), saved);
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.requests[0].path, "/api/sessions/test%2Fsession/metadata");
+  assert.equal(h.requests[0].options.method, "PUT");
+  assert.equal(h.requests[0].options.headers["Content-Type"], "application/json");
+  assert.deepEqual(JSON.parse(h.requests[0].options.body), { device_name: "Galaxy S24", note: "야외 테스트" });
+  assert.equal(h.timers.size, 0);
+});
+
+test("session metadata failures are reported without replaying or logging device and note values", async () => {
+  for (const fail of [
+    async () => { throw new TypeError("Failed to fetch"); },
+    async () => response({ detail: "세션이 종료되었습니다." }, 409),
+    async () => response({ detail: "서버 오류" }, 503),
+  ]) {
+    const sessionId = "a".repeat(32);
+    const h = harness(fail);
+    await assert.rejects(h.api.updateMetadata(sessionId, "private device", "private note"));
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.timers.size, 0);
+    assert.equal(h.events.length, 1);
+    assert.equal(h.events[0].type, "request_error");
+    assert.equal(h.events[0].operation, "session_metadata");
+    assert.equal(h.events[0].session_id, sessionId);
+    assert.equal(h.events[0].path, `/api/sessions/${sessionId}/metadata`);
+    assert.equal(h.events[0].method, "PUT");
+    assert.doesNotMatch(JSON.stringify(h.events), /private device|private note|device_name/);
+  }
+});
+
+test("session metadata timeouts use the default deadline and do not replay an ambiguous save", async () => {
+  const h = harness(() => new Promise(() => {}));
+  const failed = assert.rejects(h.api.updateMetadata("a".repeat(32), "private device", "private note"), error => {
+    assert.equal(error.name, "TimeoutError");
+    assert.equal(error.stage, "timeout");
+    return true;
+  });
+  await h.fire(15000);
+  await failed;
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.requests[0].options.signal.aborted, true);
+  assert.equal(h.timers.size, 0);
+  assert.equal(h.events.length, 1);
+  assert.equal(h.events[0].operation, "session_metadata");
+  assert.doesNotMatch(JSON.stringify(h.events), /private device|private note|device_name/);
+});
+
 test("stop and saved-video status recover from transient HTTP errors", async () => {
   for (const method of ["stop", "clips"]) {
     const h = harness(async count => count === 1 ? response({}, 503) : response({ saved: true }));
