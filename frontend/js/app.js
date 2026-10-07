@@ -359,6 +359,7 @@
   function previewRate() {
     cancelRatePreview();
     if (!ready || running || view.getScreen() !== "home") return;
+    player.unlock();
     const token = ratePreviewToken;
     function play(index) {
       ratePreviewTimer = null;
@@ -668,6 +669,7 @@
     coordinator.start();
     controls(); view.show("walk"); status("카메라와 추론 모델을 준비하고 있습니다.");
     try {
+      player.unlock();
       const info = await GCamera.start();
       if (version !== generation) return;
       $("camera").style.aspectRatio = `${info.width} / ${info.height}`;
@@ -715,6 +717,7 @@
   }
   async function resumeTest() {
     if (!running || !paused) return;
+    player.unlock();
     diagnostic("session_resume");
     if (clipStopTask) await clipStopTask;
     if (!running || !paused) return;

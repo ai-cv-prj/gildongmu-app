@@ -31,6 +31,7 @@ from backend.boarding import BoardingError
 from backend.bus.arrival import BusArrivalError, BusArrivalService
 from backend.bus.config import BusServiceSettings, load_bus_config
 from backend.bus.speech import BusSpeechError, BusSpeechService
+from backend.audio_playback import AudioPlaybackError, AudioPlaybackService
 from src.audio_config import audio_directory
 from src.settings import (
     DEFAULT_APP_CONFIG, DEFAULT_AUDIO_CONFIG, DEFAULT_PATHS_CONFIG,
@@ -149,6 +150,7 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
     bus_settings = bus_config or load_bus_config()
     bus_arrivals = BusArrivalService(BusServiceSettings.from_config(bus_settings))
     bus_speech = BusSpeechService(bus_settings.speech_timeout_sec)
+    audio_playback = AudioPlaybackService(audio_directory(audio_config, paths_config))
     if manager is None:
         manager = SessionManager(resolve_path(paths["session_dir"]), session_settings=settings["session"],
                                  bus_config=bus_settings)
@@ -175,6 +177,7 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
             return any(not future.done() for future in export_jobs)
     app.state.bus_arrivals = bus_arrivals
     app.state.bus_speech = bus_speech
+    app.state.audio_playback = audio_playback
     app.state.clip_store = clip_store
 
     @app.exception_handler(BusArrivalError)
@@ -192,6 +195,10 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
     @app.exception_handler(ClipError)
     async def clip_error(_request: Request, error: ClipError):
         log.warning("clip request rejected: %s", error)
+        return JSONResponse(status_code=error.status_code, content={"detail": str(error)})
+
+    @app.exception_handler(AudioPlaybackError)
+    async def audio_playback_error(_request: Request, error: AudioPlaybackError):
         return JSONResponse(status_code=error.status_code, content={"detail": str(error)})
 
     @app.middleware("http")
@@ -244,9 +251,16 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
         return bus_arrivals.lookup_nearby(bus_number, latitude, longitude, accuracy_m)
 
     @app.get("/api/bus-arrival-speech")
-    def bus_arrival_speech(text: str = Query(..., min_length=1, max_length=200)):
-        return Response(content=bus_speech.synthesize(text), media_type="audio/mpeg",
+    def bus_arrival_speech(text: str = Query(..., min_length=1, max_length=200),
+                           rate: Annotated[float, Query(ge=0.75, le=2, allow_inf_nan=False)] = 1):
+        return Response(content=audio_playback.adjust(bus_speech.synthesize(text), rate), media_type="audio/mpeg",
                         headers={"Cache-Control": "public, max-age=3600"})
+
+    @app.get("/api/guidance-speech")
+    def guidance_speech(clip: str = Query(..., min_length=1, max_length=80),
+                        rate: Annotated[float, Query(ge=0.75, le=2, allow_inf_nan=False)] = 1):
+        return Response(content=audio_playback.guidance(clip, rate), media_type="audio/mpeg",
+                        headers={"Cache-Control": "no-cache"})
 
     # 휴대폰 화면 제공
     @app.get("/")

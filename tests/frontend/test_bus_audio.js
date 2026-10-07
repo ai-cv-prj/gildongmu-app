@@ -3,14 +3,14 @@ const fs = require("node:fs");
 const vm = require("node:vm");
 const test = require("node:test");
 
-function harness({ noAudio = false, playFailure = false, deferred = false } = {}) {
+function harness({ noAudio = false, playFailure = false, deferred = false, navigator = {} } = {}) {
   let audio = null, rejectPlayback = null, utterance = null, cancels = 0;
   const audioSources = [], playbackSources = [], utterances = [], connections = [], timers = new Map();
   let timerId = 0, clock = 0;
   class Audio {
-    constructor() { audio = this; }
+    constructor() { audio = this; this.loads = 0; this.defaultPlaybackRate = this.playbackRate = 1; }
     pause() {}
-    load() {}
+    load() { this.loads++; this.playbackRate = this.defaultPlaybackRate; }
     removeAttribute(name) { delete this[name]; }
     play() {
       playbackSources.push(this.src);
@@ -21,7 +21,7 @@ function harness({ noAudio = false, playFailure = false, deferred = false } = {}
   }
   const settings = { audio: { volume: 1, playback_rate: 1.5, default_validity_ms: 8000,
     playback_timeout_ms: 15000, crosswalk_max_age_ms: 1500 } };
-  const context = { window: { GConfig: { get: () => settings }, Audio: noAudio ? undefined : Audio,
+  const context = { window: { GConfig: { get: () => settings }, navigator, Audio: noAudio ? undefined : Audio,
     AudioContext: class {
       constructor() { this.destination = "speakers"; }
       createMediaStreamDestination() { return { stream: "recording-stream" }; }
@@ -225,4 +225,83 @@ test("서버 MP3가 시작했거나 안내가 취소되면 지연 대체 음성�
   cancelled.step(1200);
   assert.equal(cancelled.utterance(), null);
   assert.equal(cancelled.timers.size, 0);
+});
+
+const iphone = { userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 Safari/604.1" };
+for (const [name, navigator] of [["iPhone Safari", iphone],
+  ["iPhone Chrome", { userAgent: "Mozilla/5.0 (iPhone) AppleWebKit/605.1.15 CriOS/140.0 Mobile Safari/604.1" }],
+  ["iPad", { userAgent: "Mozilla/5.0 (iPad) AppleWebKit/605.1.15" }],
+  ["데스크톱 UA iPad", { userAgent: "Mozilla/5.0 (Macintosh) AppleWebKit/605.1.15", platform: "MacIntel", maxTouchPoints: 5 }]]) {
+  test(`${name}: 녹화 그래프에서도 배속 음원을 1배로 재생한다`, () => {
+    const app = harness({ navigator });
+    for (const rate of [.75, 1, 1.5, 2]) {
+      app.player.setRate(rate);
+      assert.equal(app.player.getRate(), rate);
+      assert.equal(app.player.recordingStream(), "recording-stream");
+      let ends = 0;
+      app.player.speak("오른쪽으로 두 걸음", 5000, { onEnd: () => ends++ });
+      assert.equal(app.audio().src, rate === 1 ? "/audio/walking-move-right-two.mp3?v=walking-action-v9"
+        : `/api/guidance-speech?clip=walking-move-right-two&rate=${rate}`);
+      assert.equal(app.audio().defaultPlaybackRate, 1);
+      assert.equal(app.audio().playbackRate, 1);
+      app.audio().ended = true; app.audio().onended();
+      assert.equal(ends, 1);
+      assert.equal(app.timers.size, 0);
+      app.player.speak("143번 버스 확인함.", 5000, { dynamic: true });
+      assert.equal(app.audio().src, `/api/bus-arrival-speech?text=${encodeURIComponent("143번 버스 확인함.")}&rate=${rate}`);
+      assert.equal(app.audio().playbackRate, 1);
+      app.player.cancel();
+    }
+    assert.deepEqual(app.audioSources, [app.audio()], "스피커와 녹화가 동일 재생기를 계속 공유한다");
+    assert.equal(app.connections.length, 2);
+  });
+}
+
+for (const navigator of [{ userAgent: "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 Chrome/140.0" },
+  { userAgent: "Mozilla/5.0 (Macintosh) AppleWebKit/605.1.15", platform: "MacIntel", maxTouchPoints: 0 }]) {
+  test(`${navigator.userAgent}: 기존 브라우저 배속과 음원 URL을 유지한다`, () => {
+    const app = harness({ navigator });
+    app.player.unlock();
+    assert.equal(app.audio().loads, 0);
+    assert.equal(app.connections.length, 0, "iOS 준비가 다른 플랫폼에서 그래프를 만들지 않는다");
+    app.player.recordingStream();
+    for (const rate of [1, 1.5, 2]) {
+      app.player.setRate(rate);
+      app.player.speak("멈추세요", 5000);
+      assert.equal(app.audio().src, "/audio/walking-stop.mp3?v=walking-action-v9");
+      assert.equal(app.audio().defaultPlaybackRate, rate);
+      assert.equal(app.audio().playbackRate, rate);
+      app.player.cancel();
+      app.player.speak("143번 버스 확인함.", 5000, { dynamic: true });
+      assert.equal(app.audio().src, `/api/bus-arrival-speech?text=${encodeURIComponent("143번 버스 확인함.")}`);
+      assert.equal(app.audio().playbackRate, rate);
+      app.player.cancel();
+    }
+  });
+}
+
+test("iPhone 음성 준비와 배속 변경은 진행 중인 안내를 다시 로딩하지 않는다", () => {
+  const app = harness({ navigator: iphone });
+  app.player.unlock();
+  assert.equal(app.audio().loads, 1);
+  assert.equal(app.connections.length, 2);
+  app.player.setRate(1.5);
+  app.player.speak("멈추세요", 5000);
+  const source = app.audio().src, loads = app.audio().loads;
+  app.player.unlock(); app.player.recordingStream(); app.player.setRate(2);
+  assert.equal(app.audio().src, source);
+  assert.equal(app.audio().loads, loads);
+  assert.equal(app.audio().playbackRate, 1);
+  app.player.cancel();
+  app.player.speak("멈추세요", 5000);
+  assert.equal(app.audio().src, "/api/guidance-speech?clip=walking-stop&rate=2");
+  app.player.cancel();
+});
+
+test("iPhone 서버 음성 실패 시 기기 합성은 선택 배속을 유지한다", () => {
+  const app = harness({ navigator: iphone, playFailure: true });
+  app.player.setRate(2);
+  app.player.speak("143번 버스 확인함.", 5000, { dynamic: true });
+  assert.equal(app.utterance().rate, 2);
+  app.player.cancel();
 });

@@ -34,6 +34,11 @@
 
   function create({ onError = () => {}, onStatus = () => {}, now = () => performance.now() } = {}) {
     const settings = window.GConfig.get().audio;
+    const device = window.navigator || {};
+    // WebKit #283034: iOS ignores/distorts media-element rate changes in the
+    // speaker + recording graph. Use pitch-preserving server audio on iOS only.
+    const serverRate = /iPad|iPhone|iPod/.test(device.userAgent || "")
+      || (device.platform === "MacIntel" && device.maxTouchPoints > 1);
     // 클릭으로 시작한 재생기를 이후 신호 안내에도 재사용한다.
     const audio = window.Audio ? new window.Audio() : null;
     let audioContext = null, recordingDestination = null;
@@ -62,6 +67,19 @@
       // 모바일에서는 시작 버튼을 누른 동작 안에서 재생을 허용받아야 한다.
       audioContext.resume().catch(() => onError("브라우저가 안내 음성 재생을 차단했습니다. 사이트 소리 허용을 확인하고 테스트를 다시 시작해 주세요."));
       return recordingDestination.stream;
+    }
+
+    /** Call inside the user's click, before a preview timer or camera await. */
+    function unlock() {
+      if (!serverRate || !audio) return;
+      try {
+        recordingStream();
+        // WebKit's explicit load() releases this element's gesture restriction.
+        // Never reload an announcement already playing or being prepared.
+        if (!current) audio.load();
+      } catch (_) {
+        onError("안내 음성을 준비하지 못했습니다. 다시 시작해 주세요.");
+      }
     }
 
     function cancel() {
@@ -208,12 +226,15 @@
           audioContext.resume().catch(() => onError("브라우저가 안내 음성 재생을 차단했습니다. 사이트 소리 허용을 확인하고 테스트를 다시 시작해 주세요."));
         }
         audio.src = request.dynamic && !clip
-          ? `/api/bus-arrival-speech?text=${encodeURIComponent(request.text)}` : source(clip);
+          ? `/api/bus-arrival-speech?text=${encodeURIComponent(request.text)}${serverRate ? `&rate=${rate}` : ""}`
+          : serverRate && rate !== 1
+            ? `/api/guidance-speech?clip=${encodeURIComponent(clip)}&rate=${rate}` : source(clip);
         audio.load();
-        // 원본 MP3는 유지하고 테스트 재생 단계에서만 설정 속도를 적용한다.
+        // iOS 음원은 이미 배속 처리되어 있으므로 재생기 배속은 항상 1이다.
+        // Android 등은 기존 음원과 브라우저 배속을 그대로 사용한다.
         // load()는 playbackRate를 defaultPlaybackRate로 되돌리므로 둘 다 load() 뒤에 맞춘다.
-        audio.defaultPlaybackRate = rate;
-        audio.playbackRate = rate;
+        audio.defaultPlaybackRate = serverRate ? 1 : rate;
+        audio.playbackRate = serverRate ? 1 : rate;
         // await 없이 클릭 처리 중 호출해야 모바일의 사용자 동작으로 인정된다.
         const playing = audio.play();
         playing?.then(started, rejected);
@@ -226,11 +247,11 @@
     function setRate(value) {
       const next = Number(value);
       if (Number.isFinite(next)) rate = Math.min(2, Math.max(0.75, next));
-      if (audio) audio.defaultPlaybackRate = audio.playbackRate = rate;
+      if (audio) audio.defaultPlaybackRate = audio.playbackRate = serverRate ? 1 : rate;
       return rate;
     }
 
-    return { speak, cancel, recordingStream, setRate, getRate: () => rate };
+    return { speak, cancel, recordingStream, unlock, setRate, getRate: () => rate };
   }
   window.GTts = { create };
 })();

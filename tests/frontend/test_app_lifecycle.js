@@ -14,7 +14,7 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
   let releaseRouteSubmit = null, configuredPreferences = null, savedPreferences = null;
   const routeSubmissions = [], routeErrors = [], shownScreens = [];
   let recordStarts = 0, recordStops = 0;
-  const timeline = [], uploads = [], diagnostics = [];
+  const timeline = [], uploads = [], diagnostics = [], audioLifecycle = [];
   let diagnosticContext = () => ({});
   const timers = new Map(), intervals = new Map(), frames = [], guides = [], journeyStarts = [], renders = [], statuses = [];
   const captures = [], startModes = [], cameraModeCalls = [], overlayRenders = [];
@@ -39,6 +39,7 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
     readRoute: () => routeInput, setRouteError(message) { routeErrors.push(message); },
     setStations() {}, setPaused() {}, render(value) { renders.push(value); }, getGuidance: () => "안내" };
   const player = { setRate: value => value, recordingStream: () => null, cancel() { voice = null; },
+    unlock() { audioLifecycle.push("unlock"); },
     speak(text, validUntil, callbacks) { voice = { text, validUntil, ...callbacks }; callbacks.onStart?.(); return true; } };
   const settings = { audio: { tick_ms: 250, playback_timeout_ms: 15000, crosswalk_max_age_ms: 1500 },
     camera: { capture_max_side: 640, jpeg_quality: .72, bus_capture_max_side: 960,
@@ -112,7 +113,7 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
       accept(value) { this.accepted.push(value); } }; guides.push(guide); return guide; } },
     GBusJourney: { create(options) { journeyCallbacks = options; return journey; } },
     GCamera: { video: { videoWidth: 1280, videoHeight: 720 },
-      async start() { cameraActive = true; busCameraMode = false; return { width: 1280, height: 720 }; },
+      async start() { audioLifecycle.push("camera-start"); cameraActive = true; busCameraMode = false; return { width: 1280, height: 720 }; },
       stop() { cameraActive = false; busCameraMode = false; }, active: () => cameraActive,
       async setBusMode(enabled) { cameraModeCalls.push(enabled); busCameraMode = enabled;
         const state = { status: enabled ? "applied" : "default", requested: enabled,
@@ -148,7 +149,7 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
       if (value !== undefined) node(id).value = value;
       node(id).dispatchEvent({ type, target: node(id) }); await flush();
     },
-    diagnostics, action, frames, captures, startModes, guides, journeyStarts, renders, statuses, uploads, timeline, routeSubmissions, overlayRenders,
+    diagnostics, action, frames, captures, startModes, guides, journeyStarts, renders, statuses, uploads, timeline, routeSubmissions, overlayRenders, audioLifecycle,
     routeErrors, shownScreens, typeRoute(value) { routeInput = value; },
     async end() { await action("end"); await action("confirm-end"); },
     submit: value => handlers.onSubmitRoute(value),
@@ -669,6 +670,7 @@ test("글자 크기 최대 저장값을 이전 2배에서 새 시안 1.5배로 �
 test("음성 속도 선택은 두 번 미리 듣고 화면 이동이나 안내 시작 때 취소한다", async () => {
   const app = await harness();
   await app.action("enter"); app.rate(1.5);
+  assert.deepEqual(app.audioLifecycle, ["unlock"], "미리듣기 타이머 전에 클릭 안에서 오디오를 준비한다");
   assert.equal(await app.previewTimer(220), true);
   assert.equal(app.voice().text, "왼쪽으로 한 걸음");
   await app.finishVoice();
@@ -680,6 +682,19 @@ test("음성 속도 선택은 두 번 미리 듣고 화면 이동이나 안내 �
   assert.equal(await app.previewTimer(220), false);
   await app.action("start"); await app.action("settings-home"); app.rate(1);
   assert.equal(await app.previewTimer(220), false, "이동 중에는 자동 안내를 속도 미리듣기로 끊지 않는다");
+  await app.end();
+});
+
+test("안내 시작과 일시중지 해제는 비동기 처리 전에 오디오를 준비한다", async () => {
+  const app = await harness();
+  const starting = app.action("start");
+  assert.deepEqual(app.audioLifecycle, ["unlock", "camera-start"]);
+  await starting;
+  await app.action("pause");
+  const resuming = app.action("pause");
+  assert.equal(app.audioLifecycle.at(-1), "unlock");
+  assert.equal(app.audioLifecycle.filter(value => value === "unlock").length, 2);
+  await resuming;
   await app.end();
 });
 
