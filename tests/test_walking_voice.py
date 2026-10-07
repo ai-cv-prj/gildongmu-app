@@ -302,9 +302,9 @@ class WalkingVoiceTests(unittest.TestCase):
         self.assertIsNone(walking_action(prediction(outside), 100))
         self.assertEqual(walking_action(prediction(inside), 100), "straight")
 
-    # 정지 중 분홍색 ROI 하단 절반 음성 제한 확인
-    def test_stationary_guidance_requires_lower_half_of_pink_roi(self):
-        """사람과 차량 모두 정지 중에는 분홍색 ROI 하단 절반에 들어와야 안내한다."""
+    # 정지 중 분홍색 ROI 장애물 음소거 확인
+    def test_stationary_guidance_mutes_all_pink_roi_obstacles(self):
+        """정지 중에는 분홍색 ROI 하단 절반에 들어온 장애물도 안내하지 않는다."""
         for class_name in ("person", "car"):
             with self.subTest(class_name=class_name):
                 upper = danger_item(
@@ -321,18 +321,19 @@ class WalkingVoiceTests(unittest.TestCase):
                 lower_prediction = prediction(lower)
                 lower_prediction["stationarity"] = {"status": "stationary"}
                 self.assertIsNone(walking_action(upper_prediction, 100, stationary_voice=True))
-                self.assertEqual(
-                    walking_action(lower_prediction, 100, stationary_voice=True), "stop")
+                self.assertIsNone(walking_action(lower_prediction, 100, stationary_voice=True))
 
-    # 이동 중 기존 음성 범위 유지 확인
-    def test_moving_guidance_keeps_existing_pink_roi_rule(self):
-        """정지하지 않은 상태에서는 분홍색 ROI 상단 객체도 기존처럼 안내한다."""
-        item = danger_item(
-            1, [45, 0, 55, 20], geometry={"immediate_overlap": 1.0,
-                                         "stationary_voice_eligible": False})
-        result = prediction(item)
-        result["stationarity"] = {"status": "moving"}
-        self.assertEqual(walking_action(result, 100, stationary_voice=True), "stop")
+    # 이동·확인 중 기존 음성 범위 유지 확인
+    def test_nonstationary_guidance_keeps_existing_pink_roi_rule(self):
+        """이동 또는 확인 중에는 분홍색 ROI 객체를 기존처럼 안내한다."""
+        for status in ("moving", "checking"):
+            with self.subTest(status=status):
+                item = danger_item(
+                    1, [45, 0, 55, 20], geometry={"immediate_overlap": 1.0,
+                                                 "stationary_voice_eligible": False})
+                result = prediction(item)
+                result["stationarity"] = {"status": status}
+                self.assertEqual(walking_action(result, 100, stationary_voice=True), "stop")
 
     # 정지 중 화면 행동과 모든 장애물 음성 제한 확인
     def test_stationary_filter_keeps_action_but_also_limits_crossing_vehicle_voice(self):
