@@ -18,12 +18,14 @@ import cv2
 import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from backend.session import SessionError, SessionManager
 from backend.clips import ClipError, ClipStore, MAX_CHUNK_BYTES
 from backend.logger import configure_app_logging
+from backend.diagnostics import MAX_EVENT_BYTES, RequestCorrelationMiddleware, sanitize_events
 from backend.boarding import BoardingError
 from backend.bus.arrival import BusArrivalError, BusArrivalService
 from backend.bus.config import BusServiceSettings, load_bus_config
@@ -105,6 +107,13 @@ class ClipCompleteRequest(BaseModel):
     ended_at_ms: int
 
 
+class CorrelatedFastAPI(FastAPI):
+    """Observe the final error response as well as normal API responses."""
+
+    def build_middleware_stack(self):
+        return RequestCorrelationMiddleware(super().build_middleware_stack())
+
+
 # FastAPI 앱과 테스트용 세션 저장소 생성
 def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT_PATHS_CONFIG,
                audio_config=DEFAULT_AUDIO_CONFIG, bus_config=None):
@@ -122,7 +131,7 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
             sessions.close()
             log.info("mobile server stopped")
 
-    app = FastAPI(title="길동무 실시간 테스트", lifespan=lifespan)
+    app = CorrelatedFastAPI(title="길동무 실시간 테스트", lifespan=lifespan)
     settings = load_app_config(app_config)
     audio = load_audio_settings(audio_config)
     paths = load_paths(paths_config)
@@ -277,7 +286,8 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
                                     request_start_ns=request_start_ns,
                                     decode_ms=round((time.perf_counter_ns()-request_start_ns)/1e6, 1),
                                     image_bytes=content, save_live_frame=False,
-                                    bus_frame=bus_decoded, bus_captured_at_ms=bus_captured_at_ms)
+                                    bus_frame=bus_decoded, bus_captured_at_ms=bus_captured_at_ms,
+                                    bus_image_bytes=bus_content)
         except SessionError as error:
             log.warning("frame rejected session=%s frame=%d: %s", session_id, frame_id, error)
             raise HTTPException(409, str(error)) from error
@@ -317,6 +327,23 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
             raise HTTPException(409, str(error)) from error
         except BoardingError as error:
             raise HTTPException(422, str(error)) from error
+
+    @app.post("/api/client-events")
+    async def client_events(request: Request):
+        """Accept metadata diagnostics even after guidance/session shutdown."""
+        raw = bytearray()
+        async for chunk in request.stream():
+            if len(raw) + len(chunk) > MAX_EVENT_BYTES:
+                raise HTTPException(413, "클라이언트 진단 요청은 64KB 이하여야 합니다.")
+            raw.extend(chunk)
+        try:
+            payload = json.loads(raw, parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
+            json.dumps(payload, allow_nan=False)
+            events = sanitize_events(payload)
+        except (ValueError, UnicodeDecodeError, RecursionError) as error:
+            raise HTTPException(422, "클라이언트 진단 형식이 올바르지 않습니다.") from error
+        await run_in_threadpool(sessions.record_client_diagnostics, events)
+        return {"accepted": len(events)}
 
     @app.post("/api/sessions/{session_id}/bus-events")
     async def bus_events(session_id: str, request: Request):

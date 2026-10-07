@@ -5,6 +5,7 @@ file_path: backend/session.py
 """
 
 import json
+import copy
 import hashlib
 import logging
 import re
@@ -58,6 +59,8 @@ class SessionManager:
         self.lock = threading.Lock()
         self._completed_folders = {}
         self._completed_summaries = {}
+        self._last_frame_key = None
+        self._last_frame_result = None
 
     # 휴대폰 테스트 시작
     def start(self, device_name, note="", bus_highres=False):
@@ -101,6 +104,8 @@ class SessionManager:
                     break
                 except FileExistsError:
                     index += 1
+            self._last_frame_key = None
+            self._last_frame_result = None
             self.session = {
                 "id": session_id, "device_name": device_name, "note": note,
                 "date": date, "folder_name": folder_name,
@@ -118,13 +123,30 @@ class SessionManager:
     # 한 프레임 처리와 JSONL 기록
     def process(self, session_id, frame_id, captured_at_ms, frame, request_start_ns=None,
                 decode_ms=None, image_bytes=None, save_live_frame=False,
-                bus_frame=None, bus_captured_at_ms=None):
+                bus_frame=None, bus_captured_at_ms=None, bus_image_bytes=None):
         """요청 순서를 검증하고 세 모델 결과를 저장한다."""
         with self.lock:
             processing_start_ns = time.perf_counter_ns()
             session = self.session
             if session is None or session["id"] != session_id:
                 raise SessionError("진행 중인 세션이 없습니다. 다시 시작하세요.")
+            # A lost response can be replayed only for the latest identical input.
+            # Keep one response in memory, including mask/audio identifiers, so
+            # replay never advances model state or adds a second results record.
+            def image_identity(raw, decoded):
+                if raw is not None:
+                    return ("encoded", hashlib.sha256(raw).hexdigest())
+                if decoded is not None:
+                    return ("decoded", decoded.shape, str(decoded.dtype),
+                            hashlib.sha256(decoded.tobytes()).hexdigest())
+                return None
+            frame_key = (session_id, frame_id, captured_at_ms, bool(save_live_frame),
+                         image_identity(image_bytes, frame), bus_captured_at_ms,
+                         image_identity(bus_image_bytes, bus_frame))
+            if frame_id == session["last_frame_id"] and frame_key == self._last_frame_key:
+                session["last_seen"] = time.monotonic()
+                log.info("frame replayed session=%s frame=%d", session_id, frame_id)
+                return copy.deepcopy(self._last_frame_result)
             if frame_id != session["last_frame_id"] + 1:
                 raise SessionError("프레임 번호가 연속적이지 않습니다.")
             if session["last_capture_ms"] is not None and captured_at_ms <= session["last_capture_ms"]:
@@ -213,6 +235,8 @@ class SessionManager:
             session["last_frame_id"] = frame_id
             session["last_capture_ms"] = captured_at_ms
             session["last_seen"] = time.monotonic()
+            self._last_frame_key = frame_key
+            self._last_frame_result = copy.deepcopy(result)
             return result
 
     def boarding_state(self, session_id):
@@ -246,6 +270,49 @@ class SessionManager:
                 {**event, "session_id": session_id, "server_at": datetime.now(timezone.utc).isoformat()}
                 for event in events
             ])
+
+    def record_client_diagnostics(self, events):
+        """Persist diagnostics globally and in verified current or past sessions.
+
+        Diagnostics survive a stopped session and can be delivered from the
+        browser queue after restart. Unknown sessions still have a global log.
+        """
+        with self.lock:
+            server_at = datetime.now(timezone.utc).isoformat()
+            records = [{**event, "server_at": server_at, "event_group": "client_diagnostic"}
+                       for event in events]
+            log_dir = self.output_dir / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            with (log_dir / "client-events.jsonl").open("a", encoding="utf-8") as file:
+                for record in records:
+                    file.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n")
+            folders = {}
+            for record in records:
+                session_id = record.get("session_id")
+                if not isinstance(session_id, str) or not re.fullmatch(r"[0-9a-f]{32}", session_id):
+                    continue
+                if session_id not in folders:
+                    folder = None
+                    if self.session is not None and self.session["id"] == session_id:
+                        folder = self.session["folder"]
+                    elif session_id in self._completed_folders:
+                        folder = self._completed_folders[session_id]
+                    else:
+                        for candidate in self.output_dir.glob("[0-9]" * 8 + "/*"):
+                            if not candidate.resolve().is_relative_to(self.output_dir.resolve()):
+                                continue
+                            try:
+                                saved = json.loads((candidate / "session.json").read_text(encoding="utf-8"))
+                            except (OSError, ValueError):
+                                continue
+                            if saved.get("session_id", saved.get("id")) == session_id:
+                                folder = candidate
+                                break
+                    folders[session_id] = folder
+                folder = folders[session_id]
+                if folder is not None:
+                    with (folder / "events.jsonl").open("a", encoding="utf-8") as file:
+                        file.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n")
 
     def _append_events(self, group, records):
         """Append diagnostics to one file while the caller holds the session lock."""
@@ -287,6 +354,8 @@ class SessionManager:
         self._completed_folders[session["id"]] = session["folder"]
         self._completed_summaries[session["id"]] = summary
         self.session = None
+        self._last_frame_key = None
+        self._last_frame_result = None
         self.bus_recognizer.set_target(None, None)
         return summary
 

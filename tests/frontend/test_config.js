@@ -12,17 +12,25 @@ const defaults = require("./settings");
 // 서버 설정을 읽기 전에는 사용하지 못하고 캐시 없이 조회한다.
 test("configuration loads before use and reports request failures", async () => {
   let ok = true;
-  const context = { window: {}, fetch: async (url, options) => {
+  const events = [];
+  const context = { window: { GDiagnostics: { record(type, fields) { events.push({ type, ...fields }); } } },
+    AbortController, clearTimeout,
+    setTimeout: (callback, delay) => setTimeout(callback, delay <= 1000 ? 0 : delay),
+    fetch: async (url, options) => {
     assert.equal(url, "/api/config");
     assert.equal(options.cache, "no-store");
     return { ok, status: 503, json: async () => defaults };
   } };
-  vm.runInNewContext(fs.readFileSync("frontend/js/config.js", "utf8"), context);
+  vm.createContext(context);
+  vm.runInContext(fs.readFileSync("frontend/js/api.js", "utf8"), context);
+  vm.runInContext(fs.readFileSync("frontend/js/config.js", "utf8"), context);
   assert.throws(() => context.window.GConfig.get(), /준비/);
   await context.window.GConfig.load();
   assert.equal(context.window.GConfig.get().recording.fps, defaults.recording.fps);
   ok = false;
   await assert.rejects(context.window.GConfig.load(), /503/);
+  assert.equal(events.filter(event => event.type === "request_error").length, 3);
+  assert.ok(events.every(event => event.operation === "config"));
 });
 
 // 기본값과 다른 공개 설정으로 화면 갱신과 선택형 원본 녹화 인자를 확인한다.

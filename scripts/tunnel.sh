@@ -27,16 +27,19 @@ if ! curl -fsS --max-time 3 "$server_url/api/health" >/dev/null; then
 fi
 echo "[tunnel] HTTPS 터널 주소를 생성하는 중입니다."
 
-tunnel_log="$(mktemp)"
+# Keep transport failures beside app.log so field-test disconnects can be correlated later.
+tunnel_log_dir="$(.venv/bin/python -c 'from src.settings import load_paths, resolve_path; print(resolve_path(load_paths()["session_dir"]) / "logs")')"
+mkdir -p "$tunnel_log_dir"
+tunnel_log="$(mktemp "$tunnel_log_dir/cloudflared-$(date +%Y%m%d-%H%M%S)-XXXXXX.log")"
+echo "[tunnel] 연결 로그: $tunnel_log"
 tunnel_pid=""
 
-# 임시 로그와 실행 중인 터널 프로세스를 정리한다.
+# 실행 중인 터널 프로세스를 정리하고 연결 로그는 보존한다.
 cleanup() {
   if [ -n "$tunnel_pid" ] && kill -0 "$tunnel_pid" 2>/dev/null; then
     kill "$tunnel_pid" 2>/dev/null || true
     wait "$tunnel_pid" 2>/dev/null || true
   fi
-  rm -f "$tunnel_log"
 }
 
 trap cleanup EXIT

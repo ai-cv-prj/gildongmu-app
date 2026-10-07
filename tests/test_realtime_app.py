@@ -215,7 +215,7 @@ def test_mobile_session_flow(tmp_path, recording_fps):
     assert body["walking"]["detections"][0]["hazard_id"] == "track:12"
     assert body["walking"]["mask_png"]
     assert client.post(url, data=payload,
-                       files={"image": ("frame.jpg", jpeg.tobytes(), "image/jpeg")}).status_code == 409
+                       files={"image": ("frame.jpg", jpeg.tobytes(), "image/jpeg")}).status_code == 200
     webm = tmp_path / "sample.webm"
     subprocess.run([
         ffmpeg_executable(), "-nostdin", "-y", "-v", "error",

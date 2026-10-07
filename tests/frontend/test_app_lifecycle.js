@@ -14,7 +14,8 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
   let releaseRouteSubmit = null, configuredPreferences = null, savedPreferences = null;
   const routeSubmissions = [], routeErrors = [], shownScreens = [];
   let recordStarts = 0, recordStops = 0;
-  const timeline = [], uploads = [];
+  const timeline = [], uploads = [], diagnostics = [];
+  let diagnosticContext = () => ({});
   const timers = new Map(), intervals = new Map(), frames = [], guides = [], journeyStarts = [], renders = [], statuses = [];
   const captures = [], startModes = [], cameraModeCalls = [], overlayRenders = [];
   const elements = new Map();
@@ -38,7 +39,8 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
   }, pause() { journeyPaused = true; }, resume() { if (route) journeyPaused = false; },
     stop() { route = null; journeyPaused = false; }, accept() {}, selectStop() {}, repeat() {},
     snapshot() { return { ocr: { status: "searching", routeNumber: null } }; } };
-  const api = { start: async (_device, _note, busHighres) => {
+  const api = { isRetryable: error => error?.retryable === true || (!error?.status && error?.name === "TypeError"),
+    start: async (_device, _note, busHighres) => {
     sessionsStarted++; startModes.push(busHighres); return { session_id: "session-1" }; },
     stop: async () => {
       stopAttempts++;
@@ -46,8 +48,14 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
       sessionsStopped++; timeline.push("stop"); return { frame_count: frames.length };
     },
     frame(id, frameId, capturedAtMs, blob, signal, busBlob, busCapturedAtMs) {
-      return new Promise((resolve, reject) => frames.push({ id, frameId, capturedAtMs, blob, signal,
-        busBlob, busCapturedAtMs, resolve, reject }));
+      return new Promise((resolve, reject) => {
+        const abort = () => reject(Object.assign(new Error("요청 취소"), { name: "AbortError" }));
+        if (signal?.aborted) abort();
+        else signal?.addEventListener("abort", abort, { once: true });
+        frames.push({ id, frameId, capturedAtMs, blob, signal, busBlob, busCapturedAtMs,
+          resolve(value) { signal?.removeEventListener("abort", abort); resolve(value); },
+          reject(error) { signal?.removeEventListener("abort", abort); reject(error); } });
+      });
     },
     async boarding(_id, action, _event, number) {
       if (action === "submit") {
@@ -82,6 +90,8 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
     setInterval(callback) { const id = ++nextTimer; intervals.set(id, callback); return id; },
     clearInterval(id) { intervals.delete(id); },
     GView: { create(options) { handlers = options; return view; } },
+    GDiagnostics: { record(type, fields = {}) { diagnostics.push({ ...diagnosticContext(), type, ...fields }); },
+      setContext(provider) { diagnosticContext = provider; }, flush: async () => {} },
     GTts: { create: () => player }, GApi: api, GConfig: { get: () => settings, load: async () => settings },
     GGuidance: { create() { const guide = { accepted: [], starts: 0, stops: 0, start() { this.starts++; }, stop() { this.stops++; }, tick() {},
       accept(value) { this.accepted.push(value); } }; guides.push(guide); return guide; } },
@@ -118,7 +128,7 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
     captured_at_ms: frame.capturedAtMs, inference_ms: 10,
     walking: { detections: [], event: {} }, traffic: { detections: [], event: {} },
     boarding: { ...busState }, stop_proximity: { nearby: false } });
-  return { action, frames, captures, startModes, guides, journeyStarts, renders, statuses, uploads, timeline, routeSubmissions, overlayRenders,
+  return { api, diagnostics, action, frames, captures, startModes, guides, journeyStarts, renders, statuses, uploads, timeline, routeSubmissions, overlayRenders,
     routeErrors, shownScreens, typeRoute(value) { routeInput = value; },
     async end() { await action("end"); await action("confirm-end"); },
     submit: value => handlers.onSubmitRoute(value),
@@ -136,6 +146,12 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
     retryVisible: () => !node("retry-upload").hidden,
     resources: () => ({ cameraActive, sessionsStarted, sessionsStopped, timers: timers.size, intervals: intervals.size, route }),
     journeyPaused: () => journeyPaused, routeInput: () => routeInput, setNow(value) { now = value; },
+    async runTimer(delay) {
+      const entry = [...timers].find(([, value]) => value.delay === delay);
+      if (!entry) return null;
+      const [id, timer] = entry; timers.delete(id); now += delay;
+      const pending = timer.callback(); await flush(); return { pending };
+    },
     async capture() {
       const [id, timer] = [...timers].find(([, value]) => value.delay === 0);
       timers.delete(id);
@@ -645,4 +661,135 @@ test("음성 속도 선택은 두 번 미리 듣고 화면 이동이나 안내 �
   await app.action("start"); await app.action("settings-home"); app.rate(1);
   assert.equal(await app.previewTimer(220), false, "이동 중에는 자동 안내를 속도 미리듣기로 끊지 않는다");
   await app.end();
+});
+
+
+test("추론 표시 전에 일시중지한 녹화 구간은 저장 대기를 남기지 않고 다시 안내를 시작한다", async () => {
+  const app = await harness();
+  await app.action("start"); await app.action("record");
+  const frame = await app.capture();
+  app.setNow(1100);
+  await app.action("pause");
+  await app.respond(0); await frame.pending;
+  assert.equal(app.overlayRenders.length, 0, "일시중지 뒤 도착한 프레임은 화면에 표시하지 않는다");
+  let ended = false;
+  const ending = app.end().then(() => { ended = true; });
+  // A missing server clip must not leave a phantom poll that blocks the next session.
+  for (let attempt = 0; attempt < 16 && !ended; attempt++) {
+    await flush(); await app.runTimer(2000);
+  }
+  assert.equal(ended, true);
+  await ending;
+  assert.equal(app.uploads.length, 0);
+  assert.equal(app.retryVisible(), false);
+  await app.action("start");
+  assert.equal(app.resources().sessionsStarted, 2);
+  assert.equal(app.screen(), "walk");
+  await app.end();
+});
+
+test("번호 입력 중 일시적 프레임 연결 실패는 입력과 세션을 유지하며 같은 요청을 복구한다", async () => {
+  const app = await harness();
+  await app.action("start"); await app.action("manual-arrival"); await app.finishVoice();
+  app.typeRoute("143");
+  await app.action("record");
+  const first = await app.capture();
+  app.frames[0].reject(new TypeError("Failed to fetch"));
+  await flush();
+  assert.equal(app.screen(), "input");
+  assert.equal(app.routeInput(), "143");
+  assert.equal(app.resources().cameraActive, true);
+  assert.equal(app.resources().sessionsStopped, 0);
+  assert.equal(app.recordCounts().recording, true, "일시적 실패로 녹화를 즉시 종료하지 않는다");
+  assert.match(app.statuses.at(-1), /연결|재시도/);
+  assert.ok(await app.runTimer(2000), "연결 복구 요청을 예약한다");
+  assert.equal(app.frames.length, 2);
+  for (const field of ["id", "frameId", "capturedAtMs", "blob", "busBlob", "busCapturedAtMs"])
+    assert.strictEqual(app.frames[1][field], app.frames[0][field], field);
+  assert.equal(app.captures.length, 1, "서버 처리 여부가 불확실한 프레임을 새 캡처로 바꾸지 않는다");
+  assert.equal(app.recordCounts().recording, true);
+  await app.respond(1); await first.pending;
+  assert.equal(app.overlayRenders.length, 0, "복구된 과거 프레임을 현재 안내로 재생하지 않는다");
+  assert.equal(app.screen(), "input");
+  assert.equal(app.routeInput(), "143");
+  const next = await app.capture();
+  assert.equal(app.frames[2].frameId, 2);
+  await app.respond(2); await next.pending;
+  assert.equal(app.overlayRenders.length, 1);
+  assert.equal(app.resources().sessionsStarted, 1);
+  app.setNow(3100);
+  await app.end();
+});
+
+test("사용자 종료는 반복 재연결 대기와 진행 중 요청을 취소하고 이전 세션을 되살리지 않는다", async () => {
+  for (const endDuringRequest of [false, true]) {
+    const app = await harness();
+    await app.action("start");
+    const first = await app.capture();
+    app.frames[0].reject(new TypeError("Failed to fetch")); await flush();
+    assert.ok(await app.runTimer(2000));
+    app.frames[1].reject(new TypeError("Failed to fetch")); await flush();
+    if (endDuringRequest) assert.ok(await app.runTimer(2000));
+    const attempts = app.frames.length;
+    await app.end(); await first.pending;
+    assert.equal(await app.runTimer(2000), null, "종료 뒤 재연결 타이머를 남기지 않는다");
+    assert.equal(app.frames.length, attempts);
+    assert.equal(app.resources().sessionsStopped, 1);
+    assert.equal(app.resources().cameraActive, false);
+    assert.equal(app.screen(), "welcome");
+    if (endDuringRequest) {
+      assert.equal(app.frames.at(-1).signal.aborted, true);
+      await app.respond(attempts - 1);
+      assert.equal(app.overlayRenders.length, 0);
+      assert.equal(app.screen(), "welcome");
+    }
+    await app.action("start");
+    assert.equal(app.resources().sessionsStarted, 2);
+    await app.end();
+  }
+});
+
+test("재연결 중 일시중지한 뒤 받은 응답은 프레임 순번만 복구하고 재개 뒤 새 영상으로 안내한다", async () => {
+  const app = await harness();
+  await app.action("start");
+  const first = await app.capture();
+  app.frames[0].reject(new TypeError("Failed to fetch")); await flush();
+  assert.ok(await app.runTimer(2000));
+  await app.action("pause");
+  await app.respond(1); await first.pending;
+  assert.equal(app.overlayRenders.length, 0);
+  assert.equal(app.resources().sessionsStopped, 0);
+  assert.equal(await app.runTimer(0), null, "일시중지 중 다음 프레임을 보내지 않는다");
+  await app.action("pause");
+  const next = await app.capture();
+  assert.equal(app.frames[2].frameId, 2);
+  await app.respond(2); await next.pending;
+  assert.equal(app.overlayRenders.length, 1);
+  await app.end();
+});
+
+test("추론 종료 원인과 영상 저장 확인 실패를 함께 표시하고 진단 기록에 종료 원인을 남긴다", async () => {
+  const app = await harness();
+  await app.action("start"); await app.action("record");
+  const first = await app.capture();
+  await app.respond(0); await first.pending;
+  app.setNow(1100);
+  const second = await app.capture();
+  app.api.clips = async () => { throw new TypeError("Failed to fetch"); };
+  app.frames[1].reject(Object.assign(new Error("JPEG decode rejected"), { status: 422 }));
+  await second.pending;
+  assert.equal(app.recordCounts().recording, false);
+  assert.equal(app.resources().sessionsStopped, 1);
+  assert.equal(app.retryVisible(), true);
+  assert.match(app.statuses.at(-1), /JPEG decode rejected/);
+  assert.match(app.statuses.at(-1), /영상.*실패.*Failed to fetch/);
+  const failure = app.diagnostics.find(event => event.type === "frame_failure");
+  const stopped = app.diagnostics.find(event => event.type === "session_stop");
+  assert.ok(failure, "프레임 오류 진단을 남긴다");
+  assert.ok(stopped, "세션 종료 진단을 남긴다");
+  assert.equal(failure.error_message, "JPEG decode rejected");
+  assert.equal(failure.http_status, 422);
+  assert.equal(failure.frame_id, 2);
+  assert.equal(stopped.reason, "frame_failed");
+  assert.equal(stopped.error_message, "JPEG decode rejected");
 });

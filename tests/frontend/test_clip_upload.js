@@ -6,7 +6,8 @@ const test = require("node:test");
 function apiWithRequests(requests, failFirst = false) {
   const attempts = new Map();
   const context = {
-    Blob, FormData, setTimeout: callback => callback(),
+    Blob, FormData, AbortController, clearTimeout,
+    setTimeout: (callback, delay) => setTimeout(callback, delay <= 1000 ? 0 : delay),
     fetch: async (path, options) => {
       requests.push({ path, options });
       const count = attempts.get(path) || 0;

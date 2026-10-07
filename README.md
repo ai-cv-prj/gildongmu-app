@@ -405,7 +405,9 @@ test-result/YYYYMMDD/<기종명_촬영시각_테스트메모>/
 ├── results.jsonl          # 프레임별 추론 결과
 ├── events.jsonl           # 지연·음성·탑승·GPS/OCR·녹화 이벤트 통합
 └── session.json           # 세션 정보
-test-result/logs/app.log   # 서버 이벤트·오류 로그 (자정마다 회전)
+test-result/logs/app.log   # 요청 ID별 서버 수신·응답 전송·오류 로그 (자정마다 회전)
+test-result/logs/client-events.jsonl # 세션 생성 전/종료 후도 포함한 브라우저 진단
+test-result/logs/cloudflared-*.log   # tunnel.sh 실행별 연결 로그 (종료 후에도 보존)
 ```
 
 날짜는 한국 시간 기준입니다. `test-result`는 프로젝트 안에 있으며 저장 위치는
@@ -417,7 +419,7 @@ test-result/logs/app.log   # 서버 이벤트·오류 로그 (자정마다 회�
 상태 파일만 남습니다. 변환 실패 시에는 재시도에 필요한 입력을 유지합니다.
 일반 추론 중에는 프레임별 이미지를 저장하지 않습니다. 세션 기록은 `session.json`,
 `results.jsonl`, `events.jsonl`로 모으며, 이벤트가 없으면 이벤트 파일은 만들지 않습니다.
-`events.jsonl`의 `event_group`은 `client_timing`, `boarding`, `bus`, `recording`을 구분합니다.
+`events.jsonl`의 `event_group`은 `client_timing`, `boarding`, `bus`, `recording`, `client_diagnostic`을 구분합니다.
 선택한 구간이 없으면 영상 파일도 없습니다. 영상 파일 이름이 같더라도 `clip_001`, `clip_002`처럼
 별도 폴더여서 기존 구간을 덮어쓰지 않습니다. 영상이 필요한 테스트는 종료 뒤 저장 상태를
 확인하고 페이지를 닫으세요. 녹화 중 휴대폰의 영상 인코딩 비용은 남으므로 실기기 지연을
@@ -432,6 +434,38 @@ test-result/logs/app.log   # 서버 이벤트·오류 로그 (자정마다 회�
 시간(`overlay_delay_ms`)이 기록됩니다. `audio` 행에는 음성 상태와 JPEG 인코딩 완료 후 실제 재생 시작까지의
 시간(`audio_delay_ms`)과 보행 안내 행동(`action`)이 기록됩니다. 브라우저와 서버 시계의
 절대 시각을 빼서 지연을 계산하지 않습니다.
+
+### 통신 오류 진단과 복구
+
+`Failed to fetch`가 발생하면 `logs/client-events.jsonl`에서 `request_error`를 찾아
+`operation`, `path`, `stage`, `http_status`, `elapsed_ms`, `request_id`를 확인합니다.
+`stage`는 요청 전송(`request`), 응답 본문 읽기(`response_body`), HTTP 오류(`http`),
+제한 시간 초과(`timeout`), 사용자 취소(`abort`)를 구분합니다. 같은 `request_id`를
+`app.log`의 `request_received`, `response_emitted`, `request_failed`와 대조하면 서버가
+요청을 받았는지, 응답을 내보냈는지 확인할 수 있습니다. `response_emitted`와 HTTP 200은
+휴대폰의 응답 수신 성공을 보장하지 않습니다. 브라우저가 공개하지 않는 DNS/TLS·통신망의
+세부 실패 원인은 이 로그만으로 확정할 수 없으며, 터널 연결 기록과 함께 확인합니다.
+
+진단에는 당시 화면, 온라인/화면 숨김 여부, 카메라·녹화 상태, 마지막 프레임 번호,
+전송/완료 확인 대기 영상 번호가 포함됩니다. `clip_stop.reason`은 30초 제한, 프레임 전송
+중단, 일시중지, 카메라 종료 등을 구분하고, `clip_upload_failed.upload_stage`는 종료 확인,
+전송 전 조회, 실제 전송, 저장 결과 조회 중 실패한 단계를 구분합니다. `frame_reconnecting`,
+`frame_recovered`, `frame_failure`, `session_stop`, `start_blocked`로 상태 전환을 추적합니다.
+세션을 확인할 수 있는 진단은 해당 세션 `events.jsonl`에도 `client_diagnostic`으로 남습니다.
+
+브라우저는 진단 메타데이터를 `localStorage`의 `gildongmu-client-events-v1`에 최대 100건
+보관합니다. 전송되지 않은 최초 요청 실패와 최근 기록을 유지하며, 연결 복구·페이지 재진입·
+15초 주기마다 20건씩 전송하고 서버의 접수 확인 후 삭제합니다. 저장소를 사용할 수 없는
+브라우저에서는 메모리에만 보관합니다. 영상·요청 본문·GPS 쿼리·테스트 메모는 진단에
+포함하지 않습니다. `occurred_at_ms`는 휴대폰 시각, `server_at`은 서버 접수 시각이며
+`monotonic_clock_ms`와 `time_origin_ms`도 함께 남겨 시계 차이를 확인할 수 있습니다.
+
+프레임·세션 종료·영상 상태 조회·영상 업로드는 일시적 통신 오류, HTTP 429/5xx에 자동
+재시도합니다. 프레임은 같은 번호·촬영 시각·JPEG로 다시 보내며 서버는 가장 최근의 동일
+요청에 저장된 응답을 돌려주므로 추론과 결과 기록을 중복 실행하지 않습니다. 계속 연결이
+실패해도 번호 입력과 세션을 유지하며 재연결하고, 오래된 응답은 현재 안내에 표시하지
+않습니다. 사용자 종료는 재연결 대기와 요청을 취소합니다. 녹화의 30초·프레임 공백 제한은
+계속 적용됩니다. 새 세션 생성과 버스 번호 변경은 자동 재전송하지 않습니다.
 
 ## 5. 설정 파일
 
