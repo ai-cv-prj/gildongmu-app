@@ -91,3 +91,20 @@ now = 3000;
 walking.accept({ session_id: "test", frame_id: 7, captured_at_ms: 3000,
   event: { voice_event: { action: "stop", text: "멈추세요.", event_id: 2 } } }, now);
 assert.equal(spoken.filter(text => text === "멈추세요.").length, stops + 1);
+
+// Straight decisions clear old walking audio without speaking a movement permission.
+const beforeStraight = spoken.length;
+now = 3100;
+walking.accept({ session_id: "test", frame_id: 8, captured_at_ms: now,
+  event: { voice_event: { action: "straight", text: "천천히 가세요.", event_id: 3 } } }, now);
+assert.equal(spoken.length, beforeStraight);
+assert.equal(cleared.at(-1), "walking");
+now = 3200;
+walking.accept({ session_id: "test", frame_id: 9, captured_at_ms: now,
+  event: { type: "walking_warning", level: "danger", last_action: "straight",
+    voice_text: "천천히 가세요." } }, now);
+assert.equal(spoken.length, beforeStraight);
+now = 3300;
+walking.accept({ session_id: "test", frame_id: 10, captured_at_ms: now,
+  event: { voice_event: { action: "stop", text: "멈추세요.", event_id: 4 } } }, now);
+assert.equal(spoken.at(-1), "멈추세요.");

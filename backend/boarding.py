@@ -1,4 +1,4 @@
-"""Session-scoped bus input, armed only after the arrival stop clip completes."""
+"""Session-scoped bus input with an explicit input-readiness acknowledgement."""
 
 
 class BoardingError(ValueError):
@@ -57,7 +57,7 @@ class Boarding:
         if self.arrival_event_id is None or arrival_event_id != self.arrival_event_id:
             raise BoardingError("현재 정류장 도착에 해당하는 요청이 아닙니다.")
         before = (self.status, self.bus_number)
-        if action == "stop_announced":
+        if action in ("input_ready", "stop_announced"):
             # A delayed acknowledgement must never reopen a cancelled/submitted form.
             if self.status == "awaiting_stop":
                 self.status = "pending"
@@ -83,7 +83,7 @@ class Boarding:
             if crossing_active:
                 raise BoardingError("횡단 중에는 버스 탑승 입력을 시작할 수 없습니다.")
             if self.status in ("submitted", "cancelled"):
-                # Ask for another stop clip before assuming the user stopped again.
+                # Confirm input readiness again when reopening the form.
                 # Editing is an explicit user action, so the old stop box need
                 # not stay visible when the camera is now pointed at a bus.
                 self.arrival_source = "user_confirmed"

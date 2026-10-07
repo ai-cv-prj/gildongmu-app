@@ -66,7 +66,7 @@ class StopRequest(BaseModel):
 
 
 class BoardingRequest(BaseModel):
-    action: Literal["arrive", "stop_announced", "submit", "cancel", "reopen"]
+    action: Literal["arrive", "input_ready", "stop_announced", "submit", "cancel", "reopen"]
     arrival_event_id: int | None = Field(default=None, ge=1)
     bus_number: str | None = Field(default=None, max_length=30)
 

@@ -22,6 +22,8 @@
   let bufferedBytes = 0, uploadSessionId = null, pendingStopSessionId = null;
   let pendingUploads = [], uploadTotalClips = 0, uploading = false;
   let pendingCheckSessionId = null, expectedClipIds = [];
+  const clipStore = window.GClipStore?.create();
+  let localClipRefresh = 0;
   const preferenceKey = "gildongmu-accessibility-v1";
   let preferences = { rate: 1, textScale: 1 };
   try {
@@ -42,15 +44,54 @@
     screen: view.getScreen(), ui_action: diagnosticAction, running,
     recording_active: Boolean(activeClip), pending_upload_count: pendingUploads.length,
   }));
-  window.GFetchDiagnostics?.subscribe(summary => {
+  let fetchErrorSummary = { count: 0, pending: 0, storageAvailable: true };
+  let appErrorSummary = { count: 0, pending: 0, storageAvailable: true };
+  function updateErrorLogControls() {
+    const summary = { count: fetchErrorSummary.count + appErrorSummary.count,
+      pending: fetchErrorSummary.pending + appErrorSummary.pending,
+      storageAvailable: fetchErrorSummary.storageAvailable && appErrorSummary.storageAvailable };
     const button = $("save-error-log"), label = $("fetch-error-log-status");
+    if ($("error-log-controls")) $("error-log-controls").hidden = summary.count === 0;
     if (button) button.hidden = summary.count === 0;
     if (label) {
       label.hidden = summary.count === 0;
-      label.textContent = `연결 오류 ${summary.count}건 · 미전송 ${summary.pending}건` +
+      label.textContent = `오류 ${summary.count}건 · 미전송 ${summary.pending}건` +
         (summary.storageAvailable ? " · 이 기기에 기록됨" : " · 창을 닫기 전에 오류 로그를 저장해 주세요");
     }
-  });
+  }
+  window.GFetchDiagnostics?.subscribe(summary => { fetchErrorSummary = summary; updateErrorLogControls(); });
+  window.GDiagnostics?.subscribe?.(summary => { appErrorSummary = summary; updateErrorLogControls(); });
+
+  async function refreshLocalClips() {
+    if (!clipStore) return;
+    const version = ++localClipRefresh;
+    const records = await clipStore.list();
+    if (version === localClipRefresh) view.setLocalClips?.(records);
+  }
+  async function preserveClip(id, clip) {
+    if (!clipStore || !id) return;
+    try {
+      const result = await clipStore.save(id, clip);
+      if (!result.stored) {
+        diagnostic("clip_preserve_failed", { clip_id: clip.index, error_message: result.error });
+        status("기기에 영상을 보관하지 못했습니다. 페이지를 닫기 전에 선택한 영상을 저장해 주세요.");
+      }
+    } catch (error) {
+      diagnostic("clip_preserve_failed", { clip_id: clip.index, ...errorDetails(error) });
+      status(`기기 영상 보관 실패: ${error.message}`);
+    }
+    await refreshLocalClips();
+  }
+  async function clearReadyLocalClips(id, serverClips) {
+    if (!clipStore || !id) return;
+    for (const item of serverClips) {
+      if (item.state !== "ready") continue;
+      try { await clipStore.remove(id, clipIndex(item)); }
+      catch (error) { diagnostic("clip_cleanup_failed", errorDetails(error)); }
+    }
+    await refreshLocalClips();
+  }
+  void refreshLocalClips();
 
   function savePreferences() {
     try { localStorage.setItem(preferenceKey, JSON.stringify(preferences)); } catch (_) {}
@@ -220,6 +261,7 @@
         clips.push(clip);
         diagnostic("clip_buffered", { clip_id: clip.index });
         status(`${reason} ${clips.length}/${MAX_CLIPS}개를 선택했습니다. 테스트 종료 후 저장합니다.`);
+        await preserveClip(sessionId, clip);
         return clip;
       } catch (error) {
         diagnostic("clip_discarded", { clip_id: clip.index, reason, ...errorDetails(error) });
@@ -266,6 +308,7 @@
     if (!pendingCheckSessionId || !expectedClipIds.length) return;
     for (let attempt = 0; attempt < 12; attempt++) {
       const report = await GApi.clips(pendingCheckSessionId);
+      await clearReadyLocalClips(pendingCheckSessionId, report.clips || []);
       const rows = new Map((report.clips || []).map(item => [clipIndex(item), item]));
       const selected = expectedClipIds.map(id => rows.get(id));
       diagnostic("clip_status", { session_id: pendingCheckSessionId, attempt: attempt + 1,
@@ -273,6 +316,8 @@
         state: selected.map(item => item?.state || "missing").join(",") });
       const failure = selected.find(item => ["failed", "no_frames"].includes(item?.state));
       if (failure) {
+        diagnostic("clip_render_failed", { clip_id: clipIndex(failure),
+          error_message: failure.error || failure.state });
         status(`${failure.clip_id}번 영상 결과 생성 실패: ${failure.error || failure.state}. 서버 기록을 확인해 주세요.`);
         pendingCheckSessionId = null; expectedClipIds = [];
         return;
@@ -311,6 +356,7 @@
           sum + frame.image.size + frame.mask_png.length + frame.overlay_png.length, 0);
         bufferedBytes -= clip.frame_bytes - frameBytes;
         clip.frame_bytes = frameBytes;
+        await preserveClip(uploadSessionId, clip);
         if (!clip.frames.length) {
           // A discarded clip has no server manifest and must not remain in the completion wait list.
           expectedClipIds = expectedClipIds.filter(id => id !== clip.index);
@@ -322,6 +368,7 @@
         }
         uploadStage = "check_before_upload";
         const stored = (await GApi.clips(uploadSessionId)).clips?.find(item => clipIndex(item) === clip.index);
+        if (stored?.state === "ready") await clearReadyLocalClips(uploadSessionId, [stored]);
         if (["pending", "rendering", "ready", "failed", "no_frames"].includes(stored?.state)) {
           bufferedBytes -= clip.blob.size + clip.frame_bytes;
           pendingUploads.shift();
@@ -391,7 +438,7 @@
     if (!ready || !running || starting || stopping || paused || submittingRoute ||
         boardingState?.busy || view.getScreen() !== "input") return;
     if (boardingState?.status === "awaiting_stop") {
-      const message = "멈춤 안내가 끝나면 버스 찾기를 시작할 수 있어요.";
+      const message = "잠시 후 버스를 선택해 주세요.";
       status(message); view.setRouteError?.(message); view.announce(message);
       return;
     }
@@ -443,7 +490,7 @@
       }
       const manualWaiting = next.status === "awaiting_stop" && next.arrival_source === "user_confirmed";
       if (next.status === "pending" || manualWaiting) {
-        // 새 도착에서만 초기화한다. 멈춤 안내가 끝나거나 같은 노선을 다시
+        // 새 도착에서만 초기화한다. 입력 준비가 끝나거나 같은 노선을 다시
         // 입력할 때는 열린 키패드와 작성 중인 번호를 그대로 유지한다.
         if (next.arrival_event_id !== draftEventId) {
           draftRoute = ""; draftEventId = next.arrival_event_id;
@@ -452,10 +499,10 @@
         if (next.status !== previous?.status) {
           if (next.status === "pending") view.setRouteError?.("");
           if (!temporaryScreen() && view.getScreen() !== "input") view.show("input");
-          if (manualWaiting) status("멈춤 안내 중입니다. 버스 번호를 입력해 주세요.");
+          if (manualWaiting) status("정류장입니다. 버스를 선택하세요.");
         }
       } else if (next.status === "awaiting_stop") {
-        status("멈춤 안내가 끝나면 탑승할 버스 번호를 입력해 주세요.");
+        status("정류장입니다. 버스를 선택하세요.");
       } else if (next.status === "cancelled" && previous?.status !== "cancelled") {
         if (!temporaryScreen()) view.show("walk");
         status("버스 찾기를 취소했습니다. 보행 안내를 계속합니다.");
@@ -765,6 +812,7 @@
       await frameTask;
     }
     frameTask = null;
+    for (const clip of clips) await preserveClip(id, clip);
     // Finish an explicit metadata save before closing the same server session.
     if (testSettingsSaveTask) await testSettingsSaveTask;
     const unsavedTestSettings = testSettingsChanged();
@@ -801,8 +849,19 @@
   async function act(action) {
     diagnosticAction = action;
     if (action === "save-error-log") {
-      try { window.GFetchDiagnostics?.download(); }
+      try {
+        if (window.GDiagnostics?.download) window.GDiagnostics.download();
+        else window.GFetchDiagnostics?.download();
+      }
       catch (_) { status("오류 로그 파일을 저장하지 못했습니다. 다시 시도해 주세요."); }
+      return;
+    }
+    if (action === "save-local-clip") {
+      try { await clipStore?.download(view.readLocalClipKey?.()); }
+      catch (error) {
+        diagnostic("clip_download_failed", errorDetails(error));
+        status(`보관한 영상을 저장하지 못했습니다: ${error.message}`);
+      }
       return;
     }
     if (!ready) return;
@@ -836,7 +895,7 @@
     if (action === "confirm-end" && view.getScreen() === "end") return stopTest({ finish: true, reason: "user_confirmed" });
     if (action === "back" && starting) return stopTest();
     if (action === "sample") return speak("길동무가 함께합니다. 선택한 속도로 안내해 드릴게요.");
-    if (action === "speech-start") { coordinator.stop(); return; }
+    if (action === "speech-start") { boarding.dismissPrompt(); coordinator.stop(); return; }
     if (action === "speech-end") { if (!paused) coordinator.start(); return; }
     if (!running || starting || stopping) return;
     if (action === "record") return activeClip ? finishClip() : startClip();
@@ -871,7 +930,9 @@
     }
   }
   try {
-    settings = await GConfig.load(); player = GTts.create({ onError: status }); player.setRate(preferences.rate);
+    settings = await GConfig.load(); player = GTts.create({ onError: message => {
+      diagnostic("audio_failed", { error_message: message }); status(message);
+    } }); player.setRate(preferences.rate);
     coordinator = GAudioCoordinator.create({ player, onDiagnostic: event => queueTiming({ kind: "audio",
       frame_id: event.frame_id, captured_at_ms: event.captured_at_ms, status: event.status,
       source: event.source, action: event.action ?? null, occurred_at_ms: Math.round(performance.timeOrigin + event.at_ms),
@@ -883,7 +944,10 @@
     } });
     journey = GBusJourney.create({ api: GApi, coordinator, onChange: busChanged, onStatus: status, onEvent: queueEvent });
     ready = true; controls(); status("준비되었습니다. 시작하기를 눌러 주세요.");
-  } catch (error) { status(`${error.message} 서버를 확인한 뒤 새로고침해 주세요.`); return; }
+  } catch (error) {
+    diagnostic("initialization_failed", errorDetails(error));
+    status(`${error.message} 서버를 확인한 뒤 새로고침해 주세요.`); return;
+  }
   for (const id of ["device", "custom-device", "note"]) {
     const changed = () => {
       $("custom-device").hidden = $("device").value !== "custom";

@@ -20,6 +20,7 @@ function harness() {
         removeEventListener(event, callback) { handlers.get(event)?.delete(callback); },
         fire(event, detail = {}) { handlers.get(event)?.forEach(callback => callback({ preventDefault() {}, target: this, ...detail })); },
         focus() { focused.push(id); },
+        replaceChildren(fragment) { this.options = fragment.children; this.value = this.options[0]?.value || ""; },
       });
     }
     return nodes.get(id);
@@ -29,7 +30,8 @@ function harness() {
   });
   const actionButtons = [["camera-left", "settings-type"], ["stage-button", "manual-arrival"], ["walk-end", "end"],
     ["input-back", "back"], ["end-cancel", "cancel-end"], ["end-confirm", "confirm-end"], ["bus-number", "open-keypad"],
-    ["home-start", "start"], ["type-home", "settings-home"], ["save-error-log", "save-error-log"]].map(([id, action]) => {
+    ["home-start", "start"], ["type-home", "settings-home"], ["save-error-log", "save-error-log"],
+    ["save-local-clip", "save-local-clip"]].map(([id, action]) => {
     const button = node(id); button.dataset.action = action; return button;
   });
   const mic = node("mic-button"); mic.dataset.mic = "input";
@@ -38,6 +40,8 @@ function harness() {
   const sizes = [1, 1.2, 1.5].map(value => { const button = node(`size-${value}`); button.dataset.size = String(value); return button; });
   const document = node("document");
   document.getElementById = node;
+  document.createDocumentFragment = () => ({ children: [], appendChild(child) { this.children.push(child); } });
+  document.createElement = () => ({});
   document.querySelectorAll = selector => ({
     "[data-panel]": panels, "[data-action]": actionButtons, "[data-mic]": [mic], "[data-rate]": rates,
     "[data-size]": sizes, "[data-route]": [node("route-caption")],
@@ -48,7 +52,7 @@ function harness() {
     const match = selector.match(/^\[data-panel="(\w+)"\] \.top-controls button:not\(:disabled\)$/);
     return match ? node(`${match[1]}-first-button`) : null;
   };
-  const context = { Date: { now: () => clock }, document, window: {
+  const context = { Date: class extends Date { static now() { return clock; } }, document, window: {
     GildongmuFilm: { mount: () => ({ setVisible() {}, restart() {}, destroy() {} }) },
     GRouteKeypad: { normalize, create(callbacks) {
       keypadCallbacks = callbacks;
@@ -151,11 +155,11 @@ test("음성 인식 실패 시 마이크를 종료하고 오류 안내를 재생
   h.view.destroy();
 });
 
-test("멈춤 안내가 끝나면 열린 키패드의 대기 오류만 지우고 입력값을 보존한다", () => {
+test("입력 준비가 끝나면 열린 키패드의 대기 오류만 지우고 입력값을 보존한다", () => {
   const h = harness(); h.view.show("input"); h.view.setRoute("143"); h.click("bus-number");
   const closes = h.keypadCloses.length;
-  h.view.setRouteError("멈춤 안내가 끝나면 버스 찾기를 시작할 수 있어요.");
-  assert.match(h.keypadErrors.at(-1), /멈춤 안내/);
+  h.view.setRouteError("잠시 후 버스를 선택해 주세요.");
+  assert.match(h.keypadErrors.at(-1), /잠시 후/);
   h.view.setRouteError("");
   assert.equal(h.keypadErrors.at(-1), "");
   assert.equal(h.view.readRoute(), "143");
@@ -195,5 +199,23 @@ test("글자 크기 설정은 선택 표시와 화면 배율을 함께 복원한
   assert.equal(h.node("rate-2")["aria-pressed"], "true");
   h.view.setSettings({ textScale: 2 });
   assert.equal(h.node("app").properties.get("--text-scale"), "1.5", "이전 최대 크기 설정을 새 최대값으로 옮긴다");
+  h.view.destroy();
+});
+
+test("보관 영상 선택과 저장은 처리 중에도 가능하고 저장 실패를 구분해 표시한다", () => {
+  const h = harness(), records = [1, 2].map(index => ({ key: `session:${index}`, durable: true,
+    clip: { index, started_at_ms: 1700000000000 + index * 1000 } }));
+  h.view.setLocalClips(records);
+  assert.equal(h.node("local-clips-panel").hidden, false);
+  assert.equal(h.view.readLocalClipKey(), "session:1");
+  h.node("local-clip-choice").value = "session:2";
+  h.view.setLocalClips(records);
+  assert.equal(h.view.readLocalClipKey(), "session:2");
+  h.view.setBusy(true); h.click("save-local-clip");
+  assert.equal(h.actions.at(-1), "save-local-clip");
+  h.view.setLocalClips([{ ...records[0], durable: false }]);
+  assert.match(h.node("local-clips-status").textContent, /보관 실패/);
+  h.view.setLocalClips([]);
+  assert.equal(h.node("local-clips-panel").hidden, true);
   h.view.destroy();
 });
