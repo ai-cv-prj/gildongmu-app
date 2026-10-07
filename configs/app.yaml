@@ -15,6 +15,9 @@ camera:
   bus_capture_max_side: 960
   bus_jpeg_quality: 0.72
   bus_capture_interval_ms: 300
+  # Android 지원 기기에서 노선 확정 중에만 시도한다. 해제 시 이전 노출 복원.
+  bus_led_exposure_enabled: true
+  bus_led_exposure_time_us: 16667 # 약 1/60초 시험값. LED 개선 효과는 별도 검증.
   encoder_timeout_ms: 2000
   resume_delay_ms: 100
 

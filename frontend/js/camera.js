@@ -14,6 +14,7 @@ window.GCamera = (() => {
   let captureId = 0, cameraVersion = 0, lastBackend = "canvas";
   let capturing = false;
   let cancelVideoReady = null;
+  let exposure = null, onExposureChange = null;
 
   // 인코더 종료 및 대기 요청 해제
   /** Worker를 종료하고 진행 중인 캡처가 영원히 기다리지 않도록 한다. */
@@ -115,14 +116,29 @@ window.GCamera = (() => {
     if (startingVersion !== cameraVersion) {
       throw Object.assign(new Error("카메라 시작이 취소되었습니다."), { name: "AbortError" });
     }
+    const cameraSettings = window.GConfig.get().camera;
+    exposure = window.GCameraExposure.create(track, {
+      enabled: cameraSettings.bus_led_exposure_enabled === true,
+      exposureTimeUs: cameraSettings.bus_led_exposure_time_us,
+      android: navigator.userAgentData?.platform === "Android" || /\bAndroid\b/i.test(navigator.userAgent || ""),
+      onChange: report => onExposureChange?.(report),
+      onFatal: () => {
+        if (startingVersion !== cameraVersion) return;
+        stop({ keepExposureStatus: true });
+        onEnded?.();
+      },
+    });
     getEncoder(); // 테스트 시작 전에 Worker 로딩을 시작한다.
     return { width: video.videoWidth, height: video.videoHeight, label: track.label };
   }
 
   // 카메라와 인코더 종료
   /** 진행 중인 캡처를 무효화하고 카메라 트랙과 Worker 자원을 해제한다. */
-  function stop() {
+  function stop({ keepExposureStatus = false } = {}) {
     cameraVersion += 1;
+    exposure?.dispose();
+    exposure = null;
+    if (!keepExposureStatus) onExposureChange?.({ status: "stopped", requested: false });
     cancelVideoReady?.();
     closeEncoder(new Error("카메라 종료"));
     if (stream) {
@@ -181,7 +197,12 @@ window.GCamera = (() => {
   async function capture(maxSide, quality) {
     if (capturing) throw new Error("이전 캡처가 아직 처리 중입니다");
     capturing = true;
-    try { return await captureFrame(maxSide, quality); }
+    const version = cameraVersion;
+    try {
+      await exposure?.settled();
+      if (version !== cameraVersion || !active()) return null;
+      return await captureFrame(maxSide, quality);
+    }
     finally { capturing = false; }
   }
 
@@ -193,5 +214,8 @@ window.GCamera = (() => {
   function resume() { stream?.getVideoTracks().forEach(track => { track.enabled = true; }); }
 
   return { start, stop, active, capture, video, captureBackend, pause, resume,
+    setBusMode: enabled => exposure?.setBusMode(enabled) || Promise.resolve(),
+    exposureStatus: () => exposure?.snapshot() || { status: "stopped", requested: false },
+    setOnExposureChange: fn => { onExposureChange = fn; },
     setOnEnded: (fn) => { onEnded = fn; } };
 })();

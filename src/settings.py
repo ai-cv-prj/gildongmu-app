@@ -86,6 +86,9 @@ def load_app_config(config_path=DEFAULT_APP_CONFIG):
     number(camera, "bus_capture_max_side", 1, 16384, integer=True)
     number(camera, "bus_jpeg_quality", 0, 1)
     number(camera, "bus_capture_interval_ms", 100, 5000, integer=True)
+    if type(camera.get("bus_led_exposure_enabled")) is not bool:
+        raise ValueError("camera.bus_led_exposure_enabled: true 또는 false를 지정하세요.")
+    number(camera, "bus_led_exposure_time_us", 1000, 33334, integer=True)
     number(camera, "encoder_timeout_ms", 1, 300000, integer=True)
     number(camera, "resume_delay_ms", 0, 60000, integer=True)
     recording = section(config, "recording")
@@ -158,6 +161,7 @@ def browser_settings(app, audio):
         "camera": {key: app["camera"][key] for key in (
             "facing_mode", "width", "height", "capture_max_side", "jpeg_quality",
             "bus_capture_max_side", "bus_jpeg_quality", "bus_capture_interval_ms",
+            "bus_led_exposure_enabled", "bus_led_exposure_time_us",
             "encoder_timeout_ms", "resume_delay_ms",
         )},
         "recording": {key: app["recording"][key] for key in (

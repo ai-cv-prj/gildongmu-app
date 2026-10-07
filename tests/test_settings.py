@@ -27,6 +27,9 @@ def test_paths_are_independent_of_working_directory(tmp_path, monkeypatch):
 @pytest.mark.parametrize("group,key,value", [
     ("recording", "fps", 0), ("recording", "fps", float("nan")),
     ("recording", "preset", "unknown"), ("server", "port", True),
+    ("camera", "bus_led_exposure_enabled", "true"),
+    ("camera", "bus_led_exposure_time_us", 0), ("camera", "bus_led_exposure_time_us", 100000),
+    ("camera", "bus_led_exposure_time_us", True),
     ("camera", "jpeg_quality", 2), ("camera", "capture_max_side", 4000),
     ("upload", "max_jpeg_bytes", -1), ("upload", "min_frame_side", 3000),
     ("session", "timezone", "missing/timezone"),
@@ -63,6 +66,8 @@ def test_public_settings_exclude_paths_and_private_options():
     public = browser_settings(app, audio)
     assert set(public) == {"camera", "recording", "audio"}
     assert "private_token" not in public["camera"]
+    assert public["camera"]["bus_led_exposure_enabled"] is True
+    assert public["camera"]["bus_led_exposure_time_us"] == 16667
     assert "preset" not in public["recording"]
     assert public["recording"]["fps"] == app["recording"]["fps"]
     public["audio"]["guidance"]["stable_frames"] = 99

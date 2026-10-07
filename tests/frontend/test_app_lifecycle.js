@@ -6,6 +6,7 @@ const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve()
 
 async function harness({ stopFailsOnce = false, clipState = "ready", uploadResponseLostOnce = false, deferRouteSubmit = false, storedPreferences = null } = {}) {
   let now = 100, nextTimer = 0, screen = "home", cameraActive = false, cameraEnded;
+  let cameraExposureChanged, busCameraMode = false;
   let handlers, voice = null, busState = { status: "idle", revision: 0, arrival_event_id: null }, routeInput = "";
   let journeyCallbacks, journeyPaused = false, route = null;
   let sessionsStarted = 0, sessionsStopped = 0, stopAttempts = 0, uploadAttempts = 0;
@@ -15,7 +16,7 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
   let recordStarts = 0, recordStops = 0;
   const timeline = [], uploads = [];
   const timers = new Map(), intervals = new Map(), frames = [], guides = [], journeyStarts = [], renders = [], statuses = [];
-  const captures = [], startModes = [];
+  const captures = [], startModes = [], cameraModeCalls = [];
   const elements = new Map();
   const node = id => {
     if (!elements.has(id)) elements.set(id, { value: id === "device" ? "test phone" : "", style: {},
@@ -84,8 +85,13 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
       accept(value) { this.accepted.push(value); } }; guides.push(guide); return guide; } },
     GBusJourney: { create(options) { journeyCallbacks = options; return journey; } },
     GCamera: { video: { videoWidth: 1280, videoHeight: 720 },
-      async start() { cameraActive = true; return { width: 1280, height: 720 }; },
-      stop() { cameraActive = false; }, active: () => cameraActive,
+      async start() { cameraActive = true; busCameraMode = false; return { width: 1280, height: 720 }; },
+      stop() { cameraActive = false; busCameraMode = false; }, active: () => cameraActive,
+      async setBusMode(enabled) { cameraModeCalls.push(enabled); busCameraMode = enabled;
+        const state = { status: enabled ? "applied" : "default", requested: enabled,
+          target_us: 16667, actual_us: enabled ? 16670 : null, settings: {} };
+        cameraExposureChanged?.(state); return state; },
+      setOnExposureChange(callback) { cameraExposureChanged = callback; },
       capture: async maxSide => { captures.push(maxSide); return { size: 12, maxSide }; },
       pause() {}, resume() {}, setOnEnded(callback) { cameraEnded = callback; } },
     GRecorder: { startPreview() {}, stopPreview() {}, pause() {}, resume() {}, bytes: () => 0,
@@ -120,6 +126,8 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
     async previewTimer(delay) { const entry = [...timers].find(([, value]) => value.delay === delay);
       if (!entry) return false; const [id, value] = entry; timers.delete(id); value.callback(); await flush(); return true; },
     voice: () => voice,
+    cameraModeCalls, busCameraMode: () => busCameraMode,
+    exposureCallbackRegistered: () => typeof cameraExposureChanged === "function",
     recordCounts: () => ({ starts: recordStarts, stops: recordStops, recording }), screen: () => screen,
     retryVisible: () => !node("retry-upload").hidden,
     resources: () => ({ cameraActive, sessionsStarted, sessionsStopped, timers: timers.size, intervals: intervals.size, route }),
@@ -152,6 +160,36 @@ test("정류장 수동 확인과 번호 확정은 서버 boarding을 거쳐 GPS/
   await app.confirmRoute("143");
   assert.equal(app.screen(), "search");
   assert.deepEqual(app.journeyStarts, ["143"]);
+  await app.end();
+});
+
+test("LED 노출 설정은 노선 확정 때 적용하고 이전·수정 시 복원한다", async () => {
+  const app = await harness();
+  assert.equal(app.exposureCallbackRegistered(), true);
+  await app.action("start");
+  assert.equal(app.busCameraMode(), false);
+  assert.deepEqual(app.cameraModeCalls, [], "처음 보행 안내는 기본 카메라 설정을 사용한다");
+  await app.action("manual-arrival");
+  await app.finishVoice();
+  await app.draftRoute("잘못된 번호");
+  assert.deepEqual(app.cameraModeCalls, [], "정류장 도착과 유효하지 않은 번호만으로는 설정을 바꾸지 않는다");
+  await app.draftRoute("143");
+  assert.deepEqual(app.cameraModeCalls, [true]);
+  assert.equal(app.busCameraMode(), true);
+  const frame = await app.capture();
+  await app.respond(0); await frame.pending;
+  assert.deepEqual(app.cameraModeCalls, [true], "동일한 submitted 상태가 재통지되어도 재적용하지 않는다");
+
+  await app.action("back");
+  assert.deepEqual(app.cameraModeCalls, [true, false]);
+  assert.equal(app.busCameraMode(), false);
+  assert.equal(app.resources().cameraActive, true, "설정 복원 중에도 공유 카메라 세션은 유지한다");
+  await app.finishVoice();
+  await app.confirmRoute("606");
+  assert.deepEqual(app.cameraModeCalls, [true, false, true]);
+  await app.action("edit-route");
+  assert.deepEqual(app.cameraModeCalls, [true, false, true, false]);
+  assert.equal(app.busCameraMode(), false);
   await app.end();
 });
 
@@ -245,7 +283,10 @@ test("버스 노선 안내를 일시중지한 뒤 이전을 누르면 재개하�
   await app.confirmRoute("143");
   await app.action("pause");
   assert.equal(app.journeyPaused(), true);
+  assert.deepEqual(app.cameraModeCalls, [true], "일시중지는 활성 노선의 설정을 유지한다");
   await app.action("back");
+  assert.deepEqual(app.cameraModeCalls, [true, false], "일시중지 후 이전도 노선 해제와 함께 복원한다");
+  assert.equal(app.busCameraMode(), false);
   assert.equal(app.resources().route, null, "이전이 무시되지 않고 노선 안내를 해제한다");
   assert.equal(app.journeyPaused(), false);
   assert.equal(app.resources().cameraActive, true, "노선을 다시 고르는 동안 세션을 유지한다");
@@ -299,7 +340,10 @@ test("카메라 종료 후 GPS만 계속할 때도 일시중지 버튼으로 GPS
   await app.action("manual-arrival");
   await app.finishVoice();
   await app.confirmRoute("143");
+  assert.equal(app.exposureCallbackRegistered(), true, "노출 상태 콜백과 트랙 종료 콜백을 함께 등록한다");
   await app.cameraEnd();
+  assert.equal(app.resources().cameraActive, false);
+  assert.match(app.statuses.at(-1), /카메라가 종료되었습니다/);
   assert.equal(app.journeyPaused(), false, "카메라 종료와 GPS 안내는 독립적이다");
   await app.action("pause");
   assert.equal(app.journeyPaused(), true, "사용자 일시중지는 GPS도 멈춘다");

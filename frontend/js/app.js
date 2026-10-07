@@ -294,13 +294,16 @@
       const route = normalizeRoute(next.bus_number);
       if (route !== activeRoute) {
         lastBusCaptureAtMs = null;
-        activeRoute = route; busScreen = "search"; view.setRoute(route);
+        activeRoute = route; busScreen = "search"; void GCamera.setBusMode(true); view.setRoute(route);
         if (!temporaryScreen()) view.show("search");
         journey.start(route);
         if (paused) journey.pause();
       }
     } else {
-      if (activeRoute) { journey.stop(); activeRoute = null; lastBusCaptureAtMs = null; }
+      if (activeRoute) {
+        journey.stop(); activeRoute = null; lastBusCaptureAtMs = null;
+        void GCamera.setBusMode(false);
+      }
       if (next.status === "pending" && previous?.status !== "pending") {
         // 새 정류장 도착에서는 이전 도착 때 입력한 번호를 지우고, 노선 변경(reopen)에서만 이어서 보여 준다.
         if (next.arrival_event_id !== draftEventId) { draftRoute = ""; draftEventId = null; }
@@ -635,6 +638,21 @@
     ready = true; controls(); status("준비되었습니다. 시작하기를 눌러 주세요.");
   } catch (error) { status(`${error.message} 서버를 확인한 뒤 새로고침해 주세요.`); return; }
   $("device").addEventListener("change", () => { $("custom-device").hidden = $("device").value !== "custom"; });
+  GCamera.setOnExposureChange(report => {
+    const text = {
+      stopped: "카메라 종료 · 다음 시작 시 기본 촬영",
+      default: "기본 촬영 · 버스 번호 확정 후 LED 촬영 설정 시도",
+      applying: "버스 LED 촬영 설정 적용 중",
+      applied: `버스 LED 촬영 설정 적용 · 노출 약 ${((report.actual_us || 0) / 1000).toFixed(2)}ms`,
+      unsupported: report.reason === "disabled" ? "기본 촬영 · LED 촬영 설정 꺼짐"
+        : "기본 촬영 · 이 기기에서는 LED 촬영 설정을 지원하지 않음",
+      failed: "기본 촬영으로 복원 · LED 촬영 설정 적용 확인 실패",
+      restoring: "버스 찾기 종료 · 이전 촬영 설정 복원 중",
+      restore_failed: "촬영 설정 복원을 확인할 수 없어 카메라를 종료했습니다. 다시 시작해 주세요.",
+    }[report.status] || "카메라 촬영 설정 확인 중";
+    $("camera-exposure-status").textContent = text;
+    queueEvent({ type: "camera_exposure", occurred_at_ms: Date.now(), ...report });
+  });
   GCamera.setOnEnded(() => {
     if (!running) return;
     cameraLost = true; presentation++; lastResult = null; view.render(null); clearTimeout(timer);
