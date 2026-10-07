@@ -12,7 +12,7 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
   let sessionsStarted = 0, sessionsStopped = 0, stopAttempts = 0, uploadAttempts = 0;
   let recording = false, recordingStartedAt = null, recorderEnded = null;
   let releaseRouteSubmit = null, configuredPreferences = null, savedPreferences = null;
-  const routeSubmissions = [];
+  const routeSubmissions = [], routeErrors = [], shownScreens = [];
   let recordStarts = 0, recordStops = 0;
   const timeline = [], uploads = [];
   const timers = new Map(), intervals = new Map(), frames = [], guides = [], journeyStarts = [], renders = [], statuses = [];
@@ -23,8 +23,9 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
       classList: { toggle() {} }, addEventListener() {} });
     return elements.get(id);
   };
-  const view = { setSettings(value) { configuredPreferences = value; }, show(value) { screen = value; }, getScreen: () => screen,
+  const view = { setSettings(value) { configuredPreferences = value; }, show(value) { screen = value; shownScreens.push(value); }, getScreen: () => screen,
     setObstacleDetection() {}, setBusy() {}, setStatus(text) { statuses.push(text); }, announce() {}, setRoute(value) { routeInput = value; }, setBus() {},
+    readRoute: () => routeInput, setRouteError(message) { routeErrors.push(message); },
     setStations() {}, setPaused() {}, render(value) { renders.push(value); }, getGuidance: () => "안내" };
   const player = { setRate: value => value, recordingStream: () => null, cancel() { voice = null; },
     speak(text, validUntil, callbacks) { voice = { text, validUntil, ...callbacks }; callbacks.onStart?.(); return true; } };
@@ -100,7 +101,8 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
       async stopRaw() { if (!recording) return null; recording = false; recordStops++;
         return { blob: { size: 12, type: "video/webm" }, started_at_ms: recordingStartedAt,
           ended_at_ms: Math.min(100000 + now, recordingStartedAt + 30000) }; } },
-    GOverlay: { size() {}, clear() {}, render(_result, done) { done("drawn"); } },
+    GOverlay: { size() {}, clear() {}, snapshot: () => "cG5n",
+      render(_result, done) { done("drawn"); } },
     fetch: async () => ({}), addEventListener() {},
     queueMicrotask,
   };
@@ -116,6 +118,7 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
     walking: { detections: [], event: {} }, traffic: { detections: [], event: {} },
     boarding: { ...busState }, stop_proximity: { nearby: false } });
   return { action, frames, captures, startModes, guides, journeyStarts, renders, statuses, uploads, timeline, routeSubmissions,
+    routeErrors, shownScreens, typeRoute(value) { routeInput = value; },
     async end() { await action("end"); await action("confirm-end"); },
     submit: value => handlers.onSubmitRoute(value),
     releaseSubmit() { releaseRouteSubmit?.(); },
@@ -151,16 +154,66 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
   };
 }
 
-test("정류장 수동 확인과 번호 확정은 서버 boarding을 거쳐 GPS/OCR 여정을 한 번 시작한다", async () => {
+test("수동 도착은 멈춤 안내 중 번호 입력을 허용하고 완료 후에만 버스 찾기와 노출 설정을 시작한다", async () => {
   const app = await harness();
   await app.action("start");
   await app.action("manual-arrival");
+  assert.equal(app.screen(), "input", "멈춤 안내와 동시에 번호 입력 화면을 연다");
+  app.typeRoute("143");
+  await app.confirmRoute("143");
+  assert.equal(app.screen(), "input");
+  assert.match(app.routeErrors.at(-1), /멈춤 안내가 끝나면/);
+  assert.deepEqual(app.routeSubmissions, []);
+  assert.deepEqual(app.cameraModeCalls, []);
+  assert.deepEqual(app.journeyStarts, [], "멈춤 안내 중에는 버스 찾기를 시작하지 않는다");
+  const shownBeforeStop = app.shownScreens.length;
   await app.finishVoice();
   assert.equal(app.screen(), "input");
-  await app.confirmRoute("143");
+  assert.equal(app.routeInput(), "143", "멈춤 안내 전에 입력한 번호를 보존한다");
+  assert.equal(app.shownScreens.length, shownBeforeStop, "음성 완료로 화면을 다시 열거나 키패드를 닫지 않는다");
+  assert.equal(app.routeErrors.at(-1), "");
+  await app.action("confirm-route");
   assert.equal(app.screen(), "search");
   assert.deepEqual(app.journeyStarts, ["143"]);
+  assert.deepEqual(app.cameraModeCalls, [true]);
   await app.end();
+});
+
+test("멈춤 안내 중 제출하지 않은 번호도 설정이나 종료 확인을 다녀와서 이어 입력한다", async () => {
+  for (const destination of ["settings-type", "end"]) {
+    const app = await harness();
+    await app.action("start"); await app.action("manual-arrival");
+    app.typeRoute("N26");
+    await app.action(destination);
+    const temporary = app.screen();
+    await app.finishVoice();
+    assert.equal(app.screen(), temporary);
+    await app.action(destination === "end" ? "cancel-end" : "start");
+    assert.equal(app.screen(), "input");
+    assert.equal(app.routeInput(), "N26");
+    assert.deepEqual(app.routeSubmissions, []);
+    await app.confirmRoute(app.routeInput());
+    assert.deepEqual(app.journeyStarts, ["N26"]);
+    await app.end();
+  }
+});
+
+test("멈춤 안내가 아직 끝나지 않아도 설정과 종료 확인에서 번호 입력으로 돌아간다", async () => {
+  for (const destination of ["settings-type", "end"]) {
+    const app = await harness();
+    await app.action("start"); await app.action("manual-arrival");
+    app.typeRoute("606");
+    await app.action(destination);
+    await app.action(destination === "end" ? "cancel-end" : "start");
+    assert.equal(app.screen(), "input");
+    assert.equal(app.routeInput(), "606");
+    await app.confirmRoute("606");
+    assert.deepEqual(app.routeSubmissions, []);
+    await app.finishVoice();
+    await app.confirmRoute("606");
+    assert.deepEqual(app.journeyStarts, ["606"]);
+    await app.end();
+  }
 });
 
 test("LED 노출 설정은 노선 확정 때 적용하고 이전·수정 시 복원한다", async () => {
@@ -376,6 +429,8 @@ test("녹화는 기본 꺼짐이며 선택한 두 구간을 세션 종료 후 �
     [[1], [2]]);
   assert.strictEqual(app.uploads[0].frames[0].image, app.frames[0].blob,
     "라이브 추론에 보낸 동일한 JPEG를 사후 업로드한다");
+  assert.equal(app.uploads[0].frames[0].overlay_png, "cG5n",
+    "화면에 실제 그린 오버레이도 같은 프레임과 함께 업로드한다");
   assert.ok(app.uploads.every(clip => clip.ended_at_ms - clip.started_at_ms <= 30000));
   assert.match(app.statuses.at(-1), /원본·추론 영상 저장이 완료/);
 });

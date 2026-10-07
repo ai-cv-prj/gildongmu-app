@@ -55,7 +55,7 @@
       updateText($("route-error"), String(message || ""));
       $("route-error").hidden = !message;
       $("bus-number").setAttribute("aria-invalid", String(Boolean(message)));
-      if (message) keypad?.setError(message);
+      keypad?.setError(String(message || ""));
     }
     function paintCue(cue) {
       currentCue = cue;
@@ -175,7 +175,7 @@
       $("bus-target").hidden = !busScreen || paused;
       $("bus-details").hidden = !busScreen || paused;
       $("stage-button").dataset.action = busScreen ? "repeat" : "manual-arrival";
-      updateText($("stage-label"), busScreen ? "다시 듣기" : "정류장 도착");
+      updateText($("stage-label"), busScreen ? "다시 듣기" : "버스 번호 입력");
       $("camera-left").dataset.action = busScreen ? "back" : "settings-type";
       updateText($("camera-left-label"), busScreen ? "이전 화면으로" : "글자 크기 설정");
       if (screen === "input") routeError("");

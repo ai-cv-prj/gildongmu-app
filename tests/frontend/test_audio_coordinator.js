@@ -140,7 +140,16 @@ assert.equal(interrupted, 0);
 assert.equal(completed, 0);
 runningClip.onEnd();
 assert.equal(completed, 1);
+assert.equal(playback.walkingPlaybackAction(), null);
 playback.request({ source: "boarding", priority: 6, text: "버스 번호", validUntil: now + 1000,
   onCancel: () => interrupted++ });
 playback.request({ source: "walking", priority: 0, text: "멈추세요.", validUntil: now + 1000 });
 assert.equal(interrupted, 1);
+
+// 장애물 음원이 실제 시작된 동안에만 배지용 행동을 노출한다.
+playback.clear("walking");
+playback.request({ source: "walking", priority: playback.PRIORITY.walking,
+  text: "오른쪽으로 한 걸음", validUntil: now + 1000, metadata: { action: "right" } });
+assert.equal(playback.walkingPlaybackAction(), "right");
+runningClip.onEnd();
+assert.equal(playback.walkingPlaybackAction(), null);

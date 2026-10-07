@@ -96,7 +96,7 @@
         if (activeClip === clip) queueMicrotask(() => {
           void finishClip(error ? `영상 기록 오류: ${error.message}` : "카메라 영상 기록이 종료됐습니다.");
         });
-      });
+      }, player.recordingStream());
       clip.last_sent_at_ms = clip.started_at_ms;
       activeClip = clip;
       clipTimer = setTimeout(() => { void finishClip("30초 영상 구간 기록을 마쳤습니다."); }, MAX_CLIP_MS - 250);
@@ -144,17 +144,31 @@
   }
   function bufferClipFrame(clip, frameId, capturedAtMs, image, maskPng) {
     if (!clip || clip.discarded || capturedAtMs < clip.started_at_ms ||
-        (clip.ended_at_ms !== null && capturedAtMs >= clip.ended_at_ms)) return;
+        (clip.ended_at_ms !== null && capturedAtMs >= clip.ended_at_ms)) return null;
     const mask = typeof maskPng === "string" ? maskPng : "";
     const bytes = image.size + mask.length;
     if (clip.frames.length >= MAX_CLIP_FRAMES || clip.frame_bytes + bytes > MAX_CLIP_FRAME_BYTES ||
         bufferedBytes + GRecorder.bytes() + bytes > MAX_PENDING_BYTES) {
       if (activeClip === clip) void finishClip("프레임 또는 영상 용량 제한에 도달해 기록을 마쳤습니다.");
-      return;
+      return null;
     }
-    clip.frames.push({ frame_id: frameId, captured_at_ms: capturedAtMs, image, mask_png: mask });
+    const frame = { frame_id: frameId, captured_at_ms: capturedAtMs, image, mask_png: mask };
+    clip.frames.push(frame);
     clip.frame_bytes += bytes;
     bufferedBytes += bytes;
+    return frame;
+  }
+  function saveClipOverlay(clip, frame) {
+    if (!frame || clip.discarded || clip.overlay_finalized || !clip.frames.includes(frame)) return;
+    try {
+      const png = GOverlay.snapshot();
+      const bytes = png.length;
+      if (bytes > 2 * 1024 * 1024 * 4 / 3 || clip.frame_bytes + bytes > MAX_CLIP_FRAME_BYTES ||
+          bufferedBytes + GRecorder.bytes() + bytes > MAX_PENDING_BYTES) return;
+      frame.overlay_png = png;
+      clip.frame_bytes += bytes;
+      bufferedBytes += bytes;
+    } catch (error) { console.warn("화면 오버레이 저장 실패:", error); }
   }
   const clipIndex = item => Number.parseInt(String(item.clip_id).replace(/[^0-9]/g, ""), 10);
   async function pollClipStatus() {
@@ -194,6 +208,13 @@
       }
       while (pendingUploads.length) {
         const clip = pendingUploads[0];
+        // 추론 결과가 화면에 표시된 프레임만 저장한다.
+        clip.overlay_finalized = true;
+        clip.frames = clip.frames.filter(frame => frame.overlay_png);
+        const frameBytes = clip.frames.reduce((sum, frame) =>
+          sum + frame.image.size + frame.mask_png.length + frame.overlay_png.length, 0);
+        bufferedBytes -= clip.frame_bytes - frameBytes;
+        clip.frame_bytes = frameBytes;
         if (!clip.frames.length) {
           status(`${clip.index}번째 구간에 완료된 추론 프레임이 없어 영상 쌍을 저장하지 않았습니다.`);
           bufferedBytes -= clip.blob.size + clip.frame_bytes;
@@ -260,7 +281,13 @@
     // The keypad and speech input share one submission path. A late recognizer
     // or duplicate tap must not submit into another screen, stop or session.
     if (!ready || !running || starting || stopping || paused || submittingRoute ||
-        boardingState?.busy || boardingState?.status !== "pending" || view.getScreen() !== "input") return;
+        boardingState?.busy || view.getScreen() !== "input") return;
+    if (boardingState?.status === "awaiting_stop") {
+      const message = "멈춤 안내가 끝나면 버스 찾기를 시작할 수 있어요.";
+      status(message); view.setRouteError?.(message); view.announce(message);
+      return;
+    }
+    if (boardingState?.status !== "pending") return;
     const route = normalizeRoute(value);
     if (!/^(?:[가-힣]+|[A-Z]+)?[0-9]+[A-Z]?(?:-[0-9]+)?$/.test(route) || route.length > 20) {
       status("143, N26, 마포07처럼 노선 번호를 입력해 주세요.");
@@ -275,7 +302,9 @@
   }
   function currentGuidanceScreen() {
     if (activeRoute) return busScreen;
-    return boardingState?.status === "pending" ? "input" : "walk";
+    return boardingState?.status === "pending" ||
+      (boardingState?.status === "awaiting_stop" && boardingState.arrival_source === "user_confirmed")
+      ? "input" : "walk";
   }
   function returnToGuidance() {
     view.show(currentGuidanceScreen());
@@ -304,13 +333,22 @@
         journey.stop(); activeRoute = null; lastBusCaptureAtMs = null;
         void GCamera.setBusMode(false);
       }
-      if (next.status === "pending" && previous?.status !== "pending") {
-        // 새 정류장 도착에서는 이전 도착 때 입력한 번호를 지우고, 노선 변경(reopen)에서만 이어서 보여 준다.
-        if (next.arrival_event_id !== draftEventId) { draftRoute = ""; draftEventId = null; }
-        view.setRoute(draftRoute);
-        if (!temporaryScreen()) view.show("input");
-      } else if (next.status === "awaiting_stop") status("멈춤 안내가 끝나면 탑승할 버스 번호를 입력해 주세요.");
-      else if (next.status === "cancelled" && previous?.status !== "cancelled") {
+      const manualWaiting = next.status === "awaiting_stop" && next.arrival_source === "user_confirmed";
+      if (next.status === "pending" || manualWaiting) {
+        // 새 도착에서만 초기화한다. 멈춤 안내가 끝나거나 같은 노선을 다시
+        // 입력할 때는 열린 키패드와 작성 중인 번호를 그대로 유지한다.
+        if (next.arrival_event_id !== draftEventId) {
+          draftRoute = ""; draftEventId = next.arrival_event_id;
+          view.setRoute(draftRoute);
+        }
+        if (next.status !== previous?.status) {
+          if (next.status === "pending") view.setRouteError?.("");
+          if (!temporaryScreen() && view.getScreen() !== "input") view.show("input");
+          if (manualWaiting) status("멈춤 안내 중입니다. 버스 번호를 입력해 주세요.");
+        }
+      } else if (next.status === "awaiting_stop") {
+        status("멈춤 안내가 끝나면 탑승할 버스 번호를 입력해 주세요.");
+      } else if (next.status === "cancelled" && previous?.status !== "cancelled") {
         if (!temporaryScreen()) view.show("walk");
         status("버스 찾기를 취소했습니다. 보행 안내를 계속합니다.");
       }
@@ -337,16 +375,13 @@
     if (!["input", "confirm", "home", "type", "end", "welcome", "finish"].includes(view.getScreen())) view.show(state, { focus: false });
     view.setPaused(paused);
   }
-  function showResult(result, capturedAt) {
+  function showResult(result, capturedAt, clip = null, clipFrame = null) {
     // Apply revision-checked boarding first; an old in-flight frame must not
     // restore obstacle warnings after the user manually confirms arrival.
     boarding.accept(result, capturedAt);
     if (!obstaclesEnabled(boardingState)) result = { ...result,
       walking: { ...result.walking, detections: [], event: { enabled: false } } };
     lastResult = result;
-    GOverlay.render(result, state => queueTiming({ kind: "overlay", frame_id: result.frame_id,
-      captured_at_ms: result.captured_at_ms, status: state,
-      overlay_delay_ms: state === "drawn" ? Math.round(performance.now() - capturedAt) : null }));
     $("metrics").textContent = `${result.frame_id} 프레임 · 추론 ${result.inference_ms}ms`;
     $("stop-proximity-status").textContent = result.stop_proximity?.nearby ? "카메라에서 정류장 근접 추정" : "정류장 근접 관측 없음";
     coordinator.acceptCrosswalk(result.crosswalk?.event, capturedAt);
@@ -358,6 +393,15 @@
     traffic.accept({ session_id: result.session_id, frame_id: result.frame_id,
       detections: result.traffic.detections, event: result.traffic.event }, capturedAt);
     if (activeRoute) journey.accept(result.bus, result.bus?.captured_at_ms ?? result.captured_at_ms);
+    const overlayResult = { ...result, walking: { ...result.walking,
+      event: { ...result.walking?.event,
+        voice_playback_action: coordinator.walkingPlaybackAction() } } };
+    GOverlay.render(overlayResult, state => {
+      if (state === "drawn" || state === "stale") saveClipOverlay(clip, clipFrame);
+      queueTiming({ kind: "overlay", frame_id: result.frame_id,
+        captured_at_ms: result.captured_at_ms, status: state,
+        overlay_delay_ms: state === "drawn" ? Math.round(performance.now() - capturedAt) : null });
+    });
     view.render(result);
   }
   function scheduleFrame() {
@@ -408,11 +452,13 @@
         }
         const result = await GApi.frame(id, frameId + 1, capturedAtMs, blob, request.signal,
           busBlob, busCapturedAtMs);
-        bufferClipFrame(selectedClip, result.frame_id, capturedAtMs, blob, result.walking?.mask_png);
+        const clipFrame = bufferClipFrame(selectedClip, result.frame_id, capturedAtMs, blob,
+          result.walking?.mask_png);
         if (!running || version !== generation) return;
         frameId = result.frame_id; // Even an in-flight paused request advances the server sequence.
         const returnedAt = performance.now();
-        if (!paused && !document.hidden && shownVersion === presentation) showResult(result, capturedAt);
+        if (!paused && !document.hidden && shownVersion === presentation)
+          showResult(result, capturedAt, selectedClip, clipFrame);
         const busTiming = {};
         if (busBlob) {
           busTiming.bus_capture_ms = busCaptureMs;
@@ -479,7 +525,7 @@
         // 일시중지 중에도 페이지가 살아 있음을 알려 강제 종료된 세션과 구분한다.
         if (sessionId) GApi.heartbeat(sessionId).catch(() => {});
       }, 5000);
-      view.setPaused(false); status("보행 안내를 시작했습니다. 정류장에 도착하면 버튼을 눌러 주세요."); scheduleFrame();
+      view.setPaused(false); status("보행 안내를 시작했습니다. 정류장에 도착하면 버스 번호 입력 버튼을 눌러 주세요."); scheduleFrame();
     } catch (error) {
       if (version !== generation) return;
       if (sessionId) await stopTest();
@@ -603,7 +649,8 @@
       if (boardingState?.status === "pending") return view.show("input");
       await boarding.arrive(); boarding.tick();
     } else if (action === "confirm-route") {
-      if (draftRoute) await submitRoute(draftRoute);
+      const route = view.readRoute?.() ?? draftRoute;
+      if (route) await submitRoute(route);
     } else if (action === "edit-route") {
       if (boardingState?.status === "submitted") { await boarding.reopen(); boarding.tick(); }
       else { view.setRoute(draftRoute); view.show("input"); }
@@ -620,7 +667,7 @@
     } else if (action === "locate" && activeRoute) journey.start(activeRoute);
     else if (action === "repeat") {
       if (activeRoute) journey.repeat();
-      else speak(view.getGuidance() || "정류장에 도착하면 정류장 도착 버튼을 눌러 주세요.");
+      else speak(view.getGuidance() || "정류장에 도착하면 버스 번호 입력 버튼을 눌러 주세요.");
     }
   }
   try {

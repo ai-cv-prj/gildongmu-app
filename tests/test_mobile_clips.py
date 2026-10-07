@@ -1,7 +1,8 @@
 """Selected mobile clips are stored after inference and remain bounded."""
 
-import io
+import base64
 import hashlib
+import io
 import json
 import logging
 import subprocess
@@ -31,6 +32,52 @@ def sample_webm(path):
         "color=size=64x64:rate=10:duration=0.4", "-c:v", "libvpx", str(path),
     ], check=True, capture_output=True)
     return path.read_bytes()
+
+
+def test_inference_export_keeps_screen_overlay_and_heard_audio(tmp_path):
+    manager = SessionManager(tmp_path, model_factory=FakeModels)
+    started = manager.start("Phone")
+    session_id = started["session_id"]
+    image = np.zeros((80, 100, 3), dtype=np.uint8)
+    success, encoded = cv2.imencode(".jpg", image)
+    assert success
+    jpeg = encoded.tobytes()
+    manager.process(session_id, 1, 1100, image, image_bytes=jpeg, save_live_frame=False)
+    manager.stop(session_id)
+    store = ClipStore(manager, max_jpeg_bytes=3_000_000)
+    original = tmp_path / "with_audio.webm"
+    subprocess.run([
+        ffmpeg_executable(), "-nostdin", "-y", "-v", "error", "-f", "lavfi", "-i",
+        "color=size=100x80:rate=10:duration=0.4", "-f", "lavfi", "-i",
+        "sine=frequency=440:duration=0.4", "-c:v", "libvpx", "-c:a", "libopus",
+        "-shortest", str(original),
+    ], check=True, capture_output=True)
+    recording = original.read_bytes()
+    store.add_chunk(session_id, 1, 0, recording)
+    overlay = np.zeros((160, 200, 4), dtype=np.uint8)
+    overlay[40:80, 60:100] = (0, 0, 255, 255)
+    success, png = cv2.imencode(".png", overlay)
+    assert success
+    store.add_frame(session_id, 1, 1, 1100, jpeg, overlay_png=base64.b64encode(png).decode("ascii"))
+    store.complete(session_id, 1, mime_type="video/webm", chunk_count=1,
+                   size_bytes=len(recording), started_at_ms=1000, ended_at_ms=1400)
+    store.export(session_id, 1)
+    clip = manager.completed_folder(session_id) / "clips" / "clip_001"
+    assert store.status(session_id)["clips"][0]["state"] == "ready"
+    assert json.loads((clip / "manifest.json").read_text())["frames"][0]["overlay"] is True
+    capture = cv2.VideoCapture(str(clip / "inference.mp4"))
+    try:
+        success, rendered = capture.read()
+        assert success
+        assert rendered[30, 40, 2] > 180  # 실제 화면에서 저장한 붉은 오버레이
+        assert rendered[5, 5, 2] < 50
+    finally:
+        capture.release()
+    decoded = subprocess.run([
+        ffmpeg_executable(), "-nostdin", "-v", "error", "-i", str(clip / "inference.mp4"),
+        "-map", "0:a:0", "-f", "s16le", "-ac", "1", "-ar", "16000", "pipe:1",
+    ], check=True, capture_output=True).stdout
+    assert np.max(np.abs(np.frombuffer(decoded, dtype=np.int16))) > 100
 
 
 def test_no_clip_session_has_no_video_and_stop_retries(tmp_path):

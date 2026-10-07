@@ -26,6 +26,7 @@ class CameraMotionGuard:
         self.last_stable_at = None
         self.unavailable_since = None
         self.last_result = None
+        self.last_transform_norm = None
 
     # 인접 프레임의 카메라 변환 측정
     def _measure(self, frame):
@@ -52,13 +53,22 @@ class CameraMotionGuard:
         scale = math.hypot(transform[0,0], transform[1,0])
         rotation = abs(math.degrees(math.atan2(transform[1,0], transform[0,0])))
         translation = math.hypot(transform[0,2]/gray.shape[1], transform[1,2]/gray.shape[0])
-        return (rotation <= self.cfg["camera_max_rotation_deg"]
-                and abs(scale-1) <= self.cfg["camera_max_scale_change"]
-                and translation <= self.cfg["camera_max_translation"])
+        stable = (rotation <= self.cfg["camera_max_rotation_deg"]
+                  and abs(scale-1) <= self.cfg["camera_max_scale_change"]
+                  and translation <= self.cfg["camera_max_translation"])
+        if stable:
+            width, height = gray.shape[1], gray.shape[0]
+            pixels = np.eye(3)
+            pixels[:2] = transform
+            basis = np.diag([width, height, 1.0])
+            normalized = np.diag([1 / width, 1 / height, 1.0])
+            self.last_transform_norm = (normalized @ pixels @ basis)[:2]
+        return stable
 
     # 카메라 안정 상태 갱신
     def update(self, frame, timestamp):
         """계산 불가를 잠시 유예하되 실제 임계값 초과는 즉시 불안정으로 반환한다."""
+        self.last_transform_norm = None
         measured = self._measure(frame)
         if measured is True:
             self.last_stable_at = timestamp
@@ -247,8 +257,10 @@ class MotionHistory:
         self.histories = {key: history for key, history in self.histories.items()
                           if timestamp-history[-1][0] <= self.cfg["history_window_s"]}
 
-    def update(self, detection, geometry, timestamp, valid, corridor_polygon=None):
+    def update(self, detection, geometry, timestamp, valid, corridor_polygon=None,
+               background_transform=None):
         result = {"quality": "insufficient", "velocity_norm_per_s": None,
+                  "independent_velocity_norm_per_s": None,
                   "time_to_corridor_s": None, "time_to_path_s": None, "time_to_near_s": None,
                   "ttc_scale_s": None, "history_s": 0.0,
                   "relative_expansion_per_s": None, "approach_state": "unknown",
@@ -267,8 +279,15 @@ class MotionHistory:
                         or timestamp <= history[-1][0]
                         or timestamp-history[-1][0] > self.cfg["reset_gap_s"]):
             history.clear()
+        independent_velocity = None
+        if history and background_transform is not None:
+            previous = history[-1]
+            expected = np.asarray(background_transform) @ [previous[2], previous[3], 1.0]
+            elapsed = timestamp - previous[0]
+            if elapsed > 0:
+                independent_velocity = tuple((np.asarray(geometry["point"]) - expected) / elapsed)
         history.append((timestamp, detection["class_id"], *geometry["point"],
-                        geometry["height"], geometry["clipped"]))
+                        geometry["height"], geometry["clipped"], independent_velocity))
         while history and timestamp-history[0][0] > self.cfg["history_window_s"] + 1e-9:
             history.popleft()
         duration = timestamp-history[0][0]
@@ -287,6 +306,11 @@ class MotionHistory:
         vx, vy, dh = map(float, fitted[0])
         result["quality"] = "valid"
         result["velocity_norm_per_s"] = [vx, vy]
+        recent = [row[6] for row in list(history)[-3:]]
+        if len(recent) >= 2 and all(value is not None for value in recent[-2:]):
+            valid_recent = [value for value in recent if value is not None]
+            result["independent_velocity_norm_per_s"] = list(map(
+                float, np.median(valid_recent, axis=0)))
         # Only a tracked, stable image-space approach may anticipate the near zone.
         if (self.cfg["approach_danger_enabled"] and not geometry["clipped"]
                 and vy >= self.cfg["min_forward_speed"]):

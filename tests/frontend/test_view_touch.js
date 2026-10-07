@@ -7,6 +7,7 @@ const { normalize } = require("../../frontend/js/route-keypad.js");
 function harness() {
   let clock = 100000, speechCallbacks, keypadCallbacks, speechActive = false, speechStops = 0;
   const nodes = new Map(), actions = [], submissions = [], spoken = [], focused = [], keypadOpens = [], keypadCloses = [];
+  const keypadErrors = [];
   function node(id) {
     if (!nodes.has(id)) {
       const handlers = new Map(), classes = new Set(), properties = new Map();
@@ -50,7 +51,7 @@ function harness() {
     GildongmuFilm: { mount: () => ({ setVisible() {}, restart() {}, destroy() {} }) },
     GRouteKeypad: { normalize, create(callbacks) {
       keypadCallbacks = callbacks;
-      return { setValue() {}, setError() {}, open(value) { keypadOpens.push(value); callbacks.onOpenChange(true); },
+      return { setValue() {}, setError(message) { keypadErrors.push(message); }, open(value) { keypadOpens.push(value); callbacks.onOpenChange(true); },
         close(options) { keypadCloses.push(options); }, destroy() {} };
     } },
     GSpeechInput: { create(callbacks) {
@@ -63,7 +64,7 @@ function harness() {
   vm.runInNewContext(fs.readFileSync("frontend/js/view.js", "utf8"), context);
   const view = context.window.GView.create({ onAction: action => actions.push(action), onSubmitRoute: route => submissions.push(route),
     onSpeak: message => spoken.push(message) });
-  return { view, node, actions, submissions, spoken, focused, keypadOpens, keypadCloses, speechCallbacks, keypadCallbacks,
+  return { view, node, actions, submissions, spoken, focused, keypadOpens, keypadCloses, keypadErrors, speechCallbacks, keypadCallbacks,
     speechStops: () => speechStops, click(id) { clock += 300; node(id).fire("click"); },
     submit() { clock += 300; node("route-form").fire("submit"); }, now: () => clock,
   };
@@ -72,7 +73,7 @@ function harness() {
 test("상단 두 버튼은 이동·버스 인식 화면에서 보이는 기능을 그대로 실행한다", () => {
   const h = harness(); h.view.show("walk");
   assert.equal(h.node("camera-left-label").textContent, "글자 크기 설정");
-  assert.equal(h.node("stage-label").textContent, "정류장 도착");
+  assert.equal(h.node("stage-label").textContent, "버스 번호 입력");
   h.click("camera-left"); h.click("stage-button");
   assert.deepEqual(h.actions, ["settings-type", "manual-arrival"]);
   h.view.setRoute("강남02"); h.view.show("search");
@@ -144,6 +145,18 @@ test("음성 인식 실패 시 마이크를 종료하고 오류 안내를 재생
   assert.equal(h.node("route-error").textContent, "마이크 권한이 필요합니다.");
   assert.equal(h.spoken.at(-1), "마이크 권한이 필요합니다.");
   assert.deepEqual(h.submissions, []);
+  h.view.destroy();
+});
+
+test("멈춤 안내가 끝나면 열린 키패드의 대기 오류만 지우고 입력값을 보존한다", () => {
+  const h = harness(); h.view.show("input"); h.view.setRoute("143"); h.click("bus-number");
+  const closes = h.keypadCloses.length;
+  h.view.setRouteError("멈춤 안내가 끝나면 버스 찾기를 시작할 수 있어요.");
+  assert.match(h.keypadErrors.at(-1), /멈춤 안내/);
+  h.view.setRouteError("");
+  assert.equal(h.keypadErrors.at(-1), "");
+  assert.equal(h.view.readRoute(), "143");
+  assert.equal(h.keypadCloses.length, closes);
   h.view.destroy();
 });
 

@@ -409,10 +409,11 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
     @app.post("/api/sessions/{session_id}/clips/{clip_id}/frames/{frame_id}")
     def clip_frame(session_id: str, clip_id: int, frame_id: int,
                    captured_at_ms: int = Form(...), image: UploadFile = File(...),
-                   mask_png: str | None = Form(None)):
+                   mask_png: str | None = Form(None), overlay_png: str | None = Form(None)):
         """Store one JPEG proven to be the same bytes used in live inference."""
         data = image.file.read(upload["max_jpeg_bytes"] + 1)
-        return clip_store.add_frame(session_id, clip_id, frame_id, captured_at_ms, data, mask_png)
+        return clip_store.add_frame(session_id, clip_id, frame_id, captured_at_ms, data,
+                                    mask_png, overlay_png if isinstance(overlay_png, str) else None)
 
     @app.post("/api/sessions/{session_id}/clips/{clip_id}/complete")
     def clip_complete(session_id: str, clip_id: int, request: ClipCompleteRequest):

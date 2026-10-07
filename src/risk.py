@@ -18,6 +18,54 @@ from src.hazard_labels import LabelMemory
 from src.warning_summary import WarningSelector
 from src.camera_view import CameraViewGuard
 
+
+MOVING_TRAFFIC_CLASSES = frozenset({"car", "bus", "truck", "motorcycle", "bicycle"})
+
+
+def predicted_moving_conflict(detection, geometry, motion, entry_y, cfg):
+    """Return image-space conflict time and evidence, or None.
+
+    Stable track history, closing scale and projected path overlap must agree.
+    This is a relative image prediction, not a metric collision time.
+    """
+    if (not cfg["moving_conflict_enabled"]
+            or detection["class_name"] not in MOVING_TRAFFIC_CLASSES
+            or detection.get("track_id") is None
+            or geometry["clipped"] or geometry["point"][1] < entry_y
+            or motion["quality"] != "valid"
+            or motion["independent_velocity_norm_per_s"] is None
+            or motion["ttc_scale_s"] is None
+            or motion["ttc_scale_s"] > cfg["moving_conflict_ttc_s"]):
+        return None
+    independent_vx, independent_vy = motion["independent_velocity_norm_per_s"]
+    if (math.hypot(independent_vx, independent_vy) < cfg["moving_conflict_min_independent_speed"]
+            or independent_vy < cfg["min_forward_speed"] / 2):
+        return None
+    vx, vy = motion["velocity_norm_per_s"]
+    left, _, right, _ = geometry["footprint"]
+    if vy >= cfg["min_forward_speed"]:
+        near_time = max(0.0, (geometry["immediate_top_y"] - geometry["point"][1]) / vy)
+        if near_time <= cfg["moving_conflict_horizon_s"]:
+            projected_left, projected_right = left + vx * near_time, right + vx * near_time
+            overlap = max(0.0, min(projected_right, cfg["central_danger_right"])
+                          - max(projected_left, cfg["central_danger_left"])) / (right - left)
+            if overlap >= cfg["overlap_threshold"]:
+                return float(near_time), "projected_near_path"
+    # A laterally crossing object can reach the user's centre line while its
+    # ground contact is still above the immediate ROI. Require nearby ground,
+    # scale closure and a stable inward crossing to avoid road-only traffic.
+    if (motion["ttc_scale_s"] > cfg["moving_conflict_lateral_ttc_s"]
+            or vy < cfg["min_forward_speed"] / 2
+            or abs(vx) < cfg["min_lateral_speed"]
+            or geometry["corridor_overlap"] < cfg["overlap_threshold"]
+            or geometry["point"][1] < max(
+                entry_y, geometry["immediate_top_y"] - cfg["moving_conflict_lateral_max_gap_y"])):
+        return None
+    time_to_center = (0.5 - (left + right) / 2) / vx
+    if 0 <= time_to_center <= cfg["prediction_horizon_s"]:
+        return float(time_to_center), "projected_center_crossing"
+    return None
+
 class VideoClock:
     """Use source PTS. Nominal FPS fallback is explicitly invalid for motion."""
     # 영상 타임스탬프 판독기 초기화
@@ -69,13 +117,14 @@ class RiskEngine:
         self.camera_view.reset()
         self.last_trusted_danger_time = None
         self.last_trusted_danger_class = None
+        self.last_trusted_danger_track = None
         self.previous_time, self.previous_shape = None, None
         self.previous_tracker_status = self.tracker.status
         self.epoch = getattr(self, "epoch", -1) + 1
 
     # 프레임 위험도 판정
     def update(self, frame, detections, timestamp_s, timestamp_valid=True, class_map=None, label_ids=None,
-               *, suppress_stop_hazard=False):
+               *, suppress_stop_hazard=False, suppress_stop_identity=None):
         """프레임의 장애물과 보행 영역에서 위험도와 대표 경고를 고른다."""
         shape = frame.shape[:2]
         frame_gap_s = None if self.previous_time is None else timestamp_s - self.previous_time
@@ -96,6 +145,7 @@ class RiskEngine:
                                   if state.get("class_name") != "transit_stop"}
             if self.last_trusted_danger_class == "transit_stop":
                 self.last_trusted_danger_time = None
+                self.last_trusted_danger_track = None
         # No motion quantities are trusted after timestamp loss.
         if not timestamp_valid:
             self.motion.reset()
@@ -120,6 +170,7 @@ class RiskEngine:
             self.warning_selector.reset()
             self.previous_tracker_status = self.tracker.status
             self.last_trusted_danger_time = None
+            self.last_trusted_danger_track = None
             self.epoch += 1
         if not camera_stable or camera_view["status"] != "clear":
             self.motion.reset()
@@ -130,6 +181,24 @@ class RiskEngine:
             self.motion.reset()
             self.epoch += 1
         self.previous_tracker_status = self.tracker.status
+        acknowledged_stop_track = (
+            suppress_stop_identity[0]
+            if (not suppress_stop_hazard and isinstance(suppress_stop_identity, tuple)
+                and len(suppress_stop_identity) == 2
+                and suppress_stop_identity[1] == self.epoch
+                and isinstance(suppress_stop_identity[0], int))
+            else None
+        )
+        if acknowledged_stop_track is not None:
+            self.alerts.states = {
+                key: state for key, state in self.alerts.states.items()
+                if not (state.get("class_name") == "transit_stop"
+                        and state.get("track_id") == acknowledged_stop_track)
+            }
+            if (self.last_trusted_danger_class == "transit_stop"
+                    and self.last_trusted_danger_track == acknowledged_stop_track):
+                self.last_trusted_danger_time = None
+                self.last_trusted_danger_track = None
         roi = self.path_roi.update(class_map if not view_unavailable else None,
                                    label_ids if not view_unavailable else None,
                                    shape, timestamp_s, timestamp_valid)
@@ -151,7 +220,8 @@ class RiskEngine:
                 continue
             m = self.motion.update(detection, g, timestamp_s, timestamp_valid and camera_stable
                                    and not motion_gap and not view_unavailable,
-                                   roi.get("corridor_polygons",roi["corridor_polygon"]))
+                                   roi.get("corridor_polygons",roi["corridor_polygon"]),
+                                   getattr(self.camera_guard, "last_transform_norm", None))
             p = proximity(detection, g, self.config)
             item.update(geometry=g, motion=m, proximity=p, release_evidence=None)
             threshold = self.config["overlap_threshold"]
@@ -226,11 +296,19 @@ class RiskEngine:
                     if item["risk_level"] == "monitor":
                         item["risk_level"] = "caution"
                     item["reasons"].append("approaching")
+            moving_conflict = predicted_moving_conflict(
+                detection, g, m, entry_y, self.config)
+            m["time_to_moving_conflict_s"] = moving_conflict[0] if moving_conflict else None
+            m["moving_conflict_basis"] = moving_conflict[1] if moving_conflict else None
+            if moving_conflict is not None:
+                item["risk_level"] = "danger"
+                item["reasons"].append("predicted_moving_conflict")
             surroundings = surrounding_walkability(g,class_map,label_ids,shape,self.config)
             item["surrounding_walkability"] = surroundings
             if (self.config["walkable_surroundings_filter_enabled"]
                     and item["risk_level"] == "danger"
                     and m.get("time_to_near_s") is None
+                    and moving_conflict is None
                     and surroundings["status"] == "available"
                     and surroundings["all_non_walkable"]):
                 item["risk_level"] = "caution"
@@ -247,11 +325,19 @@ class RiskEngine:
                 item["release_evidence"] = "lower_proximity_or_urgency"
             if m["quality"] == "valid" and not g["clipped"]:
                 item["assessment_quality"] = "valid"
-            if suppress_stop_hazard and detection["class_name"] == "transit_stop":
+            suppress_recognized_stop = (
+                acknowledged_stop_track is not None
+                and detection["class_name"] == "transit_stop"
+                and detection["track_id"] == acknowledged_stop_track
+            )
+            if (suppress_stop_hazard and detection["class_name"] == "transit_stop"
+                    or suppress_recognized_stop):
+                reason = ("boarding_input_assumed_stationary" if suppress_stop_hazard
+                          else "acknowledged_stop_same_track")
                 item.update(untrusted_risk_level=item["risk_level"], risk_level=None,
-                            alert_level=None, assessment_quality="assumed_stationary",
-                            risk_suppressed_reason="boarding_input_assumed_stationary")
-                item["reasons"].append("boarding_input_assumed_stationary")
+                            alert_level=None, assessment_quality=reason,
+                            risk_suppressed_reason=reason)
+                item["reasons"].append(reason)
             results.append(item)
         if view_unavailable:
             # Preserve detector output and raw geometric assessment for audit.
@@ -310,6 +396,8 @@ class RiskEngine:
             self.last_trusted_danger_time = timestamp_s
             selected_index = warning.get("detection_index")
             self.last_trusted_danger_class = next((item["class_name"] for item in results
+                if item.get("detection_index") == selected_index), None)
+            self.last_trusted_danger_track = next((item.get("track_id") for item in results
                 if item.get("detection_index") == selected_index), None)
         return {"timestamp_s":timestamp_s, "timestamp_valid":timestamp_valid,
                 "state_epoch":self.epoch, "state_reset":bool(discontinuity or tracking_reset or view_recovered),
