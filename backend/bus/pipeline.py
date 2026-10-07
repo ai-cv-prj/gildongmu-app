@@ -20,6 +20,7 @@ from .bus_runtime.evidence import (select_candidates, recover_duplicate_bus_cand
                                    recover_regions)
 from .bus_runtime.route_evidence import context_boxes, context_rejection, text_rejection
 from .bus_runtime.target import TargetMatcher, exact_route, token_quality
+from .bus_runtime.led_diagnostics import led_row_diagnostics
 
 log = logging.getLogger(__name__)
 
@@ -86,6 +87,15 @@ class BusPipeline:
         self.matcher = None
         self.last_capture_ms = None
 
+    @staticmethod
+    def _led_diagnostics(rgb: np.ndarray, box) -> dict | None:
+        # Logged for field analysis only; a failure here must not affect OCR.
+        try:
+            return led_row_diagnostics(rgb[box[1]:box[3], box[0]:box[2]])
+        except Exception:
+            log.exception('LED diagnostics failed')
+            return None
+
     def _observations(self, rgb: np.ndarray, buses: list[dict]) -> tuple[list[dict], list[str]]:
         pending: list[dict] = []
         errors: list[str] = []
@@ -122,7 +132,8 @@ class BusPipeline:
                     rejection = item['rejection_reason'] or text_rejection(pred.text, item['text_box'])
                     current.append({**item, **asdict(pred), 'eligible': not rejection,
                                     'rejection_reason': rejection,
-                                    'duplicate_bus_recovered': False})
+                                    'duplicate_bus_recovered': False,
+                                    'led_diagnostics': self._led_diagnostics(rgb, item['text_box'])})
             recover_duplicate_bus_candidate(rgb, current, buses)
             contexts = []
             for item in current:
