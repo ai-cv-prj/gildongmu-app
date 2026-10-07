@@ -37,7 +37,7 @@ class StubCameraMotionGuard(CameraMotionGuard):
 
 
 class StubBackgroundStationarityGuard(BackgroundStationarityGuard):
-    """준비한 배경 이동량으로 3초 정지 전환을 검사하는 테스트 판정기이다."""
+    """준비한 배경 이동량으로 설정된 정지 전환을 검사하는 테스트 판정기이다."""
 
     # 테스트 측정 결과 준비
     def __init__(self, measurements):
@@ -128,20 +128,20 @@ def test_ransac_minimum_point_count_is_validated(value):
         risk_config({"camera_motion_min_inlier_points": value})
 
 
-# 3초 연속 배경 정지 확인
-def test_background_stationarity_requires_three_seconds_and_holds_short_motion():
-    """3초 뒤 정지를 확정하고 0.8초 미만 흔들림에는 정지 상태를 유지한다."""
+# 2초 연속 배경 정지 확인
+def test_background_stationarity_requires_two_seconds_and_holds_short_motion():
+    """2초 뒤 정지를 확정하고 0.8초 미만 흔들림에는 정지 상태를 유지한다."""
     moving = {**STILL, "median_motion_per_s": .04}
-    guard = StubBackgroundStationarityGuard([None] + [STILL] * 7 + [moving] * 3)
+    guard = StubBackgroundStationarityGuard([None] + [STILL] * 5 + [moving] * 3)
     assert guard.update(FRAME, [], 0.0)["status"] == "uncertain"
-    for timestamp in (.5, 1.0, 1.5, 2.0, 2.5, 3.0):
+    for timestamp in (.5, 1.0, 1.5, 2.0):
         assert guard.update(FRAME, [], timestamp)["status"] == "confirming"
-    result = guard.update(FRAME, [], 3.5)
+    result = guard.update(FRAME, [], 2.5)
     assert result["status"] == "stationary"
-    assert result["duration_s"] == pytest.approx(3.0)
-    assert guard.update(FRAME, [], 4.0)["status"] == "stationary"
-    assert guard.update(FRAME, [], 4.5)["status"] == "stationary"
-    assert guard.update(FRAME, [], 5.0)["status"] == "moving"
+    assert result["duration_s"] == pytest.approx(2.0)
+    assert guard.update(FRAME, [], 3.0)["status"] == "stationary"
+    assert guard.update(FRAME, [], 3.5)["status"] == "stationary"
+    assert guard.update(FRAME, [], 4.0)["status"] == "moving"
 
 
 # 정지 중 짧은 배경 계산 실패 유지 확인
