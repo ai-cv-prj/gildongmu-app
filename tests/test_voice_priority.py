@@ -80,6 +80,34 @@ def test_red_traffic_preempts_walking_without_queue():
     assert events == [(0.0, "walking-straight.mp3"), (0.2, "red.mp3")]
 
 
+# 긴급 장애물 정지 음성의 최상위 우선순위 확인
+def test_emergency_walking_stop_preempts_crosswalk_and_red_traffic():
+    """장애물 멈춤 안내는 횡단보도와 빨간불 음성을 즉시 중단한다."""
+    crosswalk = [(0.0, "crosswalk-exit-right.mp3", 1, "crosswalk")]
+    with patch("src.voice_priority.clip_duration", return_value=1.0):
+        crosswalk_events = prioritize_voice_events(
+            [(0.2, "walking-stop.mp3")], [], crosswalk)
+        red_events = prioritize_voice_events(
+            [(0.2, "walking-stop.mp3")], [(0.0, "red.mp3")], [])
+    assert crosswalk_events == [
+        (0.0, "crosswalk-exit-right.mp3"),
+        (0.2, "walking-stop.mp3"),
+    ]
+    assert red_events == [(0.0, "red.mp3"), (0.2, "walking-stop.mp3")]
+
+
+# 긴급 장애물 정지 음성의 하위 안내 차단 확인
+def test_regular_walking_guidance_does_not_interrupt_emergency_stop():
+    """멈춤 음성이 재생 중이면 일반 장애물 방향 안내를 폐기한다."""
+    with patch("src.voice_priority.clip_duration", return_value=1.0):
+        events = prioritize_voice_events(
+            [(0.0, "walking-stop.mp3"), (0.2, "walking-move-right-one.mp3")],
+            [],
+            [],
+        )
+    assert events == [(0.0, "walking-stop.mp3")]
+
+
 # 보행로 이탈 우선순위 확인
 def test_walking_surface_sits_between_red_and_obstacle_guidance():
     """보행로 이탈은 장애물 안내를 선점하지만 재생 중인 빨간불은 선점하지 않는다."""
@@ -92,6 +120,43 @@ def test_walking_surface_sits_between_red_and_obstacle_guidance():
         (0.1, "walkway-exit-right.mp3"),
         (0.2, "red.mp3"),
     ]
+
+
+# 보행로 이탈 방향 변경 즉시 반영 확인
+def test_changed_walking_surface_direction_interrupts_previous_clip():
+    """보행로 이탈 방향이 바뀌면 같은 우선순위여도 최신 방향으로 교체한다."""
+    surface = [
+        (0.0, "walkway-exit-right.mp3", 3, "walking_surface"),
+        (0.2, "walkway-exit-left.mp3", 3, "walking_surface"),
+    ]
+    with patch("src.voice_priority.clip_duration", return_value=1.0):
+        events = prioritize_voice_events([], [], [], surface)
+    assert events == [
+        (0.0, "walkway-exit-right.mp3"),
+        (0.2, "walkway-exit-left.mp3"),
+    ]
+
+
+# 같은 출처·같은 우선순위 교체 경계 확인
+def test_same_source_replacement_matches_realtime_priority_boundary():
+    """0~4순위의 다른 음원만 교체하고 같은 음원과 5~6순위는 유지한다."""
+    with patch("src.voice_priority.clip_duration", return_value=1.0):
+        urgent_red = prioritize_voice_events(
+            [], [(0.0, "red.mp3"), (0.2, "red-changed.mp3")], [])
+        same_walking = prioritize_voice_events(
+            [(0.0, "walking-straight.mp3"), (0.2, "walking-straight.mp3")],
+            [],
+            [],
+        )
+        regular_signal = prioritize_voice_events(
+            [], [(0.0, "green.mp3"), (0.2, "missing.mp3")], [])
+        priority_five = prioritize_voice_events(
+            [], [], [(0.0, "change-a.mp3", 5, "traffic"),
+                     (0.2, "change-b.mp3", 5, "traffic")])
+    assert urgent_red == [(0.0, "red.mp3"), (0.2, "red-changed.mp3")]
+    assert same_walking == [(0.0, "walking-straight.mp3")]
+    assert regular_signal == [(0.0, "green.mp3")]
+    assert priority_five == [(0.0, "change-a.mp3")]
 
 
 # 장애물 행동 전환 즉시 반영 확인

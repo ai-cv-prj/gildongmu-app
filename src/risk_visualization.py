@@ -5,12 +5,19 @@ Additional risk overlay; existing class colors and traffic drawing are untouched
 """
 import cv2
 import numpy as np
+from pathlib import Path
+from PIL import Image, ImageDraw, ImageFont
 
 # 실시간 UI의 RGB 색상을 OpenCV BGR 순서로 변환한 값
 COLORS = {"monitor": (180,180,180), "caution": (102,183,255), "danger": (113,101,255)}
 PATH_ROI_COLOR = (250, 227, 76)
 NEAR_ROI_COLOR = (186, 136, 255)
 DARK_TEXT_COLOR = (31, 19, 8)
+KOREAN_FONT_PATHS = (
+    Path("/mnt/c/Windows/Fonts/malgunbd.ttf"),
+    Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"),
+    Path("/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf"),
+)
 
 
 # 장애물 행동과 음성·움직임 상태 문구 생성
@@ -56,63 +63,58 @@ def risk_identity(item):
     return " · ".join(values) if values else "no-ID"
 
 
-# 정지 중 음성 안내 범위 경계 표시
-def draw_stationary_voice_boundary(frame, polygon):
-    """분홍색 ROI의 아래쪽 절반이 시작되는 위치를 점선으로 표시한다."""
-    if not isinstance(polygon, (list, tuple)) or len(polygon) < 3:
-        return frame
-    try:
-        points = [(float(point[0]), float(point[1])) for point in polygon]
-    except (TypeError, ValueError, IndexError):
-        return frame
-    if not np.isfinite(points).all():
-        return frame
-    middle_y = (min(point[1] for point in points) + max(point[1] for point in points)) / 2
-    intersections = []
-    for index, (x1, y1) in enumerate(points):
-        x2, y2 = points[(index + 1) % len(points)]
-        if abs(y2 - y1) < 1e-9:
-            if abs(middle_y - y1) < 1e-9:
-                intersections.extend((x1, x2))
-            continue
-        if min(y1, y2) <= middle_y <= max(y1, y2):
-            intersections.append(x1 + (middle_y - y1) * (x2 - x1) / (y2 - y1))
-    if len(intersections) < 2:
-        return frame
-    height, width = frame.shape[:2]
-    left = round(min(intersections) * width)
-    right = round(max(intersections) * width)
-    y = round(middle_y * height)
-    dash, gap = max(8, round(width / 45)), max(6, round(width / 60))
-    for start in range(left, right, dash + gap):
-        cv2.line(frame, (start, y), (min(start + dash, right), y), NEAR_ROI_COLOR,
-                 max(2, round(width / 320)), cv2.LINE_AA)
-    return frame
-
-
 # 정류장 근접 판정 문구 생성
 def stop_proximity_text(event):
     """실시간 오버레이와 같은 정류장 판정 문구를 반환한다."""
     event = event or {}
     state = event.get("status", "unavailable")
-    position = {"left": "LEFT ", "right": "RIGHT ", "bottom": "BOTTOM "}.get(
+    recorded_undetected = state == "not_detected" and event.get("arrival_recorded")
+    position = {"left": "좌측 ", "right": "우측 ", "bottom": "하단 "}.get(
         event.get("basis"), "")
     if state == "nearby":
-        return f"{position}STOP {'NEARBY HOLD' if event.get('held') else 'NEARBY'}"
-    if event.get("arrival_recorded"):
-        return "STOP CONFIRMED / RECHECKING"
+        return f"{position}정류장 {'근접 유지 · 재확인 중' if event.get('held') else '근접 추정'}"
     if state == "candidate":
+        if event.get("arrival_recorded"):
+            return "정류장 후보 재확인 중"
         if event.get("held"):
-            return f"{position}STOP CANDIDATE HOLD"
-        return (f"{position}STOP CANDIDATE {event.get('observations', 0)}/"
+            return f"{position}정류장 후보 유지"
+        return (f"{position}정류장 후보 {event.get('observations', 0)}/"
                 f"{event.get('required_observations', 0)}")
+    if recorded_undetected:
+        return "정류장 도착 기록 있음 · 현재 화면에서 미검출"
     if state == "not_detected":
-        return "STOP NOT DETECTED"
-    return "STOP UNAVAILABLE"
+        return "정류장 미검출"
+    return "정류장 판정 보류"
+
+
+# 저장 영상용 한글 글꼴 조회
+def korean_font(size):
+    """현재 실행 환경에서 사용할 수 있는 굵은 한글 글꼴을 반환한다."""
+    for path in KOREAN_FONT_PATHS:
+        if path.is_file():
+            return ImageFont.truetype(str(path), size)
+    return None
+
+
+# OpenCV 프레임에 한글 문구 표시
+def draw_korean_lines(frame, lines, position, size, color):
+    """Pillow 한글 글꼴이 있으면 BGR 프레임 위에 여러 줄 문구를 표시한다."""
+    font = korean_font(size)
+    if font is None:
+        return False
+    image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    draw = ImageDraw.Draw(image)
+    x, y = position
+    line_height = size + 7
+    rgb = (color[2], color[1], color[0])
+    for index, line in enumerate(lines):
+        draw.text((x, y + index * line_height), line, font=font, fill=rgb)
+    frame[:] = cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR)
+    return True
 
 
 # 정류장 근접 판정 표시
-def draw_stop_proximity(frame, event):
+def draw_stop_proximity(frame, event, crosswalk=None, walking_surface=None):
     """실시간 화면과 같은 정류장 후보 박스와 우측 배너를 표시한다."""
     event = event or {}
     result = frame.copy()
@@ -128,15 +130,34 @@ def draw_stop_proximity(frame, event):
                           for value, scale in zip(box, (width, height, width, height))]
         cv2.rectangle(result, (x1, y1), (x2, y2), color, max(4, round(width / 120)))
     text = stop_proximity_text(event)
-    font, scale, thickness = cv2.FONT_HERSHEY_SIMPLEX, max(.45, min(.7, width / 640)), 1
-    (text_width, text_height), baseline = cv2.getTextSize(text, font, scale, thickness)
+    lines = (["정류장 도착 기록 있음 ·", "현재 화면에서 미검출"]
+             if state == "not_detected" and event.get("arrival_recorded") else [text])
+    font_size = round(max(14, min(20, width / 32)))
+    font = korean_font(font_size)
+    if font is not None:
+        probe = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+        text_width = max(round(probe.textbbox((0, 0), line, font=font)[2]) for line in lines)
+    else:
+        text_width = max(len(line) for line in lines) * font_size
     banner_width = min(width - 16, text_width + 22)
-    left, top, banner_height = width - banner_width - 8, 52, 36
-    cv2.rectangle(result, (left, top), (left + banner_width, top + banner_height),
-                  (31, 19, 8), -1)
+    banner_height = 54 if len(lines) == 2 else 36
+    status_height = max(26, height / 24)
+    right_badges = sum(
+        bool(item and item.get("status") and item.get("status") != "disabled")
+        for item in (crosswalk, walking_surface)
+    )
+    action_height = max(26, height / 24) * 2
+    left = width - banner_width - 8
+    top = round(8 + max(action_height, right_badges * (status_height + 8)) + 8)
+    overlay = result.copy()
+    cv2.rectangle(overlay, (left, top), (left + banner_width, top + banner_height),
+                  DARK_TEXT_COLOR, -1)
+    cv2.addWeighted(overlay, 235 / 255, result, 20 / 255, 0, result)
     cv2.rectangle(result, (left, top), (left + banner_width, top + banner_height), color, 2)
-    cv2.putText(result, text, (left + 11, top + text_height + 6), font, scale, color,
-                thickness, cv2.LINE_AA)
+    if not draw_korean_lines(result, lines, (left + 11, top + 7), font_size, color):
+        fallback = "STOP STATUS"
+        cv2.putText(result, fallback, (left + 11, top + 24), cv2.FONT_HERSHEY_SIMPLEX,
+                    .5, color, 1, cv2.LINE_AA)
     return result
 
 # 영상에 위험 판정 표시
@@ -158,7 +179,6 @@ def draw_risk(frame, prediction, config):
             cv2.fillPoly(tint, [points], color)
             result = cv2.addWeighted(tint, alpha, result, 1-alpha, 0)
             cv2.polylines(result, [points], True, color, max(2, round(w/320)), cv2.LINE_AA)
-        result = draw_stationary_voice_boundary(result, config["immediate_polygon"])
     counts = {"monitor":0,"caution":0,"danger":0}
     labels = []
     for item in prediction["detections"]:

@@ -4,7 +4,6 @@ file_path: src/traffic_voice.py
 테스트앱의 신호등 음성 문구와 안정화 규칙을 영상 시간에 적용한다.
 """
 
-from src.video_audio import decode_clip, SAMPLE_RATE
 from src.settings import load_audio_settings
 
 
@@ -32,7 +31,6 @@ class TrafficVoice:
         self.missing_announced = False
         self.last_announced_target = None
         self.last_announced_color = None
-        self.queue_end = 0.0
 
     # 현재 대상의 색상 증거 폐기
     def _reset_evidence(self):
@@ -41,12 +39,10 @@ class TrafficVoice:
         self.color = None
         self.candidate = None
 
-    # 음원 재생 시간을 고려한 순차 예약
+    # 전역 음성 우선순위에 사용할 신호 이벤트 기록
     def _announce(self, time_s, filename):
-        """앞 신호 안내가 끝난 뒤 새 신호 안내를 예약한다."""
-        start = max(time_s, self.queue_end)
-        self.events.append((start, filename))
-        self.queue_end = start + len(decode_clip(filename)) / (2 * SAMPLE_RATE)
+        """관측 시각에 이벤트를 기록해 전역 관리자가 중단과 폐기를 결정하게 한다."""
+        self.events.append((time_s, filename))
 
     # 한 프레임의 신호 상태 관측
     def observe(self, result, frame_id, time_s):

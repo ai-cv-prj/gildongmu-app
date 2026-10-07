@@ -63,7 +63,7 @@ assert.ok(labels.includes("CROSSWALK: crossing"));
 assert.ok(labels.includes("WALKWAY: inside"));
 assert.ok(strokeColors.includes("#50e65a"));
 assert.ok(labels.includes("정류장 후보 1/3"));
-assert.deepEqual(dashedLines.at(-1), [[7.2, 544], [352.8, 544]]);
+assert.equal(dashedLines.length, 0);
 const stopBanner = filledRects.find(rect => rect.color === "#08131feb");
 assert.ok(stopBanner.args[1] >= 8 + 2 * (Math.max(26, 640 / 24) + 8),
   "정류장 배지는 횡단보도·보행로 배지 아래에 놓인다");

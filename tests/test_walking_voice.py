@@ -99,6 +99,7 @@ class WalkingVoiceTests(unittest.TestCase):
                     voice = WalkingVoice()
                     voice.last_action = previous
                     voice.last_steps = 1 if previous in ("left", "right") else None
+                    voice.last_action_since = 1.0
                     with patch("src.walking_voice.walking_action", return_value=current):
                         first = voice.observe(prediction(level="monitor"), 100, 1.0)
                         if current == previous:
@@ -118,6 +119,36 @@ class WalkingVoiceTests(unittest.TestCase):
                         confirmed = voice.observe(
                             prediction(level="monitor"), 100, 1.0 + delay)
                         self.assertEqual(confirmed, messages[current])
+
+    # 좌우 확정 시점 기준 직진 전환 확인
+    def test_lateral_to_straight_uses_lateral_confirmation_time(self):
+        """
+        좌우 확정 후 3초가 되는 시점까지 직진이면 유지 시작 시점과 무관하게 안내한다.
+        """
+        message = ("천천히 가세요.", "walking-straight.mp3")
+        for previous in ("left", "right"):
+            with self.subTest(previous=previous, straight_before_threshold=True):
+                voice = WalkingVoice()
+                voice.last_action, voice.last_steps = previous, 1
+                voice.last_action_since = 0.0
+                with patch("src.walking_voice.walking_action", return_value="straight"):
+                    self.assertIsNone(
+                        voice.observe(prediction(level="monitor"), 100, 2.0)
+                    )
+                    self.assertIsNone(
+                        voice.observe(prediction(level="monitor"), 100, 2.999)
+                    )
+                    self.assertEqual(
+                        voice.observe(prediction(level="monitor"), 100, 3.0), message
+                    )
+            with self.subTest(previous=previous, straight_after_threshold=True):
+                voice = WalkingVoice()
+                voice.last_action, voice.last_steps = previous, 1
+                voice.last_action_since = 0.0
+                with patch("src.walking_voice.walking_action", return_value="straight"):
+                    self.assertEqual(
+                        voice.observe(prediction(level="monitor"), 100, 3.0), message
+                    )
 
     # 같은 행동의 none 후 재생 기준 확인
     def test_same_action_replay_requires_configured_none_duration(self):
@@ -271,55 +302,53 @@ class WalkingVoiceTests(unittest.TestCase):
         self.assertIsNone(walking_action(prediction(outside), 100))
         self.assertEqual(walking_action(prediction(inside), 100), "straight")
 
-    # 정지 중 분홍색 ROI 하단 절반 음성 제한 확인
-    def test_stationary_guidance_requires_lower_half_of_pink_roi(self):
-        """사람과 차량 모두 정지 중에는 분홍색 ROI 하단 절반에 들어와야 안내한다."""
+    # 정지 중 분홍색 ROI 장애물 음소거 확인
+    def test_stationary_guidance_mutes_all_pink_roi_obstacles(self):
+        """정지 중에는 일반 위험과 빠른 접근 위험을 모두 안내하지 않는다."""
         for class_name in ("person", "car"):
             with self.subTest(class_name=class_name):
-                upper = danger_item(
+                rapid = danger_item(
                     1, [45, 0, 55, 20], class_name,
-                    geometry={"immediate_overlap": 1.0,
-                              "stationary_voice_eligible": False},
+                    geometry={"immediate_overlap": 1.0},
                     motion={"quality": "valid"}, reasons=["short_ttc"])
-                lower = danger_item(
+                regular = danger_item(
                     2, [45, 0, 55, 20], class_name,
-                    geometry={"immediate_overlap": 1.0,
-                              "stationary_voice_eligible": True})
-                upper_prediction = prediction(upper)
-                upper_prediction["stationarity"] = {"status": "stationary"}
-                lower_prediction = prediction(lower)
-                lower_prediction["stationarity"] = {"status": "stationary"}
-                self.assertIsNone(walking_action(upper_prediction, 100, stationary_voice=True))
-                self.assertEqual(
-                    walking_action(lower_prediction, 100, stationary_voice=True), "stop")
+                    geometry={"immediate_overlap": 1.0})
+                rapid_prediction = prediction(rapid)
+                rapid_prediction["stationarity"] = {"status": "stationary"}
+                regular_prediction = prediction(regular)
+                regular_prediction["stationarity"] = {"status": "stationary"}
+                self.assertIsNone(walking_action(rapid_prediction, 100, stationary_voice=True))
+                self.assertIsNone(walking_action(regular_prediction, 100, stationary_voice=True))
 
-    # 이동 중 기존 음성 범위 유지 확인
-    def test_moving_guidance_keeps_existing_pink_roi_rule(self):
-        """정지하지 않은 상태에서는 분홍색 ROI 상단 객체도 기존처럼 안내한다."""
-        item = danger_item(
-            1, [45, 0, 55, 20], geometry={"immediate_overlap": 1.0,
-                                         "stationary_voice_eligible": False})
-        result = prediction(item)
-        result["stationarity"] = {"status": "moving"}
-        self.assertEqual(walking_action(result, 100, stationary_voice=True), "stop")
+    # 비정지 상태의 기존 음성 범위 유지 확인
+    def test_nonstationary_guidance_keeps_existing_pink_roi_rule(self):
+        """실제 비정지 상태에서는 분홍색 ROI 객체를 기존처럼 안내한다."""
+        for status in ("moving", "confirming", "uncertain", "disabled"):
+            with self.subTest(status=status):
+                item = danger_item(
+                    1, [45, 0, 55, 20], geometry={"immediate_overlap": 1.0})
+                result = prediction(item)
+                result["stationarity"] = {"status": status}
+                self.assertEqual(walking_action(result, 100, stationary_voice=True), "stop")
 
-    # 정지 중 화면 행동과 모든 장애물 음성 제한 확인
-    def test_stationary_filter_keeps_action_but_also_limits_crossing_vehicle_voice(self):
-        """화면 ACTION은 유지하고 횡단 중 차량도 하단 절반 밖에서는 음성을 내지 않는다."""
+    # 정지 중 화면 행동과 횡단 차량 음성 분리 확인
+    def test_stationary_filter_keeps_action_but_mutes_crossing_vehicle_voice(self):
+        """화면 ACTION은 유지하고 횡단 중 차량 장애물 음성도 내지 않는다."""
         vehicle = danger_item(
             1, [45, 0, 55, 20], "car",
-            geometry={"immediate_overlap": 1.0, "stationary_voice_eligible": False})
+            geometry={"immediate_overlap": 1.0})
         result = prediction(vehicle)
         result["stationarity"] = {"status": "stationary"}
         self.assertEqual(walking_action(result, 100), "stop")
         self.assertIsNone(walking_action(result, 100, True, True))
 
     # 정지 중 화면 상태와 실제 음성 분리 확인
-    def test_stationary_upper_half_keeps_action_but_mutes_voice(self):
-        """상단 위험 표시는 유지하면서 분홍색 ROI 하단 밖의 실제 음성만 억제한다."""
+    def test_stationary_keeps_action_but_mutes_active_voice(self):
+        """정지 중에도 위험 표시는 유지하면서 재생 중인 장애물 음성을 억제한다."""
         item = danger_item(
             1, [45, 0, 55, 20], "car",
-            geometry={"immediate_overlap": 1.0, "stationary_voice_eligible": False})
+            geometry={"immediate_overlap": 1.0})
         result = prediction(item)
         result["stationarity"] = {"status": "stationary"}
         voice = WalkingVoice()
@@ -561,7 +590,7 @@ class WalkingVoiceTests(unittest.TestCase):
         config = {
             "non_green_obstacle_voice_suppression": True,
             "non_green_obstacle_crosswalk_threshold": .20,
-            "non_green_obstacle_nonwalkable_threshold": .20,
+            "non_green_obstacle_nonwalkable_threshold": .50,
             "non_green_obstacle_contact_half_height": .02,
         }
         for state in ("red", "unknown"):
@@ -585,7 +614,7 @@ class WalkingVoiceTests(unittest.TestCase):
         config = {
             "non_green_obstacle_voice_suppression": True,
             "non_green_obstacle_crosswalk_threshold": .20,
-            "non_green_obstacle_nonwalkable_threshold": .20,
+            "non_green_obstacle_nonwalkable_threshold": .50,
             "non_green_obstacle_contact_half_height": .02,
         }
         for state in ("red", "unknown"):
@@ -598,13 +627,46 @@ class WalkingVoiceTests(unittest.TestCase):
             self.assertEqual(item["nonwalkable_contact_fraction"], 1.0)
             self.assertIsNone(walking_action(result, 100))
 
+    # 보행불가 접촉 비율 50% 경계 확인
+    def test_nonwalkable_obstacle_voice_threshold_is_fifty_percent(self):
+        """발밑 보행불가 비율이 50% 이상일 때만 위험 음성을 제외한다."""
+        config = {
+            "non_green_obstacle_voice_suppression": True,
+            "non_green_obstacle_crosswalk_threshold": .20,
+            "non_green_obstacle_nonwalkable_threshold": .50,
+            "non_green_obstacle_contact_half_height": .02,
+        }
+        for nonwalkable_pixels, suppressed in ((39, False), (40, True)):
+            with self.subTest(nonwalkable_pixels=nonwalkable_pixels):
+                item = danger_item(1, [40, 20, 60, 80])
+                result = prediction(item)
+                class_map = np.zeros((100, 100), np.uint8)
+                contact_patch = class_map[78:82, 40:60]
+                contact_patch.flat[:nonwalkable_pixels] = 3
+                suppress_non_green_crosswalk_voice(
+                    result, {"signal_state": "red", "selected_detection_index": 0},
+                    class_map, {"crosswalk": 2, "non_walkable": 3},
+                    (100, 100, 3), config,
+                )
+                self.assertAlmostEqual(
+                    item["nonwalkable_contact_fraction"], nonwalkable_pixels / 80)
+                if suppressed:
+                    self.assertEqual(
+                        item["voice_suppressed_reason"],
+                        "non_green_signal_nonwalkable_obstacle",
+                    )
+                    self.assertIsNone(walking_action(result, 100))
+                else:
+                    self.assertNotIn("voice_suppressed_reason", item)
+                    self.assertEqual(walking_action(result, 100), "stop")
+
     # 초록불·신호 미선택·마스크 미확인 시 음성 유지 확인
     def test_voice_is_not_suppressed_without_selected_non_green_evidence(self):
         """초록불이거나 신호·횡단보도 근거가 없으면 위험 음성을 유지한다."""
         config = {
             "non_green_obstacle_voice_suppression": True,
             "non_green_obstacle_crosswalk_threshold": .20,
-            "non_green_obstacle_nonwalkable_threshold": .20,
+            "non_green_obstacle_nonwalkable_threshold": .50,
             "non_green_obstacle_contact_half_height": .02,
         }
         cases = (

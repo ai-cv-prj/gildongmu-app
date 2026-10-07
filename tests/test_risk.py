@@ -41,29 +41,14 @@ def engine(identity=1, stable=True, config=None):
     return RiskEngine(config,tracker=FixedTracker(identity),camera_guard=guard)
 
 class RiskTests(unittest.TestCase):
-    # 정지 음성 영역의 분홍색 ROI 하단 절반 확인
-    def test_stationary_voice_geometry_uses_lower_half_of_immediate_roi(self):
-        """분홍색 ROI가 70%부터 시작하면 하단 발자국이 85%를 넘어야 음성 대상이 된다."""
-        config = risk_config({
-            "corridor_polygon": [[.38, .30], [.62, .30], [.98, .70],
-                                 [.98, 1], [.02, 1], [.02, .70]],
-            "immediate_polygon": [[.02, .70], [.98, .70], [.98, 1], [.02, 1]],
-            "stationary_voice_roi_fraction": .50,
-            "stationary_voice_overlap_threshold": .10,
-        })
-        upper = geometry(detection((40, 60, 60, 84)), FRAME.shape, config)
-        lower = geometry(detection((40, 60, 60, 87)), FRAME.shape, config)
-        self.assertFalse(upper["stationary_voice_eligible"])
-        self.assertEqual(upper["stationary_immediate_overlap"], 0)
-        self.assertTrue(lower["stationary_voice_eligible"])
-        self.assertGreaterEqual(lower["stationary_immediate_overlap"], .10)
-
     def test_default_polygons_valid_and_bad_config_rejected(self):
         risk_config()
         for cfg in ({"overlap_threshold":float("nan")},{"enabled":1},
                     {"corridor_polygon":[[0,0],[1,1],[0,1],[1,0]]},
                     {"immediate_polygon":[[0,0],[1,0],[1,1],[0,1]]},
-                    {"history_window_s":.1,"min_history_s":.2},{"typo":1}):
+                    {"history_window_s":.1,"min_history_s":.2},{"typo":1},
+                    {"stationary_voice_roi_fraction":.5},
+                    {"stationary_voice_overlap_threshold":.1}):
             with self.subTest(cfg=cfg), self.assertRaises(ValueError):
                 risk_config(cfg)
         for cfg in ({"backend":"auto"},{"track_buffer":True},{"match_thresh":float("inf")}):
@@ -353,12 +338,24 @@ class RiskPipelineTests(unittest.TestCase):
             "status": "candidate", "observations": 1, "required_observations": 3,
             "xyxy": [.1, .2, .5, .8], "held": False,
         }
-        self.assertEqual(stop_proximity_text(candidate), "STOP CANDIDATE 1/3")
+        self.assertEqual(stop_proximity_text(candidate), "정류장 후보 1/3")
         rendered = draw_stop_proximity(np.zeros((100, 100, 3), dtype=np.uint8), candidate)
         self.assertTrue(np.any(rendered != 0))
         self.assertEqual(
             stop_proximity_text({"status": "nearby", "basis": "left", "held": True}),
-            "LEFT STOP NEARBY HOLD",
+            "좌측 정류장 근접 유지 · 재확인 중",
+        )
+        self.assertEqual(
+            stop_proximity_text({"status": "candidate", "arrival_recorded": True}),
+            "정류장 후보 재확인 중",
+        )
+        self.assertEqual(
+            stop_proximity_text({"status": "not_detected", "arrival_recorded": True}),
+            "정류장 도착 기록 있음 · 현재 화면에서 미검출",
+        )
+        self.assertEqual(
+            stop_proximity_text({"status": "unavailable", "arrival_recorded": True}),
+            "정류장 판정 보류",
         )
 
     def test_risk_enabled_preserves_traffic_input_filter_and_drawing(self):

@@ -356,7 +356,10 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
             if walking_surface_result is not None:
                 result = draw_walking_surface(result, walking_surface_result)
             if risk_result is not None:
-                result = draw_stop_proximity(result, risk_result.get("stop_proximity"))
+                result = draw_stop_proximity(
+                    result, risk_result.get("stop_proximity"),
+                    crosswalk_result, walking_surface_result,
+                )
             writer.write(result)
             processed_frames += 1
             print(

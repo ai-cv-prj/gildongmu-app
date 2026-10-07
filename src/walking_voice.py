@@ -112,7 +112,7 @@ def suppress_non_green_crosswalk_voice(prediction, signal, class_map, label_ids,
             or state not in ("red", "unknown")):
         return prediction
     crosswalk_threshold = config.get("non_green_obstacle_crosswalk_threshold", .20)
-    nonwalkable_threshold = config.get("non_green_obstacle_nonwalkable_threshold", .20)
+    nonwalkable_threshold = config.get("non_green_obstacle_nonwalkable_threshold", .50)
     half_height = config.get("non_green_obstacle_contact_half_height", .02)
     for item in prediction.get("detections", []):
         if item.get("alert_level", item.get("risk_level")) != "danger":
@@ -179,6 +179,8 @@ def guidance_items(prediction, level, crossing_active=False, stationary_voice=Fa
         return []
     stationary = (stationary_voice
                   and (prediction.get("stationarity") or {}).get("status") == "stationary")
+    if stationary:
+        return []
     return [item for item in prediction.get("detections", [])
             if item.get("alert_level", item.get("risk_level")) == level
             and item.get("warning_primary", True)
@@ -186,8 +188,6 @@ def guidance_items(prediction, level, crossing_active=False, stationary_voice=Fa
             and (not crossing_active or item.get("class_name") in VEHICLE_CLASSES
                  or item.get("class_name") == "bicycle" and rapid_approach_hazard(item))
             and not item.get("risk_suppressed_reason")
-            and (not stationary
-                 or bool((item.get("geometry") or {}).get("stationary_voice_eligible")))
             and (level != "danger" or inside_voice_roi(item) or rapid_approach_hazard(item))]
 
 
@@ -330,6 +330,7 @@ class WalkingVoice:
         """마지막 안내 행동과 저장 영상용 오디오 이벤트를 빈 상태로 시작한다."""
         self.last_action = None
         self.last_steps = None
+        self.last_action_since = None
         self.events = []
         self.pending_action = None
         self.pending_since = None
@@ -347,6 +348,7 @@ class WalkingVoice:
                 or self.epoch is not None and self.epoch != prediction.get("state_epoch", 0)):
             self.hazards.clear()
             self.last_action = self.last_steps = None
+            self.last_action_since = None
             self.pending_action = self.pending_since = self.clear_since = None
         self.previous_time = timestamp
         self.epoch = prediction.get("state_epoch", 0)
@@ -409,6 +411,7 @@ class WalkingVoice:
                     >= repeat_none_s(self.last_action)):
                 self.last_action = None
                 self.last_steps = None
+                self.last_action_since = None
         else:
             if self.clear_since is not None and self.last_action is not None:
                 none_duration = output_time_s - self.clear_since
@@ -420,10 +423,12 @@ class WalkingVoice:
                 if lateral_to_straight and not repeat_ready:
                     self.last_action = voice_action
                     self.last_steps = voice_steps
+                    self.last_action_since = output_time_s
                 # none 전후 행동이 다르면 새 안내로 보고 안정화 시간 없이 즉시 재생한다.
                 elif not same_action or repeat_ready:
                     self.last_action = None
                     self.last_steps = None
+                    self.last_action_since = None
             self.clear_since = None
             # 같은 방향의 걸음 수 변화도 동일 행동으로 보고 반복 안내하지 않는다.
             if voice_action == self.last_action:
@@ -436,7 +441,11 @@ class WalkingVoice:
                 if self.pending_action != candidate:
                     self.pending_action, self.pending_since = candidate, output_time_s
                 confirmation = transition_confirm_s(self.last_action, voice_action)
-                if output_time_s - self.pending_since + 1e-6 < confirmation:
+                confirmation_since = self.pending_since
+                if (self.last_action in ("left", "right") and voice_action == "straight"
+                        and self.last_action_since is not None):
+                    confirmation_since = self.last_action_since
+                if output_time_s - confirmation_since + 1e-6 < confirmation:
                     voice_action = self.last_action
                     voice_steps = self.last_steps
                 else:
@@ -488,6 +497,7 @@ class WalkingVoice:
             return None
         self.last_action = voice_action
         self.last_steps = voice_steps
+        self.last_action_since = output_time_s
         prediction["voice_text"] = message[0]
         self.events.append((output_time_s, message[1]))
         prediction["voice_clip"] = message[1]
