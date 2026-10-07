@@ -41,7 +41,7 @@ stop_proximity:
   side_min_box_width: 0.08
   side_min_box_bottom: 0.45
   confirm_frames: 3
-  confirm_s: 0.40
+  confirm_s: 1.20
   confirm_window_s: 2.0
   candidate_hold_s: 1.0
   nearby_hold_s: 3.0

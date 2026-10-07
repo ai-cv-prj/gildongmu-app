@@ -85,7 +85,7 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
       if (action === "arrive") busState = { status: "awaiting_stop", arrival_event_id: (busState.arrival_event_id ?? 0) + 1,
         revision: busState.revision + 1, arrival_source: "user_confirmed", bus_number: null };
       else {
-        const state = { stop_announced: "pending", submit: "submitted", reopen: "awaiting_stop", cancel: "cancelled" }[action];
+        const state = { input_ready: "pending", submit: "submitted", reopen: "awaiting_stop", cancel: "cancelled" }[action];
         busState = { ...busState, revision: busState.revision + 1, status: state,
           bus_number: action === "submit" ? number : null };
       }
@@ -192,7 +192,8 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
       timers.delete(id); now += 29750; timer.callback(); await flush();
     },
     async respond(index, overrides = {}) { frames[index].resolve({ ...frameResult(frames[index]), ...overrides }); await flush(); },
-    async finishVoice() { const done = voice; voice = null; done.onEnd(); await flush(); },
+    async finishVoice() { const done = voice; voice = null; done?.onEnd(); await flush(); },
+    async tick() { for (const callback of intervals.values()) callback(); await flush(); },
     async draftRoute(value) { await handlers.onSubmitRoute(value); await flush(); },
     async confirmRoute(value) { await handlers.onSubmitRoute(value); await flush(); },
     async cameraEnd() { cameraActive = false; cameraEnded(); await flush(); },
@@ -200,24 +201,17 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
   };
 }
 
-test("수동 도착은 멈춤 안내 중 번호 입력을 허용하고 완료 후에만 버스 찾기와 노출 설정을 시작한다", async () => {
+test("수동 도착은 정지 음성 없이 입력을 열고 도착 안내가 끝나기 전에도 버스 찾기를 시작한다", async () => {
   const app = await harness();
   await app.action("start");
   await app.action("manual-arrival");
-  assert.equal(app.screen(), "input", "멈춤 안내와 동시에 번호 입력 화면을 연다");
+  assert.equal(app.screen(), "input");
+  assert.equal(app.voice().text, "정류장입니다. 버스를 선택하세요.");
+  const shownBeforePromptEnd = app.shownScreens.length;
   app.typeRoute("143");
-  await app.confirmRoute("143");
-  assert.equal(app.screen(), "input");
-  assert.match(app.routeErrors.at(-1), /멈춤 안내가 끝나면/);
-  assert.deepEqual(app.routeSubmissions, []);
   assert.deepEqual(app.cameraModeCalls, []);
-  assert.deepEqual(app.journeyStarts, [], "멈춤 안내 중에는 버스 찾기를 시작하지 않는다");
-  const shownBeforeStop = app.shownScreens.length;
-  await app.finishVoice();
-  assert.equal(app.screen(), "input");
-  assert.equal(app.routeInput(), "143", "멈춤 안내 전에 입력한 번호를 보존한다");
-  assert.equal(app.shownScreens.length, shownBeforeStop, "음성 완료로 화면을 다시 열거나 키패드를 닫지 않는다");
-  assert.equal(app.routeErrors.at(-1), "");
+  assert.deepEqual(app.journeyStarts, []);
+  assert.equal(app.shownScreens.length, shownBeforePromptEnd);
   await app.action("confirm-route");
   assert.equal(app.screen(), "search");
   assert.deepEqual(app.journeyStarts, ["143"]);
@@ -225,7 +219,7 @@ test("수동 도착은 멈춤 안내 중 번호 입력을 허용하고 완료 �
   await app.end();
 });
 
-test("멈춤 안내 중 제출하지 않은 번호도 설정이나 종료 확인을 다녀와서 이어 입력한다", async () => {
+test("도착 안내 중 제출하지 않은 번호도 설정이나 종료 확인을 다녀와서 이어 입력한다", async () => {
   for (const destination of ["settings-type", "end"]) {
     const app = await harness();
     await app.action("start"); await app.action("manual-arrival");
@@ -244,7 +238,7 @@ test("멈춤 안내 중 제출하지 않은 번호도 설정이나 종료 확인
   }
 });
 
-test("멈춤 안내가 아직 끝나지 않아도 설정과 종료 확인에서 번호 입력으로 돌아간다", async () => {
+test("도착 안내가 아직 끝나지 않아도 설정과 종료 확인에서 돌아와 번호를 제출한다", async () => {
   for (const destination of ["settings-type", "end"]) {
     const app = await harness();
     await app.action("start"); await app.action("manual-arrival");
@@ -254,9 +248,7 @@ test("멈춤 안내가 아직 끝나지 않아도 설정과 종료 확인에서 
     assert.equal(app.screen(), "input");
     assert.equal(app.routeInput(), "606");
     await app.confirmRoute("606");
-    assert.deepEqual(app.routeSubmissions, []);
-    await app.finishVoice();
-    await app.confirmRoute("606");
+    assert.deepEqual(app.routeSubmissions, ["606"]);
     assert.deepEqual(app.journeyStarts, ["606"]);
     await app.end();
   }
@@ -404,6 +396,7 @@ test("새 정류장 도착에서는 이전 도착 때 입력한 버스 번호를
   await app.draftRoute("143");
   assert.equal(app.screen(), "search");
   await app.action("back");
+  assert.equal(app.voice(), null, "같은 도착에서 번호만 수정하면 도착 안내를 반복하지 않는다");
   await app.finishVoice();
   assert.equal(app.screen(), "input");
   assert.equal(app.routeInput(), "143", "번호를 다시 고르면 입력한 번호를 유지한다");
@@ -413,6 +406,23 @@ test("새 정류장 도착에서는 이전 도착 때 입력한 버스 번호를
   await app.finishVoice();
   assert.equal(app.screen(), "input");
   assert.equal(app.routeInput(), "", "새 도착에서는 입력란을 비운다");
+  await app.end();
+});
+
+test("번호 음성 입력 종료와 같은 정류장의 번호 수정은 도착 안내를 재시작하지 않는다", async () => {
+  const app = await harness();
+  await app.action("start"); await app.action("manual-arrival");
+  assert.equal(app.voice().text, "정류장입니다. 버스를 선택하세요.");
+  await app.action("speech-start");
+  assert.equal(app.voice(), null);
+  await app.action("speech-end"); await app.tick();
+  assert.equal(app.voice(), null);
+  await app.confirmRoute("143");
+  await app.action("back"); await app.tick();
+  assert.equal(app.screen(), "input");
+  assert.equal(app.voice(), null);
+  await app.confirmRoute("271");
+  assert.deepEqual(app.journeyStarts, ["143", "271"]);
   await app.end();
 });
 

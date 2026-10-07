@@ -437,7 +437,7 @@
     if (!ready || !running || starting || stopping || paused || submittingRoute ||
         boardingState?.busy || view.getScreen() !== "input") return;
     if (boardingState?.status === "awaiting_stop") {
-      const message = "멈춤 안내가 끝나면 버스 찾기를 시작할 수 있어요.";
+      const message = "잠시 후 버스를 선택해 주세요.";
       status(message); view.setRouteError?.(message); view.announce(message);
       return;
     }
@@ -489,7 +489,7 @@
       }
       const manualWaiting = next.status === "awaiting_stop" && next.arrival_source === "user_confirmed";
       if (next.status === "pending" || manualWaiting) {
-        // 새 도착에서만 초기화한다. 멈춤 안내가 끝나거나 같은 노선을 다시
+        // 새 도착에서만 초기화한다. 입력 준비가 끝나거나 같은 노선을 다시
         // 입력할 때는 열린 키패드와 작성 중인 번호를 그대로 유지한다.
         if (next.arrival_event_id !== draftEventId) {
           draftRoute = ""; draftEventId = next.arrival_event_id;
@@ -498,10 +498,10 @@
         if (next.status !== previous?.status) {
           if (next.status === "pending") view.setRouteError?.("");
           if (!temporaryScreen() && view.getScreen() !== "input") view.show("input");
-          if (manualWaiting) status("멈춤 안내 중입니다. 버스 번호를 입력해 주세요.");
+          if (manualWaiting) status("정류장입니다. 버스를 선택하세요.");
         }
       } else if (next.status === "awaiting_stop") {
-        status("멈춤 안내가 끝나면 탑승할 버스 번호를 입력해 주세요.");
+        status("정류장입니다. 버스를 선택하세요.");
       } else if (next.status === "cancelled" && previous?.status !== "cancelled") {
         if (!temporaryScreen()) view.show("walk");
         status("버스 찾기를 취소했습니다. 보행 안내를 계속합니다.");
@@ -892,7 +892,7 @@
     if (action === "confirm-end" && view.getScreen() === "end") return stopTest({ finish: true, reason: "user_confirmed" });
     if (action === "back" && starting) return stopTest();
     if (action === "sample") return speak("길동무가 함께합니다. 선택한 속도로 안내해 드릴게요.");
-    if (action === "speech-start") { coordinator.stop(); return; }
+    if (action === "speech-start") { boarding.dismissPrompt(); coordinator.stop(); return; }
     if (action === "speech-end") { if (!paused) coordinator.start(); return; }
     if (!running || starting || stopping) return;
     if (action === "record") return activeClip ? finishClip() : startClip();
