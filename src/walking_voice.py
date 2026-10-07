@@ -410,11 +410,14 @@ class WalkingVoice:
                 self.last_action = None
                 self.last_steps = None
         else:
-            if (self.clear_since is not None and self.last_action is not None
-                    and output_time_s - self.clear_since + 1e-6
-                    >= repeat_none_s(self.last_action)):
-                self.last_action = None
-                self.last_steps = None
+            if self.clear_since is not None and self.last_action is not None:
+                none_duration = output_time_s - self.clear_since
+                same_action = voice_action == self.last_action
+                # none 전후 행동이 다르면 새 안내로 보고 안정화 시간 없이 즉시 재생한다.
+                if (not same_action
+                        or none_duration + 1e-6 >= repeat_none_s(self.last_action)):
+                    self.last_action = None
+                    self.last_steps = None
             self.clear_since = None
             # 같은 방향의 걸음 수 변화도 동일 행동으로 보고 반복 안내하지 않는다.
             if voice_action == self.last_action:
