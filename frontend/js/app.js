@@ -42,15 +42,23 @@
     screen: view.getScreen(), ui_action: diagnosticAction, running,
     recording_active: Boolean(activeClip), pending_upload_count: pendingUploads.length,
   }));
-  window.GFetchDiagnostics?.subscribe(summary => {
+  let fetchErrorSummary = { count: 0, pending: 0, storageAvailable: true };
+  let appErrorSummary = { count: 0, pending: 0, storageAvailable: true };
+  function updateErrorLogControls() {
+    const summary = { count: fetchErrorSummary.count + appErrorSummary.count,
+      pending: fetchErrorSummary.pending + appErrorSummary.pending,
+      storageAvailable: fetchErrorSummary.storageAvailable && appErrorSummary.storageAvailable };
     const button = $("save-error-log"), label = $("fetch-error-log-status");
+    if ($("error-log-controls")) $("error-log-controls").hidden = summary.count === 0;
     if (button) button.hidden = summary.count === 0;
     if (label) {
       label.hidden = summary.count === 0;
-      label.textContent = `연결 오류 ${summary.count}건 · 미전송 ${summary.pending}건` +
+      label.textContent = `오류 ${summary.count}건 · 미전송 ${summary.pending}건` +
         (summary.storageAvailable ? " · 이 기기에 기록됨" : " · 창을 닫기 전에 오류 로그를 저장해 주세요");
     }
-  });
+  }
+  window.GFetchDiagnostics?.subscribe(summary => { fetchErrorSummary = summary; updateErrorLogControls(); });
+  window.GDiagnostics?.subscribe?.(summary => { appErrorSummary = summary; updateErrorLogControls(); });
 
   function savePreferences() {
     try { localStorage.setItem(preferenceKey, JSON.stringify(preferences)); } catch (_) {}
@@ -273,6 +281,8 @@
         state: selected.map(item => item?.state || "missing").join(",") });
       const failure = selected.find(item => ["failed", "no_frames"].includes(item?.state));
       if (failure) {
+        diagnostic("clip_render_failed", { clip_id: clipIndex(failure),
+          error_message: failure.error || failure.state });
         status(`${failure.clip_id}번 영상 결과 생성 실패: ${failure.error || failure.state}. 서버 기록을 확인해 주세요.`);
         pendingCheckSessionId = null; expectedClipIds = [];
         return;
@@ -798,7 +808,10 @@
   async function act(action) {
     diagnosticAction = action;
     if (action === "save-error-log") {
-      try { window.GFetchDiagnostics?.download(); }
+      try {
+        if (window.GDiagnostics?.download) window.GDiagnostics.download();
+        else window.GFetchDiagnostics?.download();
+      }
       catch (_) { status("오류 로그 파일을 저장하지 못했습니다. 다시 시도해 주세요."); }
       return;
     }
@@ -868,7 +881,9 @@
     }
   }
   try {
-    settings = await GConfig.load(); player = GTts.create({ onError: status }); player.setRate(preferences.rate);
+    settings = await GConfig.load(); player = GTts.create({ onError: message => {
+      diagnostic("audio_failed", { error_message: message }); status(message);
+    } }); player.setRate(preferences.rate);
     coordinator = GAudioCoordinator.create({ player, onDiagnostic: event => queueTiming({ kind: "audio",
       frame_id: event.frame_id, captured_at_ms: event.captured_at_ms, status: event.status,
       source: event.source, action: event.action ?? null, occurred_at_ms: Math.round(performance.timeOrigin + event.at_ms),
@@ -880,7 +895,10 @@
     } });
     journey = GBusJourney.create({ api: GApi, coordinator, onChange: busChanged, onStatus: status, onEvent: queueEvent });
     ready = true; controls(); status("준비되었습니다. 시작하기를 눌러 주세요.");
-  } catch (error) { status(`${error.message} 서버를 확인한 뒤 새로고침해 주세요.`); return; }
+  } catch (error) {
+    diagnostic("initialization_failed", errorDetails(error));
+    status(`${error.message} 서버를 확인한 뒤 새로고침해 주세요.`); return;
+  }
   for (const id of ["device", "custom-device", "note"]) {
     const changed = () => {
       $("custom-device").hidden = $("device").value !== "custom";

@@ -2,6 +2,7 @@
 window.GDiagnostics = (() => {
   "use strict";
   const STORAGE_KEY = "gildongmu-client-events-v1", MAX_EVENTS = 100, BATCH_SIZE = 20;
+  const HISTORY_KEY = "gildongmu-client-history-v1";
   const textLimits = {
     event_id: 80, type: 80, request_id: 80, server_request_id: 80, method: 10,
     path: 400, operation: 80, error_name: 80, error_message: 500, visibility_state: 20,
@@ -15,6 +16,18 @@ window.GDiagnostics = (() => {
   const sessions = new Set(["session_id", "pending_stop_session_id", "pending_check_session_id"]);
   const arrays = new Set(["pending_clip_ids", "expected_clip_ids", "server_clip_ids"]);
   let queue = [], contextProvider = null, inFlight = null, sequence = 0;
+  let history = [], storageAvailable = true;
+  const listeners = new Set();
+  const isFailure = event => /(?:error|failed|failure|discarded)/.test(event.type || "")
+    || event.type === "network_offline" || Boolean(event.error_message);
+  const summary = () => ({ count: history.filter(isFailure).length,
+    pending: queue.filter(isFailure).length, storageAvailable });
+  function publish() { for (const listener of listeners) { try { listener(summary()); } catch (_) {} } }
+  function bounded(events) {
+    if (events.length <= MAX_EVENTS) return events;
+    const firstFailure = events.find(isFailure), recent = events.slice(-(MAX_EVENTS - 1));
+    return firstFailure && !recent.includes(firstFailure) ? [firstFailure, ...recent] : events.slice(-MAX_EVENTS);
+  }
 
   function clean(fields) {
     const result = {};
@@ -34,14 +47,26 @@ window.GDiagnostics = (() => {
     return result;
   }
   function persist() {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(queue)); } catch (_) { /* Private storage can be unavailable. */ }
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(queue));
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+      storageAvailable = true;
+    } catch (_) { storageAvailable = false; }
+    publish();
   }
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
     if (Array.isArray(saved)) queue = saved.map(clean).filter(event =>
       /^[a-zA-Z0-9_-]{1,80}$/.test(event.event_id || "") &&
       /^[a-zA-Z0-9_-]{1,80}$/.test(event.type || "") && event.occurred_at_ms > 0).slice(-MAX_EVENTS);
-  } catch (_) { /* Keep diagnostics usable when saved storage is unavailable or damaged. */ }
+  } catch (_) { storageAvailable = false; }
+  try {
+    const saved = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+    history = bounded((Array.isArray(saved) ? saved : []).map(clean).filter(event =>
+      event.event_id && event.type && event.occurred_at_ms > 0));
+    const known = new Set(history.map(event => event.event_id));
+    history = bounded([...history, ...queue.filter(event => !known.has(event.event_id))]);
+  } catch (_) { history = [...queue]; storageAvailable = false; }
 
   function record(type, fields = {}) {
     try {
@@ -58,13 +83,8 @@ window.GDiagnostics = (() => {
         connection_type: connection?.type, effective_type: connection?.effectiveType,
         user_agent: navigator.userAgent,
       });
-      queue.push(event);
-      if (queue.length > MAX_EVENTS) {
-        // Keep the first failed request as the incident anchor during a long outage.
-        const firstFailure = queue.find(item => item.type === "request_error");
-        const recent = queue.slice(-(MAX_EVENTS - 1));
-        queue = firstFailure && !recent.includes(firstFailure) ? [firstFailure, ...recent] : queue.slice(-MAX_EVENTS);
-      }
+      queue = bounded([...queue, event]);
+      history = bounded([...history, event]);
       persist();
     } catch (_) { /* Reporting is best effort and never breaks the app. */ }
   }
@@ -106,5 +126,20 @@ window.GDiagnostics = (() => {
   setInterval(() => { void flush(); }, 15000);
   // A prior failure is retried even if this page has not started a new session yet.
   void flush();
-  return { record, flush, setContext(provider) { contextProvider = typeof provider === "function" ? provider : null; } };
+  function exportData() {
+    const pending = new Set(queue.map(event => event.event_id));
+    return { format_version: 1, exported_at_ms: Date.now(),
+      events: history.map(event => ({ ...event, delivered: !pending.has(event.event_id) })),
+      fetch_errors: window.GFetchDiagnostics?.exportData?.() || null };
+  }
+  function download() {
+    const url = URL.createObjectURL(new Blob([JSON.stringify(exportData(), null, 2)], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url; link.download = `gildongmu-errors-${Date.now()}.json`;
+    document.body.appendChild(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  return { record, flush, summary, exportData, download,
+    subscribe(listener) { listeners.add(listener); listener(summary()); },
+    setContext(provider) { contextProvider = typeof provider === "function" ? provider : null; } };
 })();
