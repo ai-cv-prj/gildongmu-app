@@ -17,7 +17,6 @@
     ["왼쪽으로 이동!", "crosswalk-align-left"],
     ["왼쪽으로 한 걸음", "walking-move-left-one"],
     ["왼쪽으로 두 걸음", "walking-move-left-two"],
-    ["천천히 가세요.", "walking-straight"],
     ["오른쪽으로 한 걸음", "walking-move-right-one"],
     ["오른쪽으로 두 걸음", "walking-move-right-two"],
     ["멈추세요", "walking-stop"],
@@ -86,6 +85,7 @@
 
     function speak(text, validUntil = now() + settings.default_validity_ms,
                    { onEnd = () => {}, onStart = () => {}, onFailure = () => {}, dynamic = false } = {}) {
+      if (typeof text === "string" && text.includes("천천히 가세요")) return false;
       const synthesized = text === SPEECH_TEXT;
       const canSynthesize = window.speechSynthesis && window.SpeechSynthesisUtterance;
       const supported = synthesized ? canSynthesize : audio || (dynamic && canSynthesize);

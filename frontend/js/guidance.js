@@ -89,6 +89,13 @@
       if (mode === "walking") {
         const vehicleOnly = res.crossing_active || res.crosswalk_status === "approach";
         const voice = event.voice_event;
+        const action = voice?.action ?? event.voice_action ?? event.last_action;
+        if (action === "straight" || ["천천히 가세요.", "천천히 가세요"].includes(voice?.text || event.voice_text)) {
+          lastWalkingAction = null;
+          lastWalkingEvent = null;
+          coordinator.clear(mode);
+          return;
+        }
         if (voice && typeof voice.text === "string" && ["left", "right", "straight", "stop"].includes(voice.action)) {
           if ((voice.action !== lastWalkingAction || Number.isInteger(voice.event_id)
               && voice.event_id !== lastWalkingEvent) && announce(voice.text, capturedAt + limits.max_age_ms, {
