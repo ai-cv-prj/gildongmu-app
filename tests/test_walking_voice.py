@@ -304,54 +304,51 @@ class WalkingVoiceTests(unittest.TestCase):
 
     # 정지 중 분홍색 ROI 장애물 음소거 확인
     def test_stationary_guidance_mutes_all_pink_roi_obstacles(self):
-        """정지 중에는 분홍색 ROI 하단 절반에 들어온 장애물도 안내하지 않는다."""
+        """정지 중에는 일반 위험과 빠른 접근 위험을 모두 안내하지 않는다."""
         for class_name in ("person", "car"):
             with self.subTest(class_name=class_name):
-                upper = danger_item(
+                rapid = danger_item(
                     1, [45, 0, 55, 20], class_name,
-                    geometry={"immediate_overlap": 1.0,
-                              "stationary_voice_eligible": False},
+                    geometry={"immediate_overlap": 1.0},
                     motion={"quality": "valid"}, reasons=["short_ttc"])
-                lower = danger_item(
+                regular = danger_item(
                     2, [45, 0, 55, 20], class_name,
-                    geometry={"immediate_overlap": 1.0,
-                              "stationary_voice_eligible": True})
-                upper_prediction = prediction(upper)
-                upper_prediction["stationarity"] = {"status": "stationary"}
-                lower_prediction = prediction(lower)
-                lower_prediction["stationarity"] = {"status": "stationary"}
-                self.assertIsNone(walking_action(upper_prediction, 100, stationary_voice=True))
-                self.assertIsNone(walking_action(lower_prediction, 100, stationary_voice=True))
+                    geometry={"immediate_overlap": 1.0})
+                rapid_prediction = prediction(rapid)
+                rapid_prediction["stationarity"] = {"status": "stationary"}
+                regular_prediction = prediction(regular)
+                regular_prediction["stationarity"] = {"status": "stationary"}
+                self.assertIsNone(walking_action(rapid_prediction, 100, stationary_voice=True))
+                self.assertIsNone(walking_action(regular_prediction, 100, stationary_voice=True))
 
-    # 이동·확인 중 기존 음성 범위 유지 확인
+    # 비정지 상태의 기존 음성 범위 유지 확인
     def test_nonstationary_guidance_keeps_existing_pink_roi_rule(self):
-        """이동 또는 확인 중에는 분홍색 ROI 객체를 기존처럼 안내한다."""
-        for status in ("moving", "checking"):
+        """실제 비정지 상태에서는 분홍색 ROI 객체를 기존처럼 안내한다."""
+        for status in ("moving", "confirming", "uncertain", "disabled"):
             with self.subTest(status=status):
                 item = danger_item(
-                    1, [45, 0, 55, 20], geometry={"immediate_overlap": 1.0,
-                                                 "stationary_voice_eligible": False})
+                    1, [45, 0, 55, 20], geometry={"immediate_overlap": 1.0})
                 result = prediction(item)
                 result["stationarity"] = {"status": status}
                 self.assertEqual(walking_action(result, 100, stationary_voice=True), "stop")
 
-    # 정지 중 화면 행동과 모든 장애물 음성 제한 확인
-    def test_stationary_filter_keeps_action_but_also_limits_crossing_vehicle_voice(self):
-        """화면 ACTION은 유지하고 횡단 중 차량도 하단 절반 밖에서는 음성을 내지 않는다."""
+    # 정지 중 화면 행동과 횡단 차량 음성 분리 확인
+    def test_stationary_filter_keeps_action_but_mutes_crossing_vehicle_voice(self):
+        """화면 ACTION은 유지하고 횡단 중 차량 장애물 음성도 내지 않는다."""
         vehicle = danger_item(
             1, [45, 0, 55, 20], "car",
-            geometry={"immediate_overlap": 1.0, "stationary_voice_eligible": False})
+            geometry={"immediate_overlap": 1.0})
         result = prediction(vehicle)
         result["stationarity"] = {"status": "stationary"}
         self.assertEqual(walking_action(result, 100), "stop")
         self.assertIsNone(walking_action(result, 100, True, True))
 
     # 정지 중 화면 상태와 실제 음성 분리 확인
-    def test_stationary_upper_half_keeps_action_but_mutes_voice(self):
-        """상단 위험 표시는 유지하면서 분홍색 ROI 하단 밖의 실제 음성만 억제한다."""
+    def test_stationary_keeps_action_but_mutes_active_voice(self):
+        """정지 중에도 위험 표시는 유지하면서 재생 중인 장애물 음성을 억제한다."""
         item = danger_item(
             1, [45, 0, 55, 20], "car",
-            geometry={"immediate_overlap": 1.0, "stationary_voice_eligible": False})
+            geometry={"immediate_overlap": 1.0})
         result = prediction(item)
         result["stationarity"] = {"status": "stationary"}
         voice = WalkingVoice()

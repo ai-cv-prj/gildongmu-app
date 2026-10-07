@@ -63,40 +63,6 @@ def risk_identity(item):
     return " · ".join(values) if values else "no-ID"
 
 
-# 정지 중 음성 안내 범위 경계 표시
-def draw_stationary_voice_boundary(frame, polygon):
-    """분홍색 ROI의 아래쪽 절반이 시작되는 위치를 점선으로 표시한다."""
-    if not isinstance(polygon, (list, tuple)) or len(polygon) < 3:
-        return frame
-    try:
-        points = [(float(point[0]), float(point[1])) for point in polygon]
-    except (TypeError, ValueError, IndexError):
-        return frame
-    if not np.isfinite(points).all():
-        return frame
-    middle_y = (min(point[1] for point in points) + max(point[1] for point in points)) / 2
-    intersections = []
-    for index, (x1, y1) in enumerate(points):
-        x2, y2 = points[(index + 1) % len(points)]
-        if abs(y2 - y1) < 1e-9:
-            if abs(middle_y - y1) < 1e-9:
-                intersections.extend((x1, x2))
-            continue
-        if min(y1, y2) <= middle_y <= max(y1, y2):
-            intersections.append(x1 + (middle_y - y1) * (x2 - x1) / (y2 - y1))
-    if len(intersections) < 2:
-        return frame
-    height, width = frame.shape[:2]
-    left = round(min(intersections) * width)
-    right = round(max(intersections) * width)
-    y = round(middle_y * height)
-    dash, gap = max(8, round(width / 45)), max(6, round(width / 60))
-    for start in range(left, right, dash + gap):
-        cv2.line(frame, (start, y), (min(start + dash, right), y), NEAR_ROI_COLOR,
-                 max(2, round(width / 320)), cv2.LINE_AA)
-    return frame
-
-
 # 정류장 근접 판정 문구 생성
 def stop_proximity_text(event):
     """실시간 오버레이와 같은 정류장 판정 문구를 반환한다."""
@@ -213,7 +179,6 @@ def draw_risk(frame, prediction, config):
             cv2.fillPoly(tint, [points], color)
             result = cv2.addWeighted(tint, alpha, result, 1-alpha, 0)
             cv2.polylines(result, [points], True, color, max(2, round(w/320)), cv2.LINE_AA)
-        result = draw_stationary_voice_boundary(result, config["immediate_polygon"])
     counts = {"monitor":0,"caution":0,"danger":0}
     labels = []
     for item in prediction["detections"]:

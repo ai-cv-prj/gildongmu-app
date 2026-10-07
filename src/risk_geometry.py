@@ -41,16 +41,6 @@ def geometry(detection, shape, cfg, roi=None):
     strip = [left, y2-strip_height, right, y2]
     corridor = roi["corridor_polygon"] if roi else cfg["corridor_polygon"]
     immediate = roi["immediate_polygon"] if roi else cfg["immediate_polygon"]
-    immediate_left = min(point[0] for point in immediate)
-    immediate_right = max(point[0] for point in immediate)
-    immediate_top = min(point[1] for point in immediate)
-    immediate_bottom = max(point[1] for point in immediate)
-    stationary_top = immediate_bottom - (
-        immediate_bottom - immediate_top) * cfg["stationary_voice_roi_fraction"]
-    stationary_immediate = [[immediate_left, stationary_top],
-                            [immediate_right, stationary_top],
-                            [immediate_right, immediate_bottom],
-                            [immediate_left, immediate_bottom]]
     central_immediate = [[cfg["central_danger_left"], min(p[1] for p in immediate)],
                          [cfg["central_danger_right"], min(p[1] for p in immediate)],
                          [cfg["central_danger_right"], 1.0],
@@ -90,10 +80,6 @@ def geometry(detection, shape, cfg, roi=None):
         "side_direction": "left" if (x1+x2)/2<.5 else "right",
         "corridor_overlap": max(overlap(strip, poly) for poly in corridors),
         "immediate_overlap": overlap(strip, immediate),
-        "stationary_immediate_overlap": overlap(strip, stationary_immediate),
-        "stationary_voice_eligible": (
-            overlap(strip, stationary_immediate)
-            >= cfg["stationary_voice_overlap_threshold"]),
         "central_immediate_overlap": overlap(strip, central_immediate),
         "edge_contact": edges,
         "horizontal_path_gap": min([gap(poly) for poly in corridors]+[gap(immediate)]),
