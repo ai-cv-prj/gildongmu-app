@@ -29,54 +29,65 @@
   </svg>
   <main class="app" id="app">
     <section class="screen welcome-screen" data-panel="welcome" aria-labelledby="welcome-title">
-      <div class="welcome-scene">
-        <div class="brand"><span class="brand-mark"><svg class="icon" aria-hidden="true"><use href="#icon-bus"/></svg></span><div>길동무<span class="brand-sub">GILDONGMU</span></div></div>
-        <div class="welcome-heading"><h1 id="welcome-title" tabindex="-1">카메라 안내로,<br>버스에 오르기까지.</h1></div>
-        <div class="opening-art">
-          <div class="film-narration" data-voice="false" aria-hidden="true"><span class="film-voice"><svg class="icon"><use href="#icon-volume"/></svg>음성 안내</span><p class="film-caption" id="film-caption">가슴에 고정한 카메라로</p></div>
-          <canvas id="opening-film" width="1200" height="910" role="img" aria-label="가슴 카메라를 착용한 사람이 음성 안내에 따라 보행, 사람 회피, 신호 대기와 횡단, 정류장 도착, 버스 번호 입력과 확인, 탑승을 진행하는 28초 일러스트. 자동 반복됩니다.">음성 안내에 따라 보행부터 버스 탑승까지 함께합니다.</canvas>
+      <nav class="top-controls story-controls" aria-label="시작 화면 상단"><button class="touch-zone story-action top-primary" type="button" data-action="enter">길동무 시작하기</button></nav>
+      <div class="story-stage">
+        <h1 class="story-heading" id="welcome-title" tabindex="-1">카메라 안내로,<br>버스에 오르기까지.</h1>
+        <div class="film-scene">
+          <div class="film-narration" data-speaker="길동무" aria-hidden="true"><div class="film-sender"><svg class="icon"><use href="#icon-volume"/></svg><span data-film-speaker>길동무</span></div><p id="film-caption">안내 시작</p></div>
+          <div class="film-drawing"><canvas id="opening-film" width="1200" height="910" role="img" aria-label="가슴 카메라를 착용한 사람이 음성 안내에 따라 걷고 신호를 기다린 뒤 버스에 탑승하는 28초 반복 애니메이션">음성 안내에 따라 보행하고 신호를 기다린 뒤 버스에 탑승합니다.</canvas></div>
         </div>
       </div>
-      <div class="welcome-footer"><button class="primary" type="button" data-action="enter">시작하기</button></div>
     </section>
-    <section class="screen finish-screen" data-panel="finish" aria-labelledby="finish-title" hidden>
-      <div class="brand"><span class="brand-mark"><svg class="icon" aria-hidden="true"><use href="#icon-bus"/></svg></span><div>길동무<span class="brand-sub">GILDONGMU</span></div></div>
-      <div class="welcome-heading"><h1 id="finish-title" tabindex="-1">카메라 안내로,<br>버스에 올랐어요.</h1><p class="copy">다음 길도 길동무와 함께해요.</p></div>
-      <div class="opening-art ending-art"><canvas id="ending-film" width="720" height="620" role="img" aria-label="버스 창문 안에 탑승한 인물이 보이는 마지막 장면">버스에 탑승한 인물이 창문 너머로 보입니다.</canvas></div>
-      <button class="primary" type="button" data-action="finish-home">처음으로<svg class="icon" aria-hidden="true"><use href="#icon-up-right"/></svg></button>
+    <section class="screen" data-panel="home" aria-labelledby="home-title" hidden>
+      <nav class="top-controls" aria-label="출발 준비 상단"><div class="primary-controls"><button class="touch-zone top-primary" type="button" data-action="settings-type">글자 크기 설정</button><button class="touch-zone" type="button" data-action="start">안내 시작</button></div></nav>
+      <div class="settings-content"><h1 id="home-title" tabindex="-1">음성 속도 설정</h1><div class="option-list" role="group" aria-labelledby="home-title"><button class="option" type="button" data-rate="1" aria-pressed="true">1x</button><button class="option" type="button" data-rate="1.5" aria-pressed="false">1.5x</button><button class="option" type="button" data-rate="2" aria-pressed="false">2x</button></div></div>
     </section>
-    <section class="screen home-screen" data-panel="home" aria-labelledby="home-title" hidden>
-      <div class="brand"><span class="brand-mark"><svg class="icon" aria-hidden="true"><use href="#icon-bus"/></svg></span><div>길동무<span class="brand-sub">GILDONGMU</span></div></div>
-      <div class="hero"><h1 id="home-title" tabindex="-1">출발할까요?</h1><p class="copy">정류장까지 함께 걷고,<br>탈 버스를 찾아드려요.</p></div>
-      <div class="rate-setting"><div class="setting-heading"><label for="voice-rate">안내 음성 속도</label><output id="voice-rate-label" for="voice-rate">1.0배</output></div><input id="voice-rate" type="range" min="0.75" max="2" step="0.25" value="1" aria-valuetext="1배"><div class="range-labels"><span>0.75배</span><span>2배</span></div><button type="button" class="secondary sample-button" data-action="sample"><svg class="icon" aria-hidden="true"><use href="#icon-volume"/></svg>음성 미리듣기</button></div>
-      <div class="text-setting"><label for="text-scale">글자 크기</label><select id="text-scale"><option value="1">크게</option><option value="1.2">더 크게</option><option value="2">최대</option></select></div>
-      <div class="preparation-footer"><button class="primary start-button" type="button" data-action="start">안내 시작</button></div>
+    <section class="screen" data-panel="type" aria-labelledby="type-title" hidden>
+      <nav class="top-controls" aria-label="출발 준비 상단"><div class="primary-controls"><button class="touch-zone top-primary" type="button" data-action="settings-home">음성 속도 설정</button><button class="touch-zone" type="button" data-action="start">안내 시작</button></div></nav>
+      <div class="settings-content"><h1 id="type-title" tabindex="-1">글자 크기 설정</h1><div class="option-list" role="group" aria-labelledby="type-title"><button class="option" type="button" data-size="1" aria-pressed="true">크게</button><button class="option" type="button" data-size="1.2" aria-pressed="false">더 크게</button><button class="option" type="button" data-size="1.5" aria-pressed="false">최대</button></div></div>
     </section>
     <section class="screen input-screen" data-panel="input" aria-labelledby="input-title" hidden>
-      <div class="topnav"><button class="back-button" type="button" data-action="back"><svg class="icon" aria-hidden="true"><use href="#icon-back"/></svg>이전</button><span class="phase">버스 찾기</span></div>
-      <div class="steps" aria-hidden="true"><span class="done"></span><span class="current"></span><span></span></div>
-      <h1 id="input-title" tabindex="-1">어떤 버스를<br>타시나요?</h1><p class="copy">번호를 입력하거나<br>마이크를 눌러 말해 주세요.</p>
-      <form id="route-form"><div class="route-field"><label for="bus-number">탈 버스 번호</label><div class="input-row"><input id="bus-number" type="text" inputmode="text" maxlength="30" autocomplete="off" placeholder="예: 143" aria-describedby="route-hint route-error"><button class="mic-button" type="button" data-mic="input" aria-label="버스 번호 음성 입력" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#icon-mic"/></svg></button></div><p class="hint" id="route-hint">숫자와 문자를 함께 입력할 수 있어요.</p><p class="error" id="route-error" role="alert" hidden></p></div></form>
-      <div class="bottom-stack"><button class="primary" type="submit" form="route-form">버스 찾기<svg class="icon" aria-hidden="true"><use href="#icon-arrow"/></svg></button><button class="secondary" type="button" data-action="repeat"><svg class="icon" aria-hidden="true"><use href="#icon-volume"/></svg>다시 듣기</button></div>
-    </section>
-    <section class="screen confirm-screen" data-panel="confirm" aria-labelledby="confirm-title" hidden>
-      <div class="brand"><span class="brand-mark"><svg class="icon" aria-hidden="true"><use href="#icon-bus"/></svg></span>길동무</div><div class="steps" aria-hidden="true"><span class="done"></span><span class="current"></span><span></span></div>
-      <p class="confirm-label">탈 버스 번호 확인</p><div class="number-block"><strong data-route>—</strong><span>번</span></div><h1 id="confirm-title" tabindex="-1">이 버스가<br>맞습니까?</h1>
-      <div class="voice-answer"><button class="mic-button" type="button" data-mic="confirm" aria-label="음성으로 맞아요 또는 다시 입력 답하기" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#icon-mic"/></svg></button><p id="confirm-voice-text">음성으로 답하기<small>“맞아요” / “다시 입력”</small></p></div>
-      <div class="bottom-stack"><button class="primary" type="button" data-action="confirm-route"><svg class="icon" aria-hidden="true"><use href="#icon-check"/></svg>맞아요</button><button class="secondary" type="button" data-action="edit-route">다시 입력</button></div>
+      <nav class="top-controls" aria-label="화면 위쪽 버스 번호 입력">
+        <form id="route-form"><div class="primary-controls"><button class="touch-zone" type="button" data-action="back">이전 화면으로</button><button class="touch-zone top-primary" type="submit">버스 찾기</button></div>
+          <div class="number-editor"><button class="route-output route-trigger" id="bus-number" type="button" data-action="open-keypad" aria-label="버스 번호 입력" aria-haspopup="dialog" aria-controls="route-keypad-dialog" aria-expanded="false" aria-describedby="route-hint route-error" data-empty="true"><span>버스 번호 입력</span></button></div>
+          <button class="auxiliary voice-button" type="button" data-mic="input" aria-label="버스 번호 음성 입력" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#icon-mic"/></svg><span id="mic-label">음성 입력</span></button>
+        </form>
+      </nav>
+      <div class="content"><h1 class="sr-only" id="input-title" tabindex="-1">버스 번호 입력</h1><p class="sr-only" id="route-hint">버스 번호 입력 버튼을 누르면 위쪽 키패드가 열립니다.</p><p class="error" id="route-error" role="alert" hidden></p></div>
     </section>
     <section class="screen camera-screen" data-panel="camera" aria-labelledby="camera-title" hidden>
-      <div class="topnav"><button class="back-button" type="button" data-action="back"><svg class="icon" aria-hidden="true"><use href="#icon-back"/></svg>이전</button><h1 class="phase" id="camera-title" tabindex="-1">이동 안내</h1></div>
-      <div class="target-card" id="bus-target" hidden><div><span class="card-label">현재 정류장</span><h2 id="bus-station-name">정류장 확인 중</h2></div><div class="target-number"><strong data-route>—</strong><span>번</span></div><p class="arrival-info" id="bus-arrival-text">도착정보를 확인하고 있어요.</p><p class="bus-message" id="bus-message" hidden></p><p class="bus-message" id="bus-gps-message" hidden></p><p class="bus-message" id="bus-ocr-message" hidden></p><div class="station-picker" id="station-picker" hidden><label for="bus-stations">정류장 선택</label><select id="bus-stations" disabled><option value="">가까운 정류장 확인 중</option></select></div><p class="hint" id="bus-location-status" hidden></p><button class="small-button" id="bus-location-button" type="button" data-action="locate"><svg class="icon" aria-hidden="true"><use href="#icon-pin"/></svg>위치 다시 확인</button></div>
-      <div class="guidance-card" id="guidance-card" data-tone="walk"><div class="card-caption"><span class="cue-icon"><svg class="icon" aria-hidden="true"><use id="guidance-icon" href="#icon-walk"/></svg></span><span id="guidance-label">이동 안내</span></div><h2 id="guidance-title">주변을 살피며<br>이동해 주세요.</h2><p id="guidance-copy">보행 위험과 신호를 확인하고 있어요.</p></div>
-      <div class="pause-card" id="pause-card" hidden><span class="cue-icon"><svg class="icon" aria-hidden="true"><use href="#icon-pause"/></svg></span><h2>잠시 멈췄어요.</h2><p>촬영과 안내가 중지됩니다.<br>재개를 눌러 다시 시작하세요.</p></div>
+      <nav class="top-controls" aria-label="화면 위쪽 안내 조작"><div class="primary-controls"><button class="touch-zone" type="button" id="camera-left" data-action="settings-type"><span id="camera-left-label">글자 크기 설정</span></button><button class="touch-zone top-primary" type="button" id="stage-button" data-action="manual-arrival"><span id="stage-label">정류장 도착</span></button></div><button class="auxiliary" type="button" data-action="end" id="walk-end">안내 종료</button></nav>
+      <div class="content">
+        <h1 class="main-title" id="camera-title" tabindex="-1"><span id="camera-route" class="route-emphasis" hidden></span><span id="camera-title-text">이동 안내 중</span></h1>
+        <div class="guidance-card" id="guidance-card" data-tone="walk" hidden><div class="card-caption"><svg class="icon" aria-hidden="true"><use id="guidance-icon" href="#icon-walk"/></svg><span id="guidance-label">이동 안내</span></div><h2 id="guidance-title">주변을 살피며 이동해 주세요.</h2><p id="guidance-copy">보행 위험과 신호를 확인하고 있어요.</p></div>
+        <div class="pause-card" id="pause-card" hidden><h2>잠시 멈췄어요.</h2><p>촬영과 안내가 중지됩니다.</p><button type="button" class="auxiliary" data-action="pause">안내 재개</button></div>
       <div class="camera" id="camera"><video id="video" autoplay playsinline muted aria-label="후면 카메라 영상"></video><canvas id="overlay" aria-hidden="true"></canvas><canvas id="camera-view" role="img" aria-label="후면 카메라와 실시간 추론 결과"></canvas><div class="camera-placeholder" id="placeholder"><svg class="icon" aria-hidden="true"><use href="#icon-camera"/></svg><span>카메라를 준비하고 있어요.</span></div><span class="camera-badge" id="camera-badge">준비 중</span></div>
-      <div class="dock"><button class="primary" type="button" id="stage-button" data-action="manual-arrival"><svg class="icon" aria-hidden="true"><use id="stage-icon" href="#icon-pin"/></svg><span id="stage-label">정류장 도착</span></button><div class="dock-tools"><button type="button" data-action="pause" id="pause-button" aria-pressed="false"><svg class="icon" aria-hidden="true"><use id="pause-icon" href="#icon-pause"/></svg><span id="pause-label">일시중지</span></button><button type="button" data-action="repeat"><svg class="icon" aria-hidden="true"><use href="#icon-volume"/></svg>다시 듣기</button></div><button class="record-button" type="button" data-action="record" id="record-button" aria-pressed="false" disabled><span class="record-dot" aria-hidden="true"></span><span id="record-label">30초 영상 구간 기록</span></button><p class="clip-status" id="clip-status" role="status" aria-live="polite">영상 기록은 꺼져 있습니다. 필요할 때만 최대 30초씩 5개까지 기록합니다.</p><button class="text-button" type="button" data-action="end" id="walk-end">안내 종료</button></div>
+      </div>
     </section>
-    <p id="app-status" class="app-status" role="status" aria-live="polite" aria-atomic="true"></p>
+    <section class="screen" data-panel="end" aria-labelledby="end-title" hidden>
+      <nav class="top-controls" aria-label="화면 위쪽 종료 확인"><div class="primary-controls"><button class="touch-zone" type="button" data-action="cancel-end">계속 안내</button><button class="touch-zone top-primary" type="button" data-action="confirm-end">안내 종료</button></div></nav>
+      <div class="content"><h1 class="main-title" id="end-title" tabindex="-1">안내를<br>종료할까요?</h1></div>
+    </section>
+  <div class="keypad-layer" id="route-keypad-layer" hidden>
+   <section class="keypad-sheet" id="route-keypad-dialog" role="dialog" aria-modal="true" aria-label="버스 번호 입력 팝업">
+    <div class="keypad-header"><button class="keypad-action" type="button" data-keypad-action="close">닫기</button><button class="keypad-action top-primary" type="button" data-keypad-action="search">버스 찾기</button></div>
+    <output class="route-output" id="route-keypad-output" aria-label="입력한 버스 번호" aria-describedby="route-keypad-error" data-empty="true"><span>버스 번호</span></output>
+    <p class="error sr-only" id="route-keypad-error" role="alert" hidden></p>
+    <div class="letter-modes" hidden><button class="letter-mode" type="button" data-letter-group="consonants" aria-pressed="true">자음</button><button class="letter-mode" type="button" data-letter-group="vowels" aria-pressed="false">모음</button><button class="letter-mode" type="button" data-letter-group="english" aria-pressed="false">영문</button></div>
+    <div class="keypad" id="number-keys" aria-label="큰 숫자 키패드">
+     <button class="keypad-key" type="button" data-key="1">1</button><button class="keypad-key" type="button" data-key="2">2</button><button class="keypad-key" type="button" data-key="3">3</button>
+     <button class="keypad-key" type="button" data-key="4">4</button><button class="keypad-key" type="button" data-key="5">5</button><button class="keypad-key" type="button" data-key="6">6</button>
+     <button class="keypad-key" type="button" data-key="7">7</button><button class="keypad-key" type="button" data-key="8">8</button><button class="keypad-key" type="button" data-key="9">9</button>
+     <button class="keypad-key keypad-key-word" type="button" data-key="letters" aria-label="한글 영문 문자 입력">문자</button><button class="keypad-key" type="button" data-key="0">0</button><button class="keypad-key keypad-key-word" type="button" data-key="delete" aria-label="마지막 글자 삭제">삭제</button>
+    </div>
+    <div class="keypad" id="letter-keys" aria-label="큰 문자 키패드" hidden></div>
+   </section>
+  </div>
+    <p id="app-status" class="app-status sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
     <button class="retry-upload" type="button" id="retry-upload" data-action="retry-upload" hidden>영상 전송 다시 시도</button>
     <div class="sr-only" id="announcer" role="status" aria-live="polite" aria-atomic="true"></div>
-    <details class="diagnostics"><summary>테스트 설정 및 상태</summary><div class="diagnostics-content"><label for="device">휴대폰 기종</label><select id="device"><option value="자동 감지">자동 감지</option><option value="Galaxy S24+">Galaxy S24+</option><option value="Galaxy S25 Ultra">Galaxy S25 Ultra</option><option value="Galaxy Quantum 3">Galaxy Quantum 3</option><option value="iPhone 15 Pro">iPhone 15 Pro</option><option value="custom">직접 입력</option></select><input id="custom-device" type="text" maxlength="80" placeholder="휴대폰 기종 입력" aria-label="휴대폰 기종 직접 입력" hidden><label for="note">테스트 메모 <span class="muted">선택</span></label><input id="note" type="text" maxlength="500" placeholder="예: 금촌역 횡단보도"><p id="status">시작을 누르면 카메라와 위치 권한을 확인합니다.</p><p id="metrics">0 프레임</p><strong>정류장 근접 인식</strong><p id="stop-proximity-status" data-state="not_detected">관측 없음 · 화면 기준</p></div></details>
+    <details class="bus-details" id="bus-details" hidden><summary>정류장·도착정보</summary><div class="target-card" id="bus-target" hidden><div><span class="card-label">현재 정류장</span><h2 id="bus-station-name">정류장 확인 중</h2></div><div class="target-number"><strong data-route>—</strong><span>번</span></div><p class="arrival-info" id="bus-arrival-text">도착정보를 확인하고 있어요.</p><p class="bus-message" id="bus-message" hidden></p><p class="bus-message" id="bus-gps-message" hidden></p><p class="bus-message" id="bus-ocr-message" hidden></p><div class="station-picker" id="station-picker" hidden><label for="bus-stations">정류장 선택</label><select id="bus-stations" disabled><option value="">가까운 정류장 확인 중</option></select></div><p class="hint" id="bus-location-status" hidden></p><button class="small-button" id="bus-location-button" type="button" data-action="locate"><svg class="icon" aria-hidden="true"><use href="#icon-pin"/></svg>위치 다시 확인</button></div></details>
+    <details class="diagnostics"><summary>테스트 설정 및 상태</summary><div class="diagnostics-content"><button type="button" data-action="pause" id="pause-button" aria-pressed="false"><svg class="icon" aria-hidden="true"><use id="pause-icon" href="#icon-pause"/></svg><span id="pause-label">일시중지</span></button><button class="record-button" type="button" data-action="record" id="record-button" aria-pressed="false" disabled><span class="record-dot" aria-hidden="true"></span><span id="record-label">30초 영상 구간 기록</span></button><p class="clip-status" id="clip-status" role="status" aria-live="polite">영상 기록은 꺼져 있습니다. 필요할 때만 최대 30초씩 5개까지 기록합니다.</p><label for="device">휴대폰 기종</label><select id="device"><option value="자동 감지">자동 감지</option><option value="Galaxy S24+">Galaxy S24+</option><option value="Galaxy S25 Ultra">Galaxy S25 Ultra</option><option value="Galaxy Quantum 3">Galaxy Quantum 3</option><option value="iPhone 15 Pro">iPhone 15 Pro</option><option value="custom">직접 입력</option></select><input id="custom-device" type="text" maxlength="80" placeholder="휴대폰 기종 입력" aria-label="휴대폰 기종 직접 입력" hidden><label for="note">테스트 메모 <span class="muted">선택</span></label><input id="note" type="text" maxlength="500" placeholder="예: 금촌역 횡단보도"><p id="status">시작을 누르면 카메라와 위치 권한을 확인합니다.</p><p id="metrics">0 프레임</p><strong>정류장 근접 인식</strong><p id="stop-proximity-status" data-state="not_detected">관측 없음 · 화면 기준</p></div></details>
   </main>
   <script defer src="/static/js/config.js"></script>
   <script defer src="/static/js/camera.js"></script>
@@ -87,6 +98,7 @@
   <script defer src="/static/js/recorder.js"></script>
   <script defer src="/static/js/api.js"></script>
   <script defer src="/static/js/boarding.js"></script>
+  <script defer src="/static/js/route-keypad.js"></script>
   <script defer src="/static/js/speech-input.js"></script>
   <script defer src="/static/js/film.js"></script>
   <script defer src="/static/js/view.js"></script>

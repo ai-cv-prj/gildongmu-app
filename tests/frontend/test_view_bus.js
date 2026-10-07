@@ -12,14 +12,17 @@ function harness() {
       setAttribute(name, value) { this[name] = value; }, addEventListener() {}, removeEventListener() {} });
     return nodes.get(id);
   }
-  const panels = ["welcome", "home", "input", "confirm", "camera", "finish"].map(name => {
+  const panels = ["welcome", "home", "type", "input", "camera", "end"].map(name => {
     const panel = node(`panel-${name}`); panel.dataset.panel = name; return panel;
   });
   const context = { Date: { now: () => clock },
     window: {
       GildongmuFilm: { mount: () => ({ setVisible() {}, restart() {}, destroy() {} }) },
       GSpeechInput: { create: () => ({ stop() {}, destroy() {} }) },
+      GRouteKeypad: { normalize: require("../../frontend/js/route-keypad.js").normalize,
+        create: () => ({ setValue() {}, setError() {}, close() {}, destroy() {} }) },
     }, document: { getElementById: node,
+      addEventListener() {}, removeEventListener() {},
       querySelectorAll: selector => selector === "[data-panel]" ? panels : [],
       querySelector: selector => selector === '[data-panel="camera"]' ? node("panel-camera") : null } };
   vm.runInNewContext(fs.readFileSync("frontend/js/view.js", "utf8"), context);
@@ -33,7 +36,8 @@ function harness() {
 
 test("도착정보 없이 확인한 목표 버스 번호를 주 안내 카드에 표시한다", () => {
   const { view, node } = harness();
-  assert.equal(node("camera-title").textContent, "버스 탐색");
+  assert.equal(node("camera-title-text").textContent, " 버스 인식 중");
+  assert.equal(node("camera-route").textContent, "143번");
   assert.equal(node("guidance-label").textContent, "카메라 번호 인식");
   assert.match(node("guidance-title").textContent, /143번 버스가 도착했습니다/);
   assert.equal(node("bus-arrival-text").textContent, "도착정보 이용 불가");

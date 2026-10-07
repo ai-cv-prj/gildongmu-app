@@ -18,7 +18,7 @@ const context = { window: { GConfig: { get: () => settings }, Audio,
   setTimeout: () => 1, clearTimeout() {} };
 vm.runInNewContext(fs.readFileSync("frontend/js/tts.js", "utf8"), context);
 const player = context.window.GTts.create({ now: () => 0 });
-const question = "정류장 근처입니다. 탑승할 버스 번호를 입력해 주세요. 탑승하지 않으면 취소를 누르세요.";
+const question = "정류장 근처입니다. 탑승할 버스 번호를 입력해 주세요. 보행 안내를 계속하려면 이전 화면으로 버튼을 누르세요.";
 assert.equal(player.speak(question, 1000, { onStart: () => started++, onEnd: () => finished++ }), true);
 assert.equal(utterance.lang, "ko-KR");
 assert.equal(started, 1);

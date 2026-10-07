@@ -1,31 +1,7 @@
-/** Browser speech input. A spoken route is always reviewed before submission. */
+/** Browser speech input; only a validated route is handed to the application. */
 (() => {
-  const DIGITS = { 영: 0, 공: 0, 일: 1, 이: 2, 삼: 3, 사: 4, 오: 5, 육: 6, 칠: 7, 팔: 8, 구: 9 };
-  const UNITS = { 십: 10, 백: 100, 천: 1000 };
-
-  function spokenNumber(value) {
-    if (!/[십백천]/.test(value)) return [...value].map(char => DIGITS[char]).join("");
-    let total = 0, digit = 0;
-    for (const char of value) {
-      if (char in UNITS) { total += (digit || 1) * UNITS[char]; digit = 0; }
-      else digit = DIGITS[char];
-    }
-    return String(total + digit);
-  }
-
   function normalizeRouteTranscript(value) {
-    return String(value || "").normalize("NFKC").trim()
-      .replace(/^(?:버스\s*번호|노선\s*번호|버스|노선)\s*/, "")
-      .replace(/\s*번(?:\s*버스)?[.!?。]?$/, "")
-      .replace(/\s*버스[.!?。]?$/, "")
-      .replace(/하이픈/g, "-")
-      .replace(/^엔(?=[영공일이삼사오육칠팔구십백천0-9\s])/, "N")
-      .split(/(\s+)/).map(part => {
-        if (/^[영공일이삼사오육칠팔구십백천]+$/.test(part)) return spokenNumber(part);
-        const prefixed = part.match(/^([A-Za-z]+)([영공일이삼사오육칠팔구십백천]+)$/);
-        return prefixed ? prefixed[1] + spokenNumber(prefixed[2]) : part;
-      }).join("")
-      .replace(/\s+/g, "").replace(/[.!?。]+$/, "").slice(0, 30);
+    return window.GRouteKeypad.normalize(value);
   }
 
   function confirmation(value) {

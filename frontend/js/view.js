@@ -2,7 +2,7 @@
 (() => {
   const CAMERA_SCREENS = new Set(["walk", "signal", "search", "approach", "arrived"]);
   const BUS_SCREENS = new Set(["search", "approach", "arrived"]);
-  const SCREENS = new Set(["welcome", "finish", "home", "input", "confirm", ...CAMERA_SCREENS]);
+  const SCREENS = new Set(["welcome", "home", "type", "input", "end", ...CAMERA_SCREENS]);
   const DEFAULT_CUES = {
     walk: { label: "이동 안내", title: "주변을 살피며 이동해 주세요.", copy: "보행 위험과 신호를 확인하고 있어요.", icon: "walk", tone: "walk" },
     signal: { label: "보행자 신호", title: "신호를 확인하고 있어요.", copy: "주변과 보행자 신호를 확인해 주세요.", icon: "hand", tone: "signal" },
@@ -15,12 +15,13 @@
   const updateText = (element, value) => { if (element.textContent !== value) element.textContent = value; };
 
   function create({ onAction = () => {}, onSubmitRoute = () => {}, onRateChange = () => {},
-    onTextScaleChange = () => {}, onStationChange = () => {} } = {}) {
+    onTextScaleChange = () => {}, onStationChange = () => {}, onSpeak = () => {} } = {}) {
     let screen = "welcome", paused = false, busy = false;
     let obstacleDetection = true;
     let bus = {}, lastResult = null, currentCue = DEFAULT_CUES.walk;
     let micMode = null, destroyed = false, stationCount = 0, speechSession = false;
     let clipState = { active: false, count: 0, max: 5, available: false };
+    let keypad = null, lastActionAt = -Infinity;
     const listeners = [];
     const cameraPanel = document.querySelector('[data-panel="camera"]');
     const film = window.GildongmuFilm.mount($("opening-film"), $("film-caption"), $("ending-film"));
@@ -39,17 +40,22 @@
       const value = String(message || "");
       updateText($("app-status"), value);
       updateText($("status"), value);
+      $("app-status").classList.toggle("sr-only", !/실패|없습니다|없어요|확인해 주세요|권한|오류/.test(value));
     }
-    function setRoute(value) {
+    function setRoute(value, { syncKeypad = true } = {}) {
       const route = String(value || "").slice(0, 30);
       $("bus-number").value = route;
+      if (syncKeypad) keypad?.setValue(route);
       all("[data-route]").forEach(element => updateText(element, route || "—"));
+      updateText($("camera-route"), route ? `${route}번` : "");
+      $("camera-route").dataset.long = String(route.length > 5);
     }
     function readRoute() { return $("bus-number").value.trim(); }
     function routeError(message) {
       updateText($("route-error"), String(message || ""));
       $("route-error").hidden = !message;
       $("bus-number").setAttribute("aria-invalid", String(Boolean(message)));
+      if (message) keypad?.setError(message);
     }
     function paintCue(cue) {
       currentCue = cue;
@@ -106,14 +112,17 @@
     function render(result) {
       lastResult = result || null;
       if (!CAMERA_SCREENS.has(screen) || paused) return;
-      paintCue(hazardCue(lastResult) || busCue() || DEFAULT_CUES[screen]);
+      const cue = hazardCue(lastResult) || busCue();
+      paintCue(cue || DEFAULT_CUES[screen]);
+      $("guidance-card").hidden = !cue;
     }
     function setObstacleDetection(enabled) { obstacleDetection = enabled; render(lastResult); }
     function updateControls() {
-      all("[data-action], [data-mic], #route-form input, button[form='route-form']").forEach(element => {
+      all("[data-action], [data-mic], [data-rate], [data-size], #route-form button").forEach(element => {
         const action = element.dataset.action;
-        const canCancel = action === "end" || action === "back";
-        element.disabled = (busy && !canCancel) || (paused && action === "manual-arrival") || (paused && action === "locate");
+        const canCancel = ["end", "back", "cancel-end", "confirm-end"].includes(action);
+        element.disabled = (busy && !canCancel) || (paused && ["manual-arrival", "locate", "open-keypad"].includes(action)) ||
+          (paused && (element.dataset.mic || element.type === "submit"));
       });
       $("bus-stations").disabled = busy || paused || stationCount === 0;
       $("record-button").disabled = busy || !clipState.available;
@@ -140,8 +149,9 @@
       if (paused) speech.stop();
       cameraPanel.classList.toggle("is-paused", paused);
       $("pause-card").hidden = !paused;
-      $("guidance-card").hidden = paused;
+      if (paused) $("guidance-card").hidden = true;
       $("bus-target").hidden = paused || !BUS_SCREENS.has(screen);
+      $("bus-details").hidden = paused || !BUS_SCREENS.has(screen);
       $("pause-button").setAttribute("aria-pressed", String(paused));
       $("pause-icon").setAttribute("href", paused ? "#icon-play" : "#icon-pause");
       updateText($("pause-label"), paused ? "재개" : "일시중지");
@@ -152,25 +162,30 @@
       if (!SCREENS.has(next)) throw new Error(`지원하지 않는 화면: ${next}`);
       const previous = screen;
       screen = next;
-      if (previous !== next) speech.stop();
+      if (previous !== next) { speech.stop(); keypad?.close({ restoreFocus: false }); }
       const panelName = CAMERA_SCREENS.has(screen) ? "camera" : screen;
       all("[data-panel]").forEach(panel => { panel.hidden = panel.dataset.panel !== panelName; });
-      if (screen === "welcome" && previous === "finish") film.restart();
+      if (screen === "welcome" && previous !== "welcome") film.restart();
       film.setVisible(screen === "welcome");
       const busScreen = BUS_SCREENS.has(screen);
       $("app").dataset.screen = screen;
-      updateText($("camera-title"), busScreen ? "버스 탐색" : "이동 안내");
+      updateText($("camera-title-text"), busScreen ? " 버스 인식 중" : "이동 안내 중");
+      $("camera-route").hidden = !busScreen;
+      $("camera-title").classList.toggle("bus-title", busScreen);
       $("bus-target").hidden = !busScreen || paused;
-      $("stage-button").dataset.action = busScreen ? "end" : "manual-arrival";
-      $("stage-icon").setAttribute("href", busScreen ? "#icon-power" : "#icon-pin");
-      updateText($("stage-label"), busScreen ? "종료" : "정류장 도착");
-      $("walk-end").hidden = busScreen;
+      $("bus-details").hidden = !busScreen || paused;
+      $("stage-button").dataset.action = busScreen ? "repeat" : "manual-arrival";
+      updateText($("stage-label"), busScreen ? "다시 듣기" : "정류장 도착");
+      $("camera-left").dataset.action = busScreen ? "back" : "settings-type";
+      updateText($("camera-left-label"), busScreen ? "이전 화면으로" : "글자 크기 설정");
       if (screen === "input") routeError("");
       render(lastResult);
       updateControls();
       // Automatic OCR/GPS updates must not move keyboard or screen reader focus.
       if (focus && previous !== screen && !(CAMERA_SCREENS.has(previous) && CAMERA_SCREENS.has(screen))) {
-        document.querySelector(`[data-panel="${panelName}"] h1`)?.focus({ preventScroll: false });
+        window.scrollTo?.({ top: 0, behavior: "instant" });
+        document.querySelector(`[data-panel="${panelName}"] .top-controls button:not(:disabled)`)?.focus({ preventScroll: true });
+        announce(getGuidance());
       }
     }
     function setBus(value = {}) {
@@ -210,79 +225,81 @@
     }
     function setSettings({ rate, textScale } = {}) {
       if (Number.isFinite(rate)) {
-        const value = Math.max(.75, Math.min(2, rate));
-        $("voice-rate").value = String(value);
-        $("voice-rate").setAttribute("aria-valuetext", `${value}배`);
-        updateText($("voice-rate-label"), `${Number.isInteger(value) ? value.toFixed(1) : value}배`);
+        all("[data-rate]").forEach(button => button.setAttribute("aria-pressed", String(Number(button.dataset.rate) === rate)));
       }
       if (Number.isFinite(textScale)) {
-        const value = [1, 1.2, 2].includes(textScale) ? textScale : 1;
-        $("text-scale").value = String(value);
+        const value = textScale === 2 ? 1.5 : [1, 1.2, 1.5].includes(textScale) ? textScale : 1;
+        all("[data-size]").forEach(button => button.setAttribute("aria-pressed", String(Number(button.dataset.size) === value)));
         $("app").style.setProperty("--text-scale", String(value));
-        $("app").classList.toggle("is-enlarged", value > 1);
       }
     }
     function getGuidance() {
       if (paused) return "안내를 잠시 멈췄어요. 촬영과 자동 안내가 중지됩니다.";
-      if (screen === "input") return "버스 번호를 입력하거나 마이크를 눌러 말해 주세요.";
-      if (screen === "confirm") return `${readRoute()}번이 맞습니까?`;
-      if (screen === "home") return "길동무가 정류장까지 함께합니다. 선택한 속도로 안내해 드릴게요.";
-      if (screen === "welcome") return "카메라 안내로, 버스에 오르기까지. 시작하기를 눌러 주세요.";
-      if (screen === "finish") return "안내를 종료했습니다. 다음 길도 길동무와 함께해요.";
+      if (screen === "input") return "버스 번호를 입력하거나 음성 입력을 눌러 말해 주세요.";
+      if (screen === "home") return "음성 속도 설정";
+      if (screen === "type") return "글자 크기 설정";
+      if (screen === "end") return "안내를 종료할까요?";
+      if (screen === "welcome") return "카메라 안내로, 버스에 오르기까지. 길동무 시작하기를 눌러 주세요.";
       render(lastResult);
       return [currentCue.title, currentCue.copy].filter(Boolean).join(" ");
+    }
+    function speak(message) { announce(message); invoke(onSpeak, message); }
+    function submitRoute(value) {
+      if (busy || paused || screen !== "input") return;
+      const route = window.GRouteKeypad.normalize(value);
+      if (!route) { routeError("번호 다시 입력"); speak("번호 다시 입력"); return; }
+      speech.stop();
+      routeError(""); setRoute(route);
+      invoke(onSubmitRoute, route);
     }
     const speech = window.GSpeechInput.create({
       onState(active, mode) {
         if (active) micMode = mode;
-        all("[data-mic]").forEach(button => button.setAttribute("aria-pressed", String(active && button.dataset.mic === micMode)));
+        all("[data-mic]").forEach(button => {
+          const selected = active && button.dataset.mic === micMode;
+          button.setAttribute("aria-pressed", String(selected));
+          button.setAttribute("aria-label", selected ? "음성 입력 취소" : "버스 번호 음성 입력");
+        });
+        updateText($("mic-label"), active ? "듣는 중" : "음성 입력");
         if (active) {
-          const message = mode === "confirm" ? "음성 답변 대기 · 맞아요 또는 다시 입력이라고 말해 주세요." : "음성 입력 중 · 탈 버스 번호를 말해 주세요.";
-          if (mode === "input") updateText($("route-hint"), message);
-          else updateText($("confirm-voice-text"), message);
-          announce(message);
+          updateText($("route-hint"), "음성 입력 중 · 탈 버스 번호를 말해 주세요.");
+          announce($("route-hint").textContent);
         }
         if (!active && speechSession) {
           speechSession = false;
           invoke(onAction, "speech-end");
         }
-        if (!active && $("route-hint").textContent.startsWith("음성 입력 중")) {
-          updateText($("route-hint"), "다시 말하려면 마이크를 누르거나 번호를 직접 입력해 주세요.");
-        }
-        if (!active && $("confirm-voice-text").textContent.startsWith("음성 답변 대기")) {
-          updateText($("confirm-voice-text"), "맞아요 또는 다시 입력 버튼을 눌러 주세요.");
-        }
       },
       onResult({ mode, value }) {
-        if (destroyed) return;
-        if (mode === "input" && screen === "input") {
-          setRoute(value);
-          routeError("");
-          updateText($("route-hint"), `${value}번을 입력했어요. 번호를 확인하고 버스 찾기를 눌러 주세요.`);
-          announce($("route-hint").textContent);
-        } else if (mode === "confirm" && screen === "confirm") {
-          invoke(onAction, value);
-        }
+        if (destroyed || busy || paused) return;
+        if (mode === "input" && screen === "input") submitRoute(value);
       },
-      onError(message) {
-        if (micMode === "input") updateText($("route-hint"), message);
-        else if (micMode === "confirm") updateText($("confirm-voice-text"), message);
-        announce(message);
-      },
+      onError(message) { speech.stop(); routeError(message); speak(message); },
     });
-    if (!speech.supported) {
-      updateText($("route-hint"), "음성 입력을 지원하지 않는 브라우저입니다. 번호를 직접 입력해 주세요.");
-      updateText($("confirm-voice-text"), "아래 버튼으로 번호를 확인해 주세요.");
+    keypad = window.GRouteKeypad.create({
+      onChange(value) { setRoute(value, { syncKeypad: false }); routeError(""); },
+      onSubmit: submitRoute,
+      onSpeak: speak,
+      onOpenChange(open) { if (open) speech.stop(); },
+    });
+    if (!speech.supported) updateText($("route-hint"), "음성 입력을 지원하지 않는 브라우저입니다. 번호 입력 버튼을 눌러 주세요.");
+    function takeAction() {
+      const now = Date.now();
+      if (now - lastActionAt < 250) return false;
+      lastActionAt = now; return true;
     }
     all("[data-action]").forEach(button => bind(button, "click", () => {
+      if (button.disabled || !takeAction()) return;
       speech.stop();
-      invoke(onAction, button.dataset.action);
+      if (button.dataset.action === "open-keypad") {
+        if (!busy && !paused && screen === "input") keypad.open(readRoute());
+      } else invoke(onAction, button.dataset.action);
     }));
     all("[data-mic]").forEach(button => bind(button, "click", () => {
+      if (busy || paused || button.disabled || !takeAction()) return;
       if (speech.isActive()) { speech.stop(); return; }
+      routeError("");
       micMode = button.dataset.mic;
-      // start() first resets any previous recognizer; signal the audio owner only
-      // after that reset so it stays silent throughout this microphone session.
       if (speech.start(micMode)) {
         speechSession = true;
         invoke(onAction, "speech-start");
@@ -290,35 +307,30 @@
     }));
     bind($("route-form"), "submit", event => {
       event.preventDefault();
+      if (takeAction()) submitRoute(readRoute());
+    });
+    all("[data-rate]").forEach(button => bind(button, "click", () => {
       if (busy) return;
-      const route = readRoute();
-      if (!route) { routeError("버스 번호를 먼저 입력해 주세요."); $("bus-number").focus(); return; }
-      speech.stop();
-      routeError("");
-      setRoute(route);
-      invoke(onSubmitRoute, route);
-    });
-    bind($("bus-number"), "input", () => routeError(""));
-    bind($("voice-rate"), "input", event => {
-      const rate = Number(event.target.value);
-      setSettings({ rate });
-      invoke(onRateChange, rate);
-    });
-    bind($("text-scale"), "change", event => {
-      const textScale = Number(event.target.value);
-      setSettings({ textScale });
-      invoke(onTextScaleChange, textScale);
-      announce(`글자 크기를 ${Math.round(20 * textScale)}픽셀로 변경했습니다.`);
-    });
+      const rate = Number(button.dataset.rate);
+      setSettings({ rate }); invoke(onRateChange, rate); announce(`${rate}배`);
+    }));
+    all("[data-size]").forEach(button => bind(button, "click", () => {
+      if (busy) return;
+      const textScale = Number(button.dataset.size);
+      setSettings({ textScale }); invoke(onTextScaleChange, textScale);
+      speak(`글자 크기, ${button.textContent.trim()}`);
+    }));
     bind($("bus-stations"), "change", event => invoke(onStationChange, event.target.value));
+    bind(document, "visibilitychange", () => { if (document.hidden) { speech.stop(); keypad.close({ restoreFocus: false }); } });
     function destroy() {
       destroyed = true;
       speech.destroy();
+      keypad.destroy();
       film.destroy();
       listeners.forEach(remove => remove());
     }
     show("welcome", { focus: false });
-    return { show, render, setObstacleDetection, setBus, setStations, setPaused, setBusy, setClipState, setStatus, setRoute, readRoute,
+    return { show, render, setObstacleDetection, setBus, setStations, setPaused, setBusy, setClipState, setStatus, setRoute, readRoute, setRouteError: routeError,
       setSettings, announce, getScreen: () => screen, getGuidance, destroy };
   }
   window.GView = { create };

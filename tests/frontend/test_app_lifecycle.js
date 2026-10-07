@@ -4,12 +4,14 @@ const vm = require("node:vm");
 const test = require("node:test");
 const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
 
-async function harness({ stopFailsOnce = false, clipState = "ready", uploadResponseLostOnce = false } = {}) {
+async function harness({ stopFailsOnce = false, clipState = "ready", uploadResponseLostOnce = false, deferRouteSubmit = false, storedPreferences = null } = {}) {
   let now = 100, nextTimer = 0, screen = "home", cameraActive = false, cameraEnded;
   let handlers, voice = null, busState = { status: "idle", revision: 0, arrival_event_id: null }, routeInput = "";
   let journeyCallbacks, journeyPaused = false, route = null;
   let sessionsStarted = 0, sessionsStopped = 0, stopAttempts = 0, uploadAttempts = 0;
   let recording = false, recordingStartedAt = null, recorderEnded = null;
+  let releaseRouteSubmit = null, configuredPreferences = null, savedPreferences = null;
+  const routeSubmissions = [];
   let recordStarts = 0, recordStops = 0;
   const timeline = [], uploads = [];
   const timers = new Map(), intervals = new Map(), frames = [], guides = [], journeyStarts = [], renders = [], statuses = [];
@@ -20,7 +22,7 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
       classList: { toggle() {} }, addEventListener() {} });
     return elements.get(id);
   };
-  const view = { setSettings() {}, show(value) { screen = value; }, getScreen: () => screen,
+  const view = { setSettings(value) { configuredPreferences = value; }, show(value) { screen = value; }, getScreen: () => screen,
     setObstacleDetection() {}, setBusy() {}, setStatus(text) { statuses.push(text); }, announce() {}, setRoute(value) { routeInput = value; }, setBus() {},
     setStations() {}, setPaused() {}, render(value) { renders.push(value); }, getGuidance: () => "안내" };
   const player = { setRate: value => value, recordingStream: () => null, cancel() { voice = null; },
@@ -45,6 +47,10 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
         busBlob, busCapturedAtMs, resolve, reject }));
     },
     async boarding(_id, action, _event, number) {
+      if (action === "submit") {
+        routeSubmissions.push(number);
+        if (deferRouteSubmit) await new Promise(resolve => { releaseRouteSubmit = resolve; });
+      }
       if (action === "arrive") busState = { status: "awaiting_stop", arrival_event_id: (busState.arrival_event_id ?? 0) + 1,
         revision: busState.revision + 1, arrival_source: "user_confirmed", bus_number: null };
       else {
@@ -65,7 +71,8 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
   const context = {
     console, AbortController, Date: { now: () => 100000 + now },
     performance: { now: () => now, timeOrigin: 100000 },
-    localStorage: { getItem: () => null, setItem() {} },
+    localStorage: { getItem: () => storedPreferences && JSON.stringify(storedPreferences),
+      setItem(_key, value) { savedPreferences = JSON.parse(value); } },
     document: { hidden: false, getElementById: node, addEventListener() {} },
     setTimeout(callback, delay) { const id = ++nextTimer; timers.set(id, { callback, delay }); return id; },
     clearTimeout(id) { timers.delete(id); },
@@ -102,7 +109,17 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
     captured_at_ms: frame.capturedAtMs, inference_ms: 10,
     walking: { detections: [], event: {} }, traffic: { detections: [], event: {} },
     boarding: { ...busState }, stop_proximity: { nearby: false } });
-  return { action, frames, captures, startModes, guides, journeyStarts, renders, statuses, uploads, timeline,
+  return { action, frames, captures, startModes, guides, journeyStarts, renders, statuses, uploads, timeline, routeSubmissions,
+    async end() { await action("end"); await action("confirm-end"); },
+    submit: value => handlers.onSubmitRoute(value),
+    releaseSubmit() { releaseRouteSubmit?.(); },
+    async gps(state) { journeyCallbacks.onChange({ route, gps: { status: "active", selected: {
+      arrival: { first_arrival_state: state }, station: { station_name: "테스트 정류장" } }, candidates: [] }, ocr: {} }); await flush(); },
+    preferences: () => ({ configured: configuredPreferences, saved: savedPreferences }),
+    rate(value) { handlers.onRateChange(value); },
+    async previewTimer(delay) { const entry = [...timers].find(([, value]) => value.delay === delay);
+      if (!entry) return false; const [id, value] = entry; timers.delete(id); value.callback(); await flush(); return true; },
+    voice: () => voice,
     recordCounts: () => ({ starts: recordStarts, stops: recordStops, recording }), screen: () => screen,
     retryVisible: () => !node("retry-upload").hidden,
     resources: () => ({ cameraActive, sessionsStarted, sessionsStopped, timers: timers.size, intervals: intervals.size, route }),
@@ -119,8 +136,8 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
     },
     async respond(index, overrides = {}) { frames[index].resolve({ ...frameResult(frames[index]), ...overrides }); await flush(); },
     async finishVoice() { const done = voice; voice = null; done.onEnd(); await flush(); },
-    async draftRoute(value) { handlers.onSubmitRoute(value); await flush(); },
-    async confirmRoute(value) { handlers.onSubmitRoute(value); await flush(); await action("confirm-route"); },
+    async draftRoute(value) { await handlers.onSubmitRoute(value); await flush(); },
+    async confirmRoute(value) { await handlers.onSubmitRoute(value); await flush(); },
     async cameraEnd() { cameraActive = false; cameraEnded(); await flush(); },
     async recorderError() { recording = false; recordStops++; recorderEnded?.(new Error("인코더 오류")); await flush(); },
   };
@@ -135,7 +152,7 @@ test("정류장 수동 확인과 번호 확정은 서버 boarding을 거쳐 GPS/
   await app.confirmRoute("143");
   assert.equal(app.screen(), "search");
   assert.deepEqual(app.journeyStarts, ["143"]);
-  await app.action("end");
+  await app.end();
 });
 
 test("버스 노선 제출 후에도 보행 640px을 유지하고 버스 960px을 간격에 맞춰 전송한다", async () => {
@@ -161,7 +178,7 @@ test("버스 노선 제출 후에도 보행 640px을 유지하고 버스 960px�
   assert.deepEqual(app.captures, [640, 960, 640, 640, 960]);
   assert.equal(app.frames[2].busBlob.maxSide, 960);
   await app.respond(2); await third.pending;
-  await app.action("end");
+  await app.end();
 });
 
 test("시작 화면에서 출발 준비로 이동할 때 카메라나 추론 세션을 시작하지 않는다", async () => {
@@ -174,10 +191,10 @@ test("시작 화면에서 출발 준비로 이동할 때 카메라나 추론 세
   await app.action("start");
   assert.equal(app.screen(), "walk");
   assert.equal(app.resources().sessionsStarted, 1);
-  await app.action("end");
+  await app.end();
 });
 
-test("안내 종료는 카메라와 세션을 정리한 뒤 마무리를 표시하고 처음으로 돌아간다", async () => {
+test("종료 확인 후에만 카메라와 세션을 정리하고 시작 화면으로 돌아간다", async () => {
   const app = await harness();
   await app.action("enter");
   await app.action("start");
@@ -185,17 +202,20 @@ test("안내 종료는 카메라와 세션을 정리한 뒤 마무리를 표시�
   await app.finishVoice();
   await app.confirmRoute("143");
   await app.action("end");
-  assert.equal(app.screen(), "finish");
+  assert.equal(app.screen(), "end");
+  assert.equal(app.resources().cameraActive, true);
+  assert.equal(app.resources().sessionsStopped, 0);
+  await app.action("confirm-end");
+  assert.equal(app.screen(), "welcome");
   assert.deepEqual(app.resources(), { cameraActive: false, sessionsStarted: 1, sessionsStopped: 1,
     timers: 0, intervals: 0, route: null });
-  await app.action("finish-home");
   assert.equal(app.screen(), "welcome");
   assert.equal(app.resources().cameraActive, false);
   await app.action("enter");
   await app.action("start");
   assert.equal(app.screen(), "walk");
   assert.equal(app.resources().sessionsStarted, 2);
-  await app.action("end");
+  await app.end();
 });
 
 test("이동 안내에서 이전을 누르면 마무리 대신 출발 준비로 돌아간다", async () => {
@@ -230,7 +250,7 @@ test("버스 노선 안내를 일시중지한 뒤 이전을 누르면 재개하�
   assert.equal(app.journeyPaused(), false);
   assert.equal(app.resources().cameraActive, true, "노선을 다시 고르는 동안 세션을 유지한다");
   assert.equal(app.resources().sessionsStopped, 0);
-  await app.action("end");
+  await app.end();
 });
 
 test("새 정류장 도착에서는 이전 도착 때 입력한 버스 번호를 지운다", async () => {
@@ -239,17 +259,18 @@ test("새 정류장 도착에서는 이전 도착 때 입력한 버스 번호를
   await app.action("manual-arrival");
   await app.finishVoice();
   await app.draftRoute("143");
-  assert.equal(app.screen(), "confirm");
+  assert.equal(app.screen(), "search");
   await app.action("back");
+  await app.finishVoice();
   assert.equal(app.screen(), "input");
-  assert.equal(app.routeInput(), "143", "번호 확인에서 돌아오면 입력한 번호를 유지한다");
+  assert.equal(app.routeInput(), "143", "번호를 다시 고르면 입력한 번호를 유지한다");
   await app.action("back");
   assert.equal(app.screen(), "walk");
   await app.action("manual-arrival");
   await app.finishVoice();
   assert.equal(app.screen(), "input");
   assert.equal(app.routeInput(), "", "새 도착에서는 입력란을 비운다");
-  await app.action("end");
+  await app.end();
 });
 
 test("빠른 일시중지·재개 중 응답한 이전 프레임은 순번만 반영하고 안내에 재사용하지 않는다", async () => {
@@ -269,7 +290,7 @@ test("빠른 일시중지·재개 중 응답한 이전 프레임은 순번만 �
   await app.respond(1);
   await next.pending;
   assert.equal(app.guides[0].accepted.length, 1);
-  await app.action("end");
+  await app.end();
 });
 
 test("카메라 종료 후 GPS만 계속할 때도 일시중지 버튼으로 GPS 안내를 멈출 수 있다", async () => {
@@ -282,7 +303,7 @@ test("카메라 종료 후 GPS만 계속할 때도 일시중지 버튼으로 GPS
   assert.equal(app.journeyPaused(), false, "카메라 종료와 GPS 안내는 독립적이다");
   await app.action("pause");
   assert.equal(app.journeyPaused(), true, "사용자 일시중지는 GPS도 멈춘다");
-  await app.action("end");
+  await app.end();
 });
 
 test("녹화는 기본 꺼짐이며 선택한 두 구간을 세션 종료 후 각각 업로드한다", async () => {
@@ -304,7 +325,7 @@ test("녹화는 기본 꺼짐이며 선택한 두 구간을 세션 종료 후 �
   assert.deepEqual(app.recordCounts(), { starts: 2, stops: 2, recording: false });
   assert.equal(app.uploads.length, 0, "추론 중에는 영상을 전송하지 않는다");
 
-  await app.action("end");
+  await app.end();
   assert.deepEqual(app.timeline, ["stop", "upload:1", "upload:2"]);
   assert.deepEqual(app.uploads.map(clip => clip.index), [1, 2]);
   assert.deepEqual(JSON.parse(JSON.stringify(app.uploads.map(clip => clip.frames.map(frame => frame.frame_id)))),
@@ -329,7 +350,7 @@ test("30초 자동 종료 뒤에도 새 구간을 기록할 수 있고 한 세�
   await app.action("record");
   assert.deepEqual(app.recordCounts(), { starts: 5, stops: 5, recording: false });
   assert.match(app.statuses.at(-1), /최대 5개/);
-  await app.action("end");
+  await app.end();
 });
 
 test("일시중지와 카메라 종료는 현재 영상 구간을 끝내며 재개 시 새 구간을 쓴다", async () => {
@@ -344,13 +365,13 @@ test("일시중지와 카메라 종료는 현재 영상 구간을 끝내며 재�
   app.setNow(2200);
   await app.cameraEnd();
   assert.deepEqual(app.recordCounts(), { starts: 2, stops: 2, recording: false });
-  await app.action("end");
+  await app.end();
 });
 
 test("영상이 없어도 종료 요청 실패를 화면에서 다시 시도할 수 있다", async () => {
   const app = await harness({ stopFailsOnce: true });
   await app.action("start");
-  await app.action("end");
+  await app.end();
   assert.equal(app.resources().sessionsStopped, 0);
   assert.equal(app.retryVisible(), true);
   await app.action("retry-upload");
@@ -366,7 +387,7 @@ test("영상 변환 실패가 업로드 성공으로 오인되지 않고 사용�
   await app.respond(0); await frame.pending;
   app.setNow(1200);
   await app.action("record");
-  await app.action("end");
+  await app.end();
   assert.equal(app.uploads.length, 1);
   assert.match(app.statuses.at(-1), /영상 결과 생성 실패/);
 });
@@ -379,7 +400,7 @@ test("complete 응답 손실 뒤 재시도는 저장 상태를 조회하고 같�
   await app.respond(0); await frame.pending;
   app.setNow(1200);
   await app.action("record");
-  await app.action("end");
+  await app.end();
   assert.equal(app.retryVisible(), true);
   await app.action("retry-upload");
   assert.deepEqual(app.timeline, ["stop", "upload:1"]);
@@ -397,7 +418,7 @@ test("브라우저 녹화기가 자체 종료되면 현재 구간을 즉시 버�
   assert.equal(app.recordCounts().starts, 2, "고장난 구간을 계속 붙잡고 있지 않는다");
   app.setNow(1200);
   await app.action("record");
-  await app.action("end");
+  await app.end();
 });
 
 test("정류장 도착 후 늦은 장애물 결과와 재개를 차단하고 취소하면 다시 안내한다", async () => {
@@ -425,5 +446,100 @@ test("정류장 도착 후 늦은 장애물 결과와 재개를 차단하고 취
   await app.capture();
   await app.respond(1);
   assert.equal(walking.accepted.length, 1);
+  await app.end();
+});
+
+
+test("안내 중 설정을 오가도 세션을 유지하고 최신 버스 상태로 돌아간다", async () => {
+  const app = await harness();
+  await app.action("start");
+  await app.action("settings-type");
+  assert.equal(app.screen(), "type");
+  await app.action("settings-home");
+  assert.equal(app.screen(), "home");
+  await app.action("start");
+  assert.equal(app.screen(), "walk");
+  assert.equal(app.resources().sessionsStarted, 1);
+  await app.action("manual-arrival"); await app.finishVoice();
+  await app.confirmRoute("143");
+  await app.action("settings-type");
+  await app.gps("arriving");
+  assert.equal(app.screen(), "type", "GPS 갱신이 설정 화면을 닫지 않는다");
+  await app.action("start");
+  assert.equal(app.screen(), "approach");
+  assert.equal(app.resources().sessionsStarted, 1);
+  await app.end();
+});
+
+test("설정 또는 종료 확인 중 완료된 정류장 안내는 복귀 때 번호 입력으로 연결한다", async () => {
+  for (const destination of ["settings-type", "end"]) {
+    const app = await harness();
+    await app.action("start");
+    await app.action("manual-arrival");
+    await app.action(destination);
+    const screen = app.screen();
+    await app.finishVoice();
+    assert.equal(app.screen(), screen, "정류장 상태 갱신이 사용자가 연 화면을 덮지 않는다");
+    await app.action(destination === "end" ? "cancel-end" : "start");
+    assert.equal(app.screen(), "input");
+    assert.equal(app.resources().sessionsStarted, 1);
+    await app.end();
+  }
+});
+
+test("종료 확인 중 GPS 갱신과 일시중지 상태를 유지하고 계속 안내로 복귀한다", async () => {
+  const app = await harness();
+  await app.action("start"); await app.action("manual-arrival"); await app.finishVoice();
+  await app.confirmRoute("143"); await app.action("pause");
   await app.action("end");
+  await app.gps("arrived");
+  assert.equal(app.screen(), "end");
+  assert.equal(app.journeyPaused(), true);
+  await app.action("cancel-end");
+  assert.equal(app.screen(), "arrived");
+  assert.equal(app.journeyPaused(), true);
+  assert.equal(app.resources().sessionsStopped, 0);
+  await app.action("pause"); await app.end();
+});
+
+test("번호 입력은 한 번 제출하며 종료 뒤 완료된 제출 응답으로 안내를 재시작하지 않는다", async () => {
+  const app = await harness({ deferRouteSubmit: true });
+  await app.action("start");
+  await app.submit("143");
+  assert.deepEqual(app.routeSubmissions, [], "정류장 번호 입력 상태에서만 제출한다");
+  await app.action("manual-arrival"); await app.finishVoice();
+  const pending = app.submit(" n26번 ");
+  await app.submit("271");
+  assert.deepEqual(app.routeSubmissions, ["N26"]);
+  await app.end();
+  app.releaseSubmit(); await pending; await flush();
+  assert.equal(app.screen(), "welcome");
+  assert.deepEqual(app.journeyStarts, []);
+  assert.equal(app.resources().sessionsStarted, 1);
+  assert.equal(app.resources().sessionsStopped, 1);
+});
+
+test("글자 크기 최대 저장값을 이전 2배에서 새 시안 1.5배로 이어받는다", async () => {
+  const app = await harness({ storedPreferences: { rate: 1.5, textScale: 2 } });
+  assert.equal(app.preferences().configured.textScale, 1.5);
+  assert.equal(app.preferences().configured.rate, 1.5);
+  const previous = await harness({ storedPreferences: { rate: 1.25, textScale: 1.2 } });
+  assert.equal(previous.preferences().configured.rate, 1, "이전 속도는 새 선택지 중 가까운 값으로 이어받는다");
+});
+
+test("음성 속도 선택은 두 번 미리 듣고 화면 이동이나 안내 시작 때 취소한다", async () => {
+  const app = await harness();
+  await app.action("enter"); app.rate(1.5);
+  assert.equal(await app.previewTimer(220), true);
+  assert.equal(app.voice().text, "왼쪽으로 한 걸음");
+  await app.finishVoice();
+  assert.equal(await app.previewTimer(360), true);
+  assert.equal(app.voice().text, "왼쪽으로 한 걸음");
+  await app.finishVoice();
+  assert.equal(await app.previewTimer(360), false);
+  app.rate(2); await app.action("settings-type");
+  assert.equal(await app.previewTimer(220), false);
+  await app.action("start"); await app.action("settings-home"); app.rate(1);
+  assert.equal(await app.previewTimer(220), false, "이동 중에는 자동 안내를 속도 미리듣기로 끊지 않는다");
+  await app.end();
 });

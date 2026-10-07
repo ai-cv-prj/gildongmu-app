@@ -26,7 +26,7 @@
     ["보행로 이탈 왼쪽 이동!", "walkway-exit-left"],
   ]);
   for (const [text, name] of [...CLIPS]) CLIPS.set(`모의 신호. ${text}`, `mock-${name}`);
-  const SPEECH_TEXT = "정류장 근처입니다. 탑승할 버스 번호를 입력해 주세요. 탑승하지 않으면 취소를 누르세요.";
+  const SPEECH_TEXT = "정류장 근처입니다. 탑승할 버스 번호를 입력해 주세요. 보행 안내를 계속하려면 이전 화면으로 버튼을 누르세요.";
   const source = name => `/audio/${name}.mp3${name.startsWith("walkway-")
     ? "?v=walkway-exit-v3" : name.startsWith("walking-")
     ? "?v=walking-action-v9" : name.startsWith("crosswalk-")

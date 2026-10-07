@@ -1,6 +1,6 @@
 /** Stop playback completion, bus input and cancellation share one session. */
 (() => {
-  const PROMPT = "정류장 근처입니다. 탑승할 버스 번호를 입력해 주세요. 탑승하지 않으면 취소를 누르세요.";
+  const PROMPT = "정류장 근처입니다. 탑승할 버스 번호를 입력해 주세요. 보행 안내를 계속하려면 이전 화면으로 버튼을 누르세요.";
 
   function create({ api, coordinator, onChange = () => {}, onError = () => {},
     now = () => performance.now() }) {

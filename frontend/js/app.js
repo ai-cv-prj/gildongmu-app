@@ -8,6 +8,10 @@
   let frameId = 0, timer, tick, request, frameTask;
   let boardingState = null, activeRoute = null, draftRoute = "", draftEventId = null, lastResult = null;
   let lastBusCaptureAtMs = null, lastBusResultLoggedFrameId = null;
+  let busScreen = "search", beforeEnd = "walk", submittingRoute = false, routeSubmitToken = 0;
+  let ratePreviewTimer = null, ratePreviewToken = 0;
+  const SETTINGS_SCREENS = new Set(["home", "type"]);
+  const temporaryScreen = () => SETTINGS_SCREENS.has(view.getScreen()) || view.getScreen() === "end";
   let timingQueue = [], eventQueue = [], flushTask = null, logTimer;
   const MAX_CLIPS = 5, MAX_CLIP_MS = 30000, MAX_CLIP_FRAMES = 300;
   const MAX_CLIP_FRAME_BYTES = 32 * 1024 * 1024, MAX_PENDING_BYTES = 120 * 1024 * 1024;
@@ -20,12 +24,13 @@
   let preferences = { rate: 1, textScale: 1 };
   try {
     const stored = JSON.parse(localStorage.getItem(preferenceKey) || "{}");
-    if (Number.isFinite(stored.rate)) preferences.rate = Math.max(.75, Math.min(2, stored.rate));
-    if ([1, 1.2, 2].includes(stored.textScale)) preferences.textScale = stored.textScale;
+    if (Number.isFinite(stored.rate)) preferences.rate = [1, 1.5, 2].reduce((nearest, rate) =>
+      Math.abs(rate - stored.rate) < Math.abs(nearest - stored.rate) ? rate : nearest);
+    if ([1, 1.2, 1.5, 2].includes(stored.textScale)) preferences.textScale = stored.textScale === 2 ? 1.5 : stored.textScale;
   } catch (_) { /* Storage may be disabled. */ }
   const view = GView.create({ onAction: action => act(action),
-    onSubmitRoute: confirmDraft, onStationChange: key => journey?.selectStop(key),
-    onRateChange: rate => { preferences.rate = player?.setRate(rate) ?? rate; savePreferences(); },
+    onSubmitRoute: submitRoute, onSpeak: text => speak(text), onStationChange: key => journey?.selectStop(key),
+    onRateChange: rate => { preferences.rate = player?.setRate(rate) ?? rate; savePreferences(); previewRate(); },
     onTextScaleChange: textScale => { preferences.textScale = textScale; savePreferences(); } });
   view.setSettings(preferences); view.show("welcome", { focus: false }); view.setBusy(true);
 
@@ -218,22 +223,63 @@
       status(`${pendingCheckSessionId ? "영상 저장 상태 확인" : "영상 전송"} 실패: ${error.message}. 다시 시도 버튼을 눌러 주세요.`);
     } finally { uploading = false; controls(); }
   }
+  function cancelRatePreview() {
+    ratePreviewToken++;
+    clearTimeout(ratePreviewTimer); ratePreviewTimer = null;
+    coordinator?.clear("rate-preview");
+  }
+  function previewRate() {
+    cancelRatePreview();
+    if (!ready || running || view.getScreen() !== "home") return;
+    const token = ratePreviewToken;
+    function play(index) {
+      ratePreviewTimer = null;
+      if (token !== ratePreviewToken || running || view.getScreen() !== "home") return;
+      coordinator.start();
+      coordinator.clear("interface");
+      coordinator.request({ source: "rate-preview", priority: coordinator.PRIORITY.boarding,
+        text: "왼쪽으로 한 걸음", dynamic: true, validUntil: performance.now() + 10000,
+        onComplete() {
+          if (index === 0 && token === ratePreviewToken && !running && view.getScreen() === "home")
+            ratePreviewTimer = setTimeout(() => play(1), 360);
+        } });
+    }
+    ratePreviewTimer = setTimeout(() => play(0), 220);
+  }
   function speak(text) {
     if (!ready || !text) return;
+    cancelRatePreview();
+    coordinator.clear("interface");
     player.recordingStream();
     if (!running) coordinator.start();
     coordinator.request({ source: "interface", priority: coordinator.PRIORITY.boarding, text,
       dynamic: true, validUntil: performance.now() + 10000 });
   }
   const normalizeRoute = value => String(value || "").trim().replace(/\s+/g, "").replace(/번$/, "").toUpperCase();
-  function confirmDraft(value) {
+  async function submitRoute(value) {
+    // The keypad and speech input share one submission path. A late recognizer
+    // or duplicate tap must not submit into another screen, stop or session.
+    if (!ready || !running || starting || stopping || paused || submittingRoute ||
+        boardingState?.busy || boardingState?.status !== "pending" || view.getScreen() !== "input") return;
     const route = normalizeRoute(value);
     if (!/^(?:[가-힣]+|[A-Z]+)?[0-9]+[A-Z]?(?:-[0-9]+)?$/.test(route) || route.length > 20) {
       status("143, N26, 마포07처럼 노선 번호를 입력해 주세요.");
       view.announce("버스 번호 형식을 확인해 주세요."); return;
     }
-    draftRoute = route; draftEventId = boardingState?.arrival_event_id ?? null;
-    view.setRoute(route); view.show("confirm"); speak(`${route}번이 맞습니까?`);
+    const token = ++routeSubmitToken;
+    submittingRoute = true;
+    draftRoute = route; draftEventId = boardingState.arrival_event_id;
+    view.setRoute(route);
+    try { await boarding.submit(route); }
+    finally { if (token === routeSubmitToken) submittingRoute = false; }
+  }
+  function currentGuidanceScreen() {
+    if (activeRoute) return busScreen;
+    return boardingState?.status === "pending" ? "input" : "walk";
+  }
+  function returnToGuidance() {
+    view.show(currentGuidanceScreen());
+    view.setPaused(paused);
   }
   const obstaclesEnabled = state => !["awaiting_stop", "pending", "submitted"].includes(state?.status);
   function boardingChanged(next) {
@@ -248,7 +294,9 @@
       const route = normalizeRoute(next.bus_number);
       if (route !== activeRoute) {
         lastBusCaptureAtMs = null;
-        activeRoute = route; view.setRoute(route); view.show("search"); journey.start(route);
+        activeRoute = route; busScreen = "search"; view.setRoute(route);
+        if (!temporaryScreen()) view.show("search");
+        journey.start(route);
         if (paused) journey.pause();
       }
     } else {
@@ -256,10 +304,12 @@
       if (next.status === "pending" && previous?.status !== "pending") {
         // 새 정류장 도착에서는 이전 도착 때 입력한 번호를 지우고, 노선 변경(reopen)에서만 이어서 보여 준다.
         if (next.arrival_event_id !== draftEventId) { draftRoute = ""; draftEventId = null; }
-        view.setRoute(draftRoute); view.show("input");
+        view.setRoute(draftRoute);
+        if (!temporaryScreen()) view.show("input");
       } else if (next.status === "awaiting_stop") status("멈춤 안내가 끝나면 탑승할 버스 번호를 입력해 주세요.");
       else if (next.status === "cancelled" && previous?.status !== "cancelled") {
-        view.show("walk"); status("버스 찾기를 취소했습니다. 보행 안내를 계속합니다.");
+        if (!temporaryScreen()) view.show("walk");
+        status("버스 찾기를 취소했습니다. 보행 안내를 계속합니다.");
       }
     }
     controls();
@@ -280,7 +330,8 @@
     view.setStations((snapshot.gps?.candidates || []).map(match => ({ id: match.key,
       name: match.station?.station_name, distance_m: match.station?.distance_m,
       direction: match.arrival?.direction || match.direction })), selected?.key);
-    if (!["input", "confirm", "home", "welcome", "finish"].includes(view.getScreen())) view.show(state, { focus: false });
+    busScreen = state;
+    if (!["input", "confirm", "home", "type", "end", "welcome", "finish"].includes(view.getScreen())) view.show(state, { focus: false });
     view.setPaused(paused);
   }
   function showResult(result, capturedAt) {
@@ -462,6 +513,7 @@
   async function stopTest({ finish = false } = {}) {
     if (stopping || (!running && !starting)) return;
     stopping = true; running = false; starting = false; paused = false; automaticPause = false; ++generation;
+    cancelRatePreview(); ++routeSubmitToken; submittingRoute = false;
     clearTimeout(timer); clearInterval(tick); clearInterval(logTimer);
     journey.stop(); boarding.stop(); walking.stop(); traffic.stop(); coordinator.stop();
     const id = sessionId;
@@ -500,17 +552,39 @@
     }
     sessionId = null; activeRoute = null; lastBusCaptureAtMs = null;
     lastBusResultLoggedFrameId = null; lastResult = null; stopping = false;
-    view.setRoute(""); view.show(finish && id ? "finish" : "home"); view.setPaused(false); controls(); status(message);
+    view.setRoute(""); view.show(finish ? "welcome" : "home"); view.setPaused(false); controls(); status(message);
     if (pendingUploads.length && !pendingStopSessionId) await uploadQueuedClips();
     else if (pendingStopSessionId) status(`${message} '영상 전송 다시 시도'로 종료 확인을 재시도할 수 있습니다.`);
   }
   async function act(action) {
     if (!ready) return;
+    cancelRatePreview();
     if (action === "retry-upload" && !running && !starting && !stopping) return uploadQueuedClips();
     if (action === "enter" && !running && !starting && !stopping) return view.show("home");
     if (action === "finish-home" && !running && !starting && !stopping) return view.show("welcome");
-    if (action === "start") return startTest();
-    if (action === "end") return stopTest({ finish: true });
+    if (action === "settings-type" || action === "settings-home") {
+      if (starting || stopping) return;
+      view.show(action === "settings-type" ? "type" : "home");
+      return;
+    }
+    if (action === "start") {
+      if (running && SETTINGS_SCREENS.has(view.getScreen())) {
+        if (paused) { automaticPause = false; await resumeTest(); }
+        if (running) returnToGuidance();
+        return;
+      }
+      return startTest();
+    }
+    if (action === "end" && (running || starting) && !stopping) {
+      if (view.getScreen() !== "end") beforeEnd = view.getScreen();
+      view.show("end"); return;
+    }
+    if (action === "cancel-end" && view.getScreen() === "end" && !stopping) {
+      if (SETTINGS_SCREENS.has(beforeEnd)) view.show(beforeEnd);
+      else returnToGuidance();
+      return;
+    }
+    if (action === "confirm-end" && view.getScreen() === "end") return stopTest({ finish: true });
     if (action === "back" && starting) return stopTest();
     if (action === "sample") return speak("길동무가 함께합니다. 선택한 속도로 안내해 드릴게요.");
     if (action === "speech-start") { coordinator.stop(); return; }
@@ -526,16 +600,16 @@
       if (boardingState?.status === "pending") return view.show("input");
       await boarding.arrive(); boarding.tick();
     } else if (action === "confirm-route") {
-      if (draftRoute) await boarding.submit(draftRoute);
+      if (draftRoute) await submitRoute(draftRoute);
     } else if (action === "edit-route") {
-      if (boardingState?.status === "submitted") await boarding.reopen();
+      if (boardingState?.status === "submitted") { await boarding.reopen(); boarding.tick(); }
       else { view.setRoute(draftRoute); view.show("input"); }
     } else if (action === "back") {
       if (view.getScreen() === "confirm") { view.show("input"); return; }
       if (activeRoute) {
         // 노선 입력 화면의 확인은 일시중지 중에 막히므로 안내를 재개한 뒤 다시 연다.
         if (paused) await resumeTest();
-        if (!paused) await boarding.reopen();
+        if (!paused) { await boarding.reopen(); boarding.tick(); }
         return;
       }
       if (["pending", "awaiting_stop"].includes(boardingState?.status)) await boarding.cancel();
@@ -553,7 +627,10 @@
       source: event.source, action: event.action ?? null, occurred_at_ms: Math.round(performance.timeOrigin + event.at_ms),
       audio_delay_ms: event.status === "started" ? Math.max(0, Math.round(performance.timeOrigin + event.at_ms - event.captured_at_ms)) : null }) });
     walking = GGuidance.create({ coordinator }); traffic = GGuidance.create({ coordinator });
-    boarding = GBoarding.create({ api: GApi, coordinator, onChange: boardingChanged, onError: status });
+    boarding = GBoarding.create({ api: GApi, coordinator, onChange: boardingChanged, onError: message => {
+      status(message);
+      if (view.getScreen() === "input") { view.setRouteError?.(message); speak(message); }
+    } });
     journey = GBusJourney.create({ api: GApi, coordinator, onChange: busChanged, onStatus: status, onEvent: queueEvent });
     ready = true; controls(); status("준비되었습니다. 시작하기를 눌러 주세요.");
   } catch (error) { status(`${error.message} 서버를 확인한 뒤 새로고침해 주세요.`); return; }
@@ -569,10 +646,12 @@
       : "카메라가 종료되었습니다. 종료 후 다시 시작해 주세요.");
   });
   document.addEventListener("visibilitychange", () => {
+    if (document.hidden) cancelRatePreview();
     if (document.hidden && running && !paused) { automaticPause = true; pauseTest(); }
     else if (!document.hidden && automaticPause) { automaticPause = false; resumeTest(); }
   });
   window.addEventListener("pagehide", event => {
+    cancelRatePreview();
     if (event.persisted) { automaticPause = true; pauseTest(); return; }
     const finalizingClip = finishClip("페이지가 닫혀 영상 기록을 마쳤습니다.");
     const id = sessionId; running = false; ++generation; request?.abort();
