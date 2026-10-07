@@ -22,6 +22,8 @@
   let bufferedBytes = 0, uploadSessionId = null, pendingStopSessionId = null;
   let pendingUploads = [], uploadTotalClips = 0, uploading = false;
   let pendingCheckSessionId = null, expectedClipIds = [];
+  const clipStore = window.GClipStore?.create();
+  let localClipRefresh = 0;
   const preferenceKey = "gildongmu-accessibility-v1";
   let preferences = { rate: 1, textScale: 1 };
   try {
@@ -59,6 +61,37 @@
   }
   window.GFetchDiagnostics?.subscribe(summary => { fetchErrorSummary = summary; updateErrorLogControls(); });
   window.GDiagnostics?.subscribe?.(summary => { appErrorSummary = summary; updateErrorLogControls(); });
+
+  async function refreshLocalClips() {
+    if (!clipStore) return;
+    const version = ++localClipRefresh;
+    const records = await clipStore.list();
+    if (version === localClipRefresh) view.setLocalClips?.(records);
+  }
+  async function preserveClip(id, clip) {
+    if (!clipStore || !id) return;
+    try {
+      const result = await clipStore.save(id, clip);
+      if (!result.stored) {
+        diagnostic("clip_preserve_failed", { clip_id: clip.index, error_message: result.error });
+        status("기기에 영상을 보관하지 못했습니다. 페이지를 닫기 전에 선택한 영상을 저장해 주세요.");
+      }
+    } catch (error) {
+      diagnostic("clip_preserve_failed", { clip_id: clip.index, ...errorDetails(error) });
+      status(`기기 영상 보관 실패: ${error.message}`);
+    }
+    await refreshLocalClips();
+  }
+  async function clearReadyLocalClips(id, serverClips) {
+    if (!clipStore || !id) return;
+    for (const item of serverClips) {
+      if (item.state !== "ready") continue;
+      try { await clipStore.remove(id, clipIndex(item)); }
+      catch (error) { diagnostic("clip_cleanup_failed", errorDetails(error)); }
+    }
+    await refreshLocalClips();
+  }
+  void refreshLocalClips();
 
   function savePreferences() {
     try { localStorage.setItem(preferenceKey, JSON.stringify(preferences)); } catch (_) {}
@@ -228,6 +261,7 @@
         clips.push(clip);
         diagnostic("clip_buffered", { clip_id: clip.index });
         status(`${reason} ${clips.length}/${MAX_CLIPS}개를 선택했습니다. 테스트 종료 후 저장합니다.`);
+        await preserveClip(sessionId, clip);
         return clip;
       } catch (error) {
         diagnostic("clip_discarded", { clip_id: clip.index, reason, ...errorDetails(error) });
@@ -274,6 +308,7 @@
     if (!pendingCheckSessionId || !expectedClipIds.length) return;
     for (let attempt = 0; attempt < 12; attempt++) {
       const report = await GApi.clips(pendingCheckSessionId);
+      await clearReadyLocalClips(pendingCheckSessionId, report.clips || []);
       const rows = new Map((report.clips || []).map(item => [clipIndex(item), item]));
       const selected = expectedClipIds.map(id => rows.get(id));
       diagnostic("clip_status", { session_id: pendingCheckSessionId, attempt: attempt + 1,
@@ -321,6 +356,7 @@
           sum + frame.image.size + frame.mask_png.length + frame.overlay_png.length, 0);
         bufferedBytes -= clip.frame_bytes - frameBytes;
         clip.frame_bytes = frameBytes;
+        await preserveClip(uploadSessionId, clip);
         if (!clip.frames.length) {
           // A discarded clip has no server manifest and must not remain in the completion wait list.
           expectedClipIds = expectedClipIds.filter(id => id !== clip.index);
@@ -332,6 +368,7 @@
         }
         uploadStage = "check_before_upload";
         const stored = (await GApi.clips(uploadSessionId)).clips?.find(item => clipIndex(item) === clip.index);
+        if (stored?.state === "ready") await clearReadyLocalClips(uploadSessionId, [stored]);
         if (["pending", "rendering", "ready", "failed", "no_frames"].includes(stored?.state)) {
           bufferedBytes -= clip.blob.size + clip.frame_bytes;
           pendingUploads.shift();
@@ -772,6 +809,7 @@
       await frameTask;
     }
     frameTask = null;
+    for (const clip of clips) await preserveClip(id, clip);
     // Finish an explicit metadata save before closing the same server session.
     if (testSettingsSaveTask) await testSettingsSaveTask;
     const unsavedTestSettings = testSettingsChanged();
@@ -813,6 +851,14 @@
         else window.GFetchDiagnostics?.download();
       }
       catch (_) { status("오류 로그 파일을 저장하지 못했습니다. 다시 시도해 주세요."); }
+      return;
+    }
+    if (action === "save-local-clip") {
+      try { await clipStore?.download(view.readLocalClipKey?.()); }
+      catch (error) {
+        diagnostic("clip_download_failed", errorDetails(error));
+        status(`보관한 영상을 저장하지 못했습니다: ${error.message}`);
+      }
       return;
     }
     if (!ready) return;
