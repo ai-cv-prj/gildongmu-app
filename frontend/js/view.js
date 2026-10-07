@@ -120,7 +120,7 @@
     function updateControls() {
       all("[data-action], [data-mic], [data-rate], [data-size], #route-form button").forEach(element => {
         const action = element.dataset.action;
-        const canCancel = ["end", "back", "cancel-end", "confirm-end"].includes(action);
+        const canCancel = ["end", "back", "cancel-end", "confirm-end", "save-error-log"].includes(action);
         element.disabled = (busy && !canCancel) || (paused && ["manual-arrival", "locate", "open-keypad"].includes(action)) ||
           (paused && (element.dataset.mic || element.type === "submit"));
       });

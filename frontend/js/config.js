@@ -9,9 +9,11 @@ window.GConfig = (() => {
   // 서버의 공개 설정 준비
   /** 설정 조회 실패 시 카메라를 시작하지 않고 오류를 호출자에게 전달한다. */
   async function load() {
-    const response = await fetch("/api/config", { cache: "no-store" });
+    const response = await (window.GFetchDiagnostics
+      ? window.GFetchDiagnostics.fetch("/api/config", { cache: "no-store" })
+      : fetch("/api/config", { cache: "no-store" }));
     if (!response.ok) throw new Error(`설정을 불러올 수 없습니다 (${response.status}).`);
-    const value = await response.json();
+    const value = await (window.GFetchDiagnostics ? window.GFetchDiagnostics.json(response) : response.json());
     if (!value.camera || !value.recording || !value.audio) {
       throw new Error("서버 설정이 올바르지 않습니다.");
     }
