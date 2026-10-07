@@ -48,6 +48,8 @@ class TrafficVoiceTests(unittest.TestCase):
         self.observe(voice, "red", [start + .6, start + .8, start + 1], first_frame=4)
         self.assertEqual([name for _, name in voice.events],
                          ["green-initial-wait.mp3", "red-changed.mp3"])
+        self.assertAlmostEqual(voice.events[0][0], start + .4)
+        self.assertAlmostEqual(voice.events[1][0], start + 1)
 
     # 짧은 후보와 대상 변경 확인
     def test_stability_and_target_change(self):
