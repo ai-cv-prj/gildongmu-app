@@ -153,7 +153,7 @@ class WalkingVoiceTests(unittest.TestCase):
     # 같은 행동의 none 후 재생 기준 확인
     def test_same_action_replay_requires_configured_none_duration(self):
         """
-        좌·우·직진은 3초, 정지는 0.5초 none 후에만 같은 음성을 재생한다.
+        좌·우·직진은 3초, 정지는 1초 none 후에만 같은 음성을 재생한다.
         """
         messages = {
             "left": ("왼쪽으로 한 걸음", "walking-move-left-one.mp3"),

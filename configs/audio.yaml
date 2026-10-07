@@ -30,7 +30,7 @@ audio:
     walking_straight_confirm_ms: 3000
     walking_from_stop_confirm_ms: 500
     walking_repeat_none_ms: 3000
-    walking_stop_repeat_none_ms: 500
+    walking_stop_repeat_none_ms: 1000
     walking_missing_hold_ms: 800
   # 영상과 서버 응답 기반 실시간 앱의 기존 관측 허용 간격을 각각 유지한다.
   video_max_gap_ms: 1000
