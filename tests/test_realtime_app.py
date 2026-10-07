@@ -49,8 +49,8 @@ class FakeModels:
             "roi": {"corridor_polygon": [[0.2, 0.3], [0.8, 0.3], [0.8, 1], [0.2, 1]],
                     "immediate_polygon": [[0.2, 0.7], [0.8, 0.7], [0.8, 1], [0.2, 1]]},
             "camera_view": {"status": "clear"},
-            "last_action": "straight",
-            "voice_text": "천천히 가세요.",
+            "last_action": "left",
+            "voice_text": "왼쪽으로 한 걸음",
             "stop_proximity": {"status": "candidate", "nearby": False,
                                "newly_nearby": False, "observations": 1,
                                "required_observations": 3, "confidence": 0.7,
@@ -155,7 +155,7 @@ def test_client_timing_is_saved_with_frame_and_audio_events(tmp_path):
          "overlay_delay_ms": 152, "status": "drawn"},
         {"kind": "audio", "frame_id": 1, "captured_at_ms": 1000,
          "source": "walking", "status": "started", "audio_delay_ms": 190,
-         "action": "straight"},
+         "action": "left"},
     ]
     assert route(session_id, ClientTimingRequest(records=records)) == {"saved": 3}
     with pytest.raises(ValidationError):
@@ -165,7 +165,7 @@ def test_client_timing_is_saved_with_frame_and_audio_events(tmp_path):
     assert saved[0]["round_trip_ms"] == 140
     assert saved[1]["overlay_delay_ms"] == 152
     assert saved[2]["audio_delay_ms"] == 190
-    assert saved[2]["action"] == "straight"
+    assert saved[2]["action"] == "left"
     assert all(record["event_group"] == "client_timing" for record in saved)
     manager.stop(session_id)
     with pytest.raises(HTTPException) as error:
@@ -204,8 +204,8 @@ def test_mobile_session_flow(tmp_path, recording_fps):
                          files={"image": ("frame.jpg", io.BytesIO(jpeg.tobytes()), "image/jpeg")})
     assert result.status_code == 200
     body = result.json()
-    assert body["walking"]["event"]["voice_text"] == "천천히 가세요."
-    assert body["walking"]["event"]["last_action"] == "straight"
+    assert body["walking"]["event"]["voice_text"] == "왼쪽으로 한 걸음"
+    assert body["walking"]["event"]["last_action"] == "left"
     assert body["traffic"]["event"]["signal_state"] == "red"
     assert body["crosswalk"]["event"]["status"] == "crossing"
     assert body["stop_proximity"]["status"] == "candidate"

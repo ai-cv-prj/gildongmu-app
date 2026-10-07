@@ -118,7 +118,6 @@ class RealtimeInference:
             self.voice.observe(
                 risk, width, captured_at_ms / 1000,
                 crossing_active=crosswalk["crossing_active"],
-                signal=signal,
                 crosswalk_status=crosswalk["status"],
             )
         # 영상 출력과 마찬가지로 일반 장애물 모델의 신호등 박스는 중복 표시하지 않는다.

@@ -103,7 +103,6 @@
 
     function speak(text, validUntil = now() + settings.default_validity_ms,
                    { onEnd = () => {}, onStart = () => {}, onFailure = () => {}, dynamic = false } = {}) {
-      if (typeof text === "string" && text.includes("천천히 가세요")) return false;
       const synthesized = text === SPEECH_TEXT;
       const canSynthesize = window.speechSynthesis && window.SpeechSynthesisUtterance;
       const supported = synthesized ? canSynthesize : audio || (dynamic && canSynthesize);

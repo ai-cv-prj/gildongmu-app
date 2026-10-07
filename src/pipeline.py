@@ -322,7 +322,6 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
                     risk_result, output_width, processed_frames / fps,
                     crossing_active=bool(
                         crosswalk_result and crosswalk_result["crossing_active"]),
-                    signal=traffic_result,
                     crosswalk_status=(crosswalk_result or {}).get("status"),
                 )
                 if len(voice.events) > event_count:
