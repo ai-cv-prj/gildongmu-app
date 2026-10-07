@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import sqlite3
 from typing import Annotated
 from urllib.parse import quote
 from uuid import uuid4
@@ -30,6 +31,7 @@ class HubSettings:
     viewer_password: str
     source_tokens: dict[str, str]
     max_upload_bytes: int = 1024 * 1024 * 1024
+    admin_password: str = ""
 
     @classmethod
     def from_env(cls):
@@ -40,7 +42,8 @@ class HubSettings:
             raise ValueError("HUB_SOURCE_TOKENS_JSON 또는 HUB_MAX_UPLOAD_BYTES 설정을 확인하세요.") from error
         return cls(Path(os.environ.get("HUB_STORAGE_DIR", "data/result-hub")),
                    os.environ.get("HUB_VIEWER_USERNAME", ""),
-                   os.environ.get("HUB_VIEWER_PASSWORD", ""), tokens, limit)
+                   os.environ.get("HUB_VIEWER_PASSWORD", ""), tokens, limit,
+                   os.environ.get("HUB_ADMIN_PASSWORD", ""))
 
     def validate(self):
         if not self.viewer_username or len(self.viewer_username) > 80 or len(self.viewer_password) < 16:
@@ -54,6 +57,13 @@ class HubSettings:
             raise ValueError("서버별 전송 토큰은 서로 달라야 합니다.")
         if type(self.max_upload_bytes) is not int or self.max_upload_bytes <= 0:
             raise ValueError("HUB_MAX_UPLOAD_BYTES는 양의 정수여야 합니다.")
+        if self.admin_password and (
+            len(self.admin_password) < 16
+            or self.admin_password == self.viewer_password
+            or self.admin_password in self.source_tokens.values()
+            or any(ord(character) < 33 or ord(character) > 126 for character in self.admin_password)
+        ):
+            raise ValueError("HUB_ADMIN_PASSWORD는 조회 비밀번호·전송 토큰과 다른 16자 이상의 공백 없는 ASCII 값이어야 합니다.")
 
 
 def _equal(left, right):
@@ -88,6 +98,19 @@ def create_app(settings=None):
         if credentials is None or expected is None or not _equal(credentials.credentials, expected):
             raise HTTPException(401, "전송 서버 인증에 실패했습니다.")
 
+    def administrator(request: Request):
+        if not settings.admin_password:
+            raise HTTPException(403, "관리자 기능이 설정되지 않았습니다.")
+        # Destructive operations require a separate administrator credential.
+        password = request.headers.get("x-hub-admin-password", "")
+        if request.headers.get("sec-fetch-site") == "cross-site" or not _equal(password, settings.admin_password):
+            raise HTTPException(403, "관리자 비밀번호를 확인하세요.")
+
+    def reject_deleted(source_id, path):
+        if archive.is_deleted(source_id, path):
+            raise HTTPException(410, "관리자가 중앙 휴지통으로 이동한 기록입니다.",
+                                headers={"X-Hub-Deleted": "true"})
+
     def checked_path(source_id, path, *, create_parent=False):
         try:
             return archive.file(source_id, path, create_parent=create_parent)
@@ -113,10 +136,13 @@ def create_app(settings=None):
     @app.head("/api/ingest/{source_id}/{path:path}", dependencies=[Depends(source)])
     def artifact_head(source_id: str, path: str):
         checked_path(source_id, path)
+        reject_deleted(source_id, path)
         try:
             info = archive.info(source_id, path)
         except OSError as error:
+            reject_deleted(source_id, path)
             raise HTTPException(503, "저장소를 확인할 수 없습니다.") from error
+        reject_deleted(source_id, path)
         if info is None:
             raise HTTPException(404, "아직 수집되지 않은 파일입니다.")
         return Response(headers={"X-Content-SHA256": info["sha256"], "Content-Length": str(info["size"])})
@@ -137,6 +163,7 @@ def create_app(settings=None):
         temporary = None
         try:
             async with upload_lock:
+                reject_deleted(source_id, path)
                 target = checked_path(source_id, path, create_parent=True)
                 temporary = target.parent / f".upload-{uuid4().hex}"
                 size = 0
@@ -168,6 +195,47 @@ def create_app(settings=None):
                 temporary.unlink(missing_ok=True)
 
     read = APIRouter(dependencies=[Depends(viewer)])
+
+    @read.get("/api/capabilities")
+    def capabilities():
+        return {"admin_enabled": bool(settings.admin_password)}
+
+    admin = APIRouter(prefix="/api/admin", dependencies=[Depends(viewer), Depends(administrator)])
+
+    @admin.post("/login")
+    def admin_login():
+        return {"ok": True}
+
+    @admin.get("/trash")
+    async def trash():
+        async with upload_lock:
+            return {"items": await run_in_threadpool(archive.trash_entries)}
+
+    async def mutate_archive(action, *args):
+        async with upload_lock:
+            try:
+                item = await run_in_threadpool(action, *args)
+            except FileNotFoundError:
+                raise HTTPException(404, "해당 기록을 찾을 수 없습니다.") from None
+            except FileExistsError:
+                raise HTTPException(409, "같은 위치에 기록이 있어 복원할 수 없습니다.") from None
+            except ValueError as error:
+                raise HTTPException(400, str(error)) from None
+            except (OSError, sqlite3.Error):
+                raise HTTPException(503, "저장소를 변경하지 못했습니다. 상태를 새로고침한 뒤 다시 시도하세요.") from None
+            return {"ok": True, "item": item}
+
+    @admin.delete("/sessions/{source_id}/{session_id}")
+    async def delete_session(source_id: str, session_id: str):
+        return await mutate_archive(archive.delete_session, source_id, session_id)
+
+    @admin.delete("/logs/{source_id}/{path:path}")
+    async def delete_log(source_id: str, path: str):
+        return await mutate_archive(archive.delete_log, source_id, path)
+
+    @admin.post("/trash/{trash_id}/restore")
+    async def restore(trash_id: str):
+        return await mutate_archive(archive.restore, trash_id)
 
     @read.get("/")
     def index():
@@ -225,6 +293,8 @@ def create_app(settings=None):
             raise HTTPException(404)
         prefix = f"sessions/{session_id}/"
         checked_path(source_id, prefix + "session.json")
+        if archive.is_deleted(source_id, prefix + "session.json"):
+            raise HTTPException(404, "휴지통으로 이동한 기록입니다.")
         value = archive.read_json(source_id, prefix + "session.json")
         if value is None:
             raise HTTPException(404, "세션을 찾을 수 없습니다.")
@@ -256,6 +326,8 @@ def create_app(settings=None):
     @read.get("/api/files/{source_id}/{path:path}")
     def artifact(source_id: str, path: str, download: bool = False):
         target = checked_path(source_id, path)
+        if archive.is_deleted(source_id, path):
+            raise HTTPException(404, "휴지통으로 이동한 기록입니다.")
         if not target.is_file():
             raise HTTPException(404, "아직 수집되지 않은 파일입니다.")
         suffix = target.suffix
@@ -266,19 +338,25 @@ def create_app(settings=None):
     @read.get("/api/preview/{source_id}/{path:path}")
     def preview(source_id: str, path: str, lines: int = Query(default=200, ge=1, le=1000)):
         target = checked_path(source_id, path)
+        if archive.is_deleted(source_id, path):
+            raise HTTPException(404, "휴지통으로 이동한 기록입니다.")
         if target.suffix in (".mp4", ".webm"):
             raise HTTPException(400, "텍스트 파일만 미리 볼 수 있습니다.")
         if not target.is_file():
             raise HTTPException(404, "아직 수집되지 않은 파일입니다.")
-        with target.open("rb") as stream:
-            size = stream.seek(0, 2)
-            offset = max(0, size - 1024 * 1024)
-            stream.seek(offset)
-            data = stream.read(1024 * 1024)
+        try:
+            with target.open("rb") as stream:
+                size = stream.seek(0, 2)
+                offset = max(0, size - 1024 * 1024)
+                stream.seek(offset)
+                data = stream.read(1024 * 1024)
+        except FileNotFoundError:
+            raise HTTPException(404, "기록이 이동되었습니다. 목록을 새로고침하세요.") from None
         if offset:
             data = data.partition(b"\n")[2]
         text_lines = data.decode("utf-8", errors="replace").splitlines()
         return {"text": "\n".join(text_lines[-lines:]), "truncated": offset > 0 or len(text_lines) > lines}
 
     app.include_router(read)
+    app.include_router(admin)
     return app

@@ -44,6 +44,10 @@ class DeferredFile(Exception):
     """작성 중이거나 안전하게 읽을 수 없는 파일은 다음 주기에 다시 확인한다."""
 
 
+class DeletedAtHub(Exception):
+    """관리자가 중앙에서 삭제한 파일은 복원될 때까지 다시 전송하지 않는다."""
+
+
 @dataclass
 class Snapshot:
     file: BinaryIO
@@ -62,6 +66,7 @@ class SyncStats:
     unchanged: int = 0
     deferred: int = 0
     failed: int = 0
+    deleted: int = 0
 
 
 def file_signature(info):
@@ -215,12 +220,18 @@ class ResultSync:
 
     def _matches(self, relative, digest):
         response = self.client.head(self._url(relative), headers=self.headers, follow_redirects=False)
+        self._check_deleted(response)
         if response.status_code == 404:
             return False
         response.raise_for_status()
         if response.status_code != 200:
             raise ValueError("Unexpected HEAD response")
         return response.headers.get("X-Content-SHA256") == digest
+
+    @staticmethod
+    def _check_deleted(response):
+        if response.status_code == 410 and response.headers.get("X-Hub-Deleted", "").lower() == "true":
+            raise DeletedAtHub()
 
     def _send(self, relative, snapshot):
         if self._matches(relative, snapshot.sha256):
@@ -233,6 +244,7 @@ class ResultSync:
                 "Content-Type": "application/octet-stream"},
             content=chunks(snapshot.file), follow_redirects=False,
         )
+        self._check_deleted(response)
         response.raise_for_status()
         receipt = response.json()
         if (receipt.get("ok") is not True or receipt.get("sha256") != snapshot.sha256
@@ -256,6 +268,11 @@ class ResultSync:
                 snapshot = snapshot_file(self.output_dir, path, kind)
             self._send(relative, snapshot)
             self.file_cache[path] = (snapshot.signature, snapshot.sha256)
+            return True
+        except DeletedAtHub:
+            # Keep checking HEAD in later cycles so an administrator's restore
+            # immediately permits syncing again. This count is per file.
+            self.stats.deleted += 1
             return True
         except (DeferredFile, OSError):
             self.stats.deferred += 1
@@ -406,8 +423,8 @@ def main(argv=None):
             except OSError:
                 LOG.warning("결과 폴더를 읽을 수 없습니다. 다음 주기에 다시 확인합니다.")
                 result = SyncStats(failed=1)
-            LOG.info("동기화: 전송 %d / 동일 %d / 다음 확인 %d / 실패 %d",
-                     result.uploaded, result.unchanged, result.deferred, result.failed)
+            LOG.info("동기화: 전송 %d / 동일 %d / 삭제 건너뜀 %d / 다음 확인 %d / 실패 %d (파일)",
+                     result.uploaded, result.unchanged, result.deleted, result.deferred, result.failed)
             if args.once:
                 return 1 if result.failed else 0
             time.sleep(args.interval)

@@ -11,7 +11,7 @@
   <body>
     <header class="topbar">
       <div class="brand"><span class="brand-mark" aria-hidden="true">길</span><div><strong>길동무</strong><span>팀 테스트 기록</span></div></div>
-      <div class="refresh-controls"><span id="last-refresh" class="muted">기록 불러오는 중</span><button id="refresh" type="button">목록 새로고침</button></div>
+      <div class="refresh-controls"><span id="last-refresh" class="muted">기록 불러오는 중</span><button id="refresh" type="button">목록 새로고침</button><button id="admin-toggle" type="button" hidden>관리자 모드</button></div>
     </header>
     <main>
       <section class="intro">
@@ -19,6 +19,8 @@
         <span class="sync-note"><span class="dot" aria-hidden="true"></span>목록 20초마다 확인</span>
       </section>
       <div id="notice" class="notice" role="alert" hidden></div>
+      <div id="admin-status" class="notice" role="status" hidden></div>
+      <p id="admin-mode-note" class="admin-mode-note" hidden>관리자 모드 · 삭제한 기록은 중앙 휴지통으로 이동하며 복원할 수 있습니다. 팀원 PC의 원본은 유지됩니다.</p>
       <section aria-label="서버별 수신 현황" id="sources" class="source-grid"></section>
       <p class="freshness-note">수신 시각은 마지막 파일 전송 기준입니다. 서버의 접속 상태나 촬영 상태를 나타내지 않습니다.</p>
       <section class="workspace">
@@ -26,22 +28,34 @@
           <div class="tabs" role="tablist" aria-label="기록 종류">
             <button id="sessions-tab" type="button" role="tab" aria-selected="true" aria-controls="sessions-panel" class="tab active">영상 · 분석 기록</button>
             <button id="logs-tab" type="button" role="tab" aria-selected="false" aria-controls="logs-panel" class="tab" tabindex="-1">서버 로그</button>
+            <button id="trash-tab" type="button" role="tab" aria-selected="false" aria-controls="trash-panel" class="tab" tabindex="-1" hidden>휴지통</button>
           </div>
           <label class="filter-label" for="source-filter">서버<select id="source-filter"><option value="">전체 서버</option></select></label>
         </div>
         <section id="sessions-panel" role="tabpanel" aria-labelledby="sessions-tab">
           <div class="search-row"><label for="search">기록 검색</label><input id="search" type="search" placeholder="날짜(YYYY-MM-DD), 기기, 메모 검색" autocomplete="off" maxlength="200"><span id="session-count" class="muted"></span></div>
+          <div id="selection-toolbar" class="selection-toolbar" hidden><label><input id="select-all" type="checkbox">현재 목록 전체 선택</label><span id="selection-count" class="muted">0개 선택</span><button id="delete-selected" type="button" class="danger-button admin-action" disabled>선택한 테스트 삭제</button></div>
           <div class="results-layout">
             <aside class="session-sidebar" aria-label="테스트 기록 목록"><div class="list-heading"><strong>최근 테스트</strong><span class="muted">최신순</span></div><div id="session-list" class="session-list" aria-live="polite"></div></aside>
             <section id="session-detail" class="detail-panel" aria-label="선택한 테스트 상세"><div class="empty"><span class="empty-symbol" aria-hidden="true">▷</span><h2>테스트 기록을 선택하세요</h2><p>원본 영상과 분석 영상을 비교하고 결과 파일을 확인할 수 있습니다.</p></div></section>
           </div>
         </section>
         <section id="logs-panel" role="tabpanel" aria-labelledby="logs-tab" hidden>
-          <div class="log-intro"><h2>서버별 애플리케이션 로그</h2><p class="muted">중앙 서버에 마지막으로 전송된 파일의 끝부분을 표시합니다. 실시간 로그 스트림은 아닙니다.</p></div>
+          <div class="log-intro"><h2>서버별 애플리케이션 로그</h2><p class="muted">중앙 서버에 마지막으로 전송된 파일의 끝부분을 표시합니다. 실시간 로그 스트림은 아닙니다.</p><p id="log-admin-note" class="muted" hidden>날짜별로 보관된 로그만 삭제할 수 있습니다. 현재 app.log는 계속 수집되는 파일이므로 삭제할 수 없습니다.</p></div>
           <div class="logs-layout"><aside id="log-list" class="log-list" aria-label="로그 파일 목록"></aside><section id="log-detail" class="log-detail" aria-label="로그 미리보기"><div class="empty"><h3>로그 파일을 선택하세요</h3><p>최근 200줄을 확인하거나 전체 파일을 다운로드할 수 있습니다.</p></div></section></div>
         </section>
+        <section id="trash-panel" role="tabpanel" aria-labelledby="trash-tab" hidden><div class="log-intro"><h2>중앙 휴지통</h2><p class="muted">삭제한 테스트의 영상·분석 결과·이벤트와 보관 로그가 여기에 있습니다. 휴지통에 있는 동안에는 같은 기록의 자동 재업로드가 차단됩니다. 복원하면 다시 조회하고 수신할 수 있습니다.</p><button id="trash-refresh" type="button" class="small-button">휴지통 새로고침</button></div><div id="trash-list" class="trash-list" aria-live="polite"></div></section>
       </section>
       <footer>촬영이 끝난 뒤에도 영상 업로드와 변환이 이어질 수 있습니다. 클립별 상태와 파일 수신 여부를 확인하세요. <span>시각: 한국 표준시 (KST)</span></footer>
     </main>
+    <dialog id="admin-dialog" aria-labelledby="admin-dialog-title">
+      <form id="admin-form">
+        <h2 id="admin-dialog-title">관리자 모드 활성화</h2>
+        <p class="muted">조회용 계정과 별도의 관리자 비밀번호를 입력하세요. 페이지를 새로 열면 관리자 인증이 해제됩니다.</p>
+        <label for="admin-password">관리자 비밀번호</label><input id="admin-password" type="password" required autocomplete="off">
+        <p id="admin-login-error" class="form-error" role="alert" hidden></p>
+        <div class="dialog-actions"><button id="admin-cancel" type="button">취소</button><button id="admin-submit" type="submit">활성화</button></div>
+      </form>
+    </dialog>
   </body>
 </html>

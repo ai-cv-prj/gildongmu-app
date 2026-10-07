@@ -16,6 +16,8 @@ class Hub:
         self.requests = []
         self.offline = False
         self.fail_paths = set()
+        self.deleted_paths = set()
+        self.delete_on_put = set()
 
     def handle(self, request):
         assert request.headers["Authorization"] == "Bearer test-secret"
@@ -24,6 +26,9 @@ class Hub:
             raise httpx.ConnectError("unreachable", request=request)
         if request.url.path in self.fail_paths:
             return httpx.Response(503)
+        if (request.url.path in self.deleted_paths
+                or request.method == "PUT" and request.url.path in self.delete_on_put):
+            return httpx.Response(410, headers={"X-Hub-Deleted": "true"})
         if request.method == "HEAD":
             content = self.files.get(request.url.path)
             if content is None:
@@ -337,3 +342,85 @@ def test_offline_hub_stops_after_one_connection_attempt_then_retries(setup_sync)
     assert len(hub.requests) == 1
     hub.offline = False
     assert sync.run_once().uploaded == 16
+
+
+def test_deleted_session_files_are_skipped_without_reupload_and_resume_after_restore(setup_sync):
+    root, hub, sync = setup_sync
+    folder = session(root)
+    directory = clip(folder, "ready")
+    (directory / "inference.mp4").write_bytes(b"rendered video")
+    (folder / "results.jsonl").write_bytes(b'{"frame_id": 1}\n')
+    assert sync.run_once().uploaded == 5
+    hub.deleted_paths.update(hub.files)
+    hub.files.clear()
+    hub.requests.clear()
+
+    result = sync.run_once()
+    assert result.deleted == 5
+    assert result.failed == result.uploaded == result.unchanged == 0
+    assert all(method == "HEAD" for method, _ in hub.requests)
+    assert not hub.files
+    assert (directory / "original.webm").read_bytes() == b"original"
+
+    # The same long-running uploader must notice restoration next cycle.
+    hub.deleted_paths.clear()
+    result = sync.run_once()
+    assert result.uploaded == 5
+    assert result.deleted == result.failed == 0
+
+
+def test_deletion_between_head_and_put_is_not_a_failure(setup_sync):
+    root, hub, sync = setup_sync
+    session(root)
+    hub.delete_on_put.add(key(f"sessions/{'a' * 32}/session.json"))
+    result = sync.run_once()
+    assert result.deleted == 1
+    assert result.failed == result.uploaded == 0
+    assert not hub.files
+    assert [method for method, _ in hub.requests] == ["HEAD", "PUT"]
+
+
+def test_deleted_rotated_log_does_not_block_current_log(setup_sync):
+    root, hub, sync = setup_sync
+    logs = root / "logs"
+    logs.mkdir()
+    (logs / "app.log").write_bytes(b"current log\n")
+    (logs / "app.log.2026-10-06").write_bytes(b"old log\n")
+    hub.deleted_paths.add(key("logs/app.log.2026-10-06"))
+    result = sync.run_once()
+    assert result.deleted == result.uploaded == 1
+    assert result.failed == 0
+    assert hub.files == {key("logs/app.log"): b"current log\n"}
+    assert (logs / "app.log.2026-10-06").read_bytes() == b"old log\n"
+
+
+@pytest.mark.parametrize("method", ["HEAD", "PUT"])
+@pytest.mark.parametrize("headers", [{}, {"X-Hub-Deleted": "false"}])
+def test_unmarked_gone_response_remains_a_transfer_failure(tmp_path, method, headers):
+    session(tmp_path)
+
+    def gone(request):
+        if request.method == method:
+            return httpx.Response(410, headers=headers)
+        return httpx.Response(404)
+
+    with httpx.Client(transport=httpx.MockTransport(gone)) as client:
+        sync = ResultSync(tmp_path, "https://hub.example", "alice", "test-secret", client=client)
+        result = sync.run_once()
+    assert result.failed == 1
+    assert result.deleted == result.uploaded == 0
+
+
+def test_once_exit_succeeds_when_admin_deleted_the_only_file(tmp_path, monkeypatch, caplog):
+    session(tmp_path)
+    monkeypatch.setenv("HUB_URL", "https://hub.example")
+    monkeypatch.setenv("HUB_SOURCE_ID", "alice")
+    monkeypatch.setenv("HUB_SOURCE_TOKEN", "test-secret")
+    hub = Hub()
+    hub.deleted_paths.add(key(f"sessions/{'a' * 32}/session.json"))
+    client_type = httpx.Client
+    monkeypatch.setattr(module.httpx, "Client", lambda **kwargs: client_type(transport=httpx.MockTransport(hub.handle)))
+    caplog.set_level("INFO", logger="result_sync")
+    assert module.main(["--once", "--output-dir", str(tmp_path)]) == 0
+    assert "삭제 건너뜀 1" in caplog.text
+    assert "실패 0 (파일)" in caplog.text

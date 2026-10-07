@@ -35,8 +35,12 @@ def initialize_hub_env(project_dir=ROOT, *, port=8080, username="team"):
         pass
 
     password = secrets.token_urlsafe(32)
-    source_tokens = {}
     used = {password}
+    admin_password = secrets.token_urlsafe(32)
+    while admin_password in used:
+        admin_password = secrets.token_urlsafe(32)
+    used.add(admin_password)
+    source_tokens = {}
     for source in ("member1", "member2", "member3", "member4"):
         token = secrets.token_urlsafe(32)
         while token in used:
@@ -48,6 +52,7 @@ def initialize_hub_env(project_dir=ROOT, *, port=8080, username="team"):
         "# Private hub settings. Do not commit, share this file, or source it in a shell.\n"
         f"HUB_PORT={port}\nHUB_UID={uid}\nHUB_GID={gid}\n"
         f"HUB_VIEWER_USERNAME={username}\nHUB_VIEWER_PASSWORD={password}\n"
+        f"HUB_ADMIN_PASSWORD={admin_password}\n"
         f"HUB_SOURCE_TOKENS_JSON='{tokens_json}'\n"
     )
     # O_EXCL also rejects symlinks, including dangling links, and protects

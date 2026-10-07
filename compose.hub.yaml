@@ -11,6 +11,7 @@ services:
       HUB_STORAGE_DIR: /data
       HUB_VIEWER_USERNAME: ${HUB_VIEWER_USERNAME:?Run python -m scripts.init_hub_env}
       HUB_VIEWER_PASSWORD: ${HUB_VIEWER_PASSWORD:?Run python -m scripts.init_hub_env}
+      HUB_ADMIN_PASSWORD: ${HUB_ADMIN_PASSWORD:-}
       HUB_SOURCE_TOKENS_JSON: ${HUB_SOURCE_TOKENS_JSON:?Run python -m scripts.init_hub_env}
     volumes:
       - type: bind

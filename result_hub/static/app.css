@@ -122,6 +122,28 @@ pre { margin: 0; padding: 17px; white-space: pre-wrap; word-break: break-word; f
 .provenance-note { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
 footer { display: flex; justify-content: space-between; gap: 20px; color: var(--muted); font-size: 11px; padding: 19px 2px 0; }
 footer span { white-space: nowrap; }
+.admin-mode-note { color: var(--teal); background: var(--soft); border: 1px solid #b8dacd; border-radius: 8px; padding: 11px 15px; font-size: 12px; }
+.danger-button { color: #a63d33; border-color: #e6c4bf; }
+.danger-button:hover { background: #fff0ed; border-color: #cf8d83; }
+.selection-toolbar { display: flex; align-items: center; gap: 14px; padding: 12px 20px; background: #f8faf9; border-bottom: 1px solid var(--line); font-size: 12px; flex-wrap: wrap; }
+.selection-toolbar label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.selection-toolbar button { margin-left: auto; font-size: 12px; }
+input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--teal); cursor: pointer; flex-shrink: 0; }
+.session-select-row { display: flex; align-items: flex-start; gap: 3px; }
+.session-select-row .session-checkbox { margin: 18px 0 0 4px; }
+.session-select-row .session-item { min-width: 0; }
+.detail-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.trash-list { padding: 8px 23px 23px; }
+.trash-item { display: flex; align-items: center; justify-content: space-between; gap: 15px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+.trash-item button { flex-shrink: 0; }
+dialog { border: 1px solid var(--line); border-radius: 12px; padding: 26px; width: min(460px, calc(100vw - 30px)); color: inherit; }
+dialog::backdrop { background: #132b3288; }
+dialog p { font-size: 12px; }
+dialog label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 7px; }
+#admin-password { width: 100%; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+.form-error { color: #a63d33; margin: 12px 0 0; }
+@media (max-width: 740px) { .refresh-controls { flex-wrap: wrap; justify-content: flex-end; } .topbar { gap: 10px; } .refresh-controls button { font-size: 11px; padding: 6px 8px; } #last-refresh { display: none; } .tabs { gap: 14px; } .selection-toolbar { padding: 10px 12px; gap: 8px; } .selection-toolbar button { padding: 6px 8px; } .trash-list { padding: 8px 14px 20px; } }
 @media (min-width: 1500px) { .results-layout, .logs-layout { grid-template-columns: 330px minmax(0, 1fr); } }
 @media (max-width: 1050px) { .source-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .results-layout, .logs-layout { grid-template-columns: 260px minmax(0, 1fr); } .detail-panel { padding: 19px; } .metadata { grid-template-columns: repeat(2, minmax(0, 1fr)); } .video-grid { grid-template-columns: 1fr; } }
 @media (max-width: 740px) { .topbar { padding: 13px 16px; } .brand div > span { display: none; } .refresh-controls { gap: 8px; } #last-refresh { font-size: 10px; max-width: 100px; text-align: right; } main { padding: 22px 13px 18px; } .intro { display: block; margin-bottom: 17px; } .intro .muted { font-size: 12px; } .sync-note { display: block; margin-top: 12px; } .source-grid { gap: 8px; } .source-card { padding: 12px; } .source-card strong { font-size: 12px; } .source-card .source-count { float: none; display: block; margin-left: 0; } .source-card .received { font-size: 10px; } .toolbar { padding: 0 12px; flex-wrap: wrap; gap: 0; } .tabs { gap: 20px; } .tab { font-size: 13px; padding-top: 14px; } .filter-label { margin: 10px 0; } select { padding: 5px 8px; max-width: 170px; } .search-row { padding: 12px; gap: 8px; } .search-row label { display: none; } .search-row input { font-size: 12px; } .results-layout, .logs-layout { grid-template-columns: 1fr; } .session-sidebar, .log-list { border-right: 0; border-bottom: 1px solid var(--line); } .session-list { max-height: 280px; } .log-list { max-height: 240px; } .detail-panel { padding: 18px 13px; } .detail-heading { gap: 8px; } .detail-heading h2 { font-size: 18px; } .detail-heading button { padding: 6px 8px; font-size: 11px; } .metadata { padding: 13px; gap: 12px; } .file-row { gap: 8px; padding: 10px; } .file-actions { gap: 7px; } .clip-heading { flex-wrap: wrap; gap: 6px; } .clip-heading .muted { width: 100%; margin-left: 0; } .log-detail { padding: 13px; } footer { flex-direction: column; gap: 5px; } }

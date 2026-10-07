@@ -25,8 +25,8 @@ def test_private_credentials_are_distinct_and_not_printed(tmp_path, capsys):
     values = read_env(env_path)
     tokens = json.loads(values["HUB_SOURCE_TOKENS_JSON"].strip("'"))
     assert set(tokens) == {"member1", "member2", "member3", "member4"}
-    secrets = [values["HUB_VIEWER_PASSWORD"], *tokens.values()]
-    assert len(set(secrets)) == 5
+    secrets = [values["HUB_VIEWER_PASSWORD"], values["HUB_ADMIN_PASSWORD"], *tokens.values()]
+    assert len(set(secrets)) == 6
     assert all(len(value) >= 32 for value in secrets)
     assert values["HUB_UID"] == "1234"
     assert values["HUB_GID"] == "2345"
@@ -93,5 +93,6 @@ def test_cli_does_not_reveal_credentials(tmp_path, monkeypatch, capsys):
     captured = capsys.readouterr()
     assert "Created .env.hub" in captured.out
     assert values["HUB_VIEWER_PASSWORD"] not in captured.out + captured.err
+    assert values["HUB_ADMIN_PASSWORD"] not in captured.out + captured.err
     for token in json.loads(values["HUB_SOURCE_TOKENS_JSON"].strip("'")).values():
         assert token not in captured.out + captured.err
