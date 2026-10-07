@@ -65,7 +65,7 @@ class WalkingVoiceTests(unittest.TestCase):
     # 모든 직접 행동 전환의 안정화 시간 확인
     def test_all_direct_action_transition_timings(self):
         """
-        이전·다음 행동 조합에 200ms, 500ms, 1000ms 정책을 적용한다.
+        이전·다음 행동 조합에 200ms, 500ms, 3000ms 정책을 적용한다.
         """
         actions = (None, "left", "right", "straight", "stop")
         for previous in actions:
@@ -75,7 +75,7 @@ class WalkingVoiceTests(unittest.TestCase):
                 elif previous == "stop":
                     expected = 0.5
                 elif current == "straight":
-                    expected = 1.0
+                    expected = 3.0
                 else:
                     expected = 0.2
                 with self.subTest(previous=previous, current=current):
@@ -109,6 +109,12 @@ class WalkingVoiceTests(unittest.TestCase):
                             self.assertEqual(first, messages[current])
                             continue
                         self.assertIsNone(first)
+                        if delay > 2.0:
+                            for timestamp in (2.0, 3.0):
+                                self.assertIsNone(voice.observe(
+                                    prediction(level="monitor"), 100, timestamp))
+                        self.assertIsNone(voice.observe(
+                            prediction(level="monitor"), 100, 1.0 + delay - .001))
                         confirmed = voice.observe(
                             prediction(level="monitor"), 100, 1.0 + delay)
                         self.assertEqual(confirmed, messages[current])
