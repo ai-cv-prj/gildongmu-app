@@ -25,7 +25,7 @@ LATERAL_CONFIRM_S = GUIDANCE.get("walking_lateral_confirm_ms", 200) / 1000
 STRAIGHT_CONFIRM_S = GUIDANCE.get("walking_straight_confirm_ms", 3000) / 1000
 FROM_STOP_CONFIRM_S = GUIDANCE.get("walking_from_stop_confirm_ms", 500) / 1000
 REPEAT_NONE_S = GUIDANCE.get("walking_repeat_none_ms", 3000) / 1000
-STOP_REPEAT_NONE_S = GUIDANCE.get("walking_stop_repeat_none_ms", 500) / 1000
+STOP_REPEAT_NONE_S = GUIDANCE.get("walking_stop_repeat_none_ms", 1000) / 1000
 ACTION_MESSAGES = {
     ("left", 1): ("왼쪽으로 한 걸음", "walking-move-left-one.mp3"),
     ("left", 2): ("왼쪽으로 두 걸음", "walking-move-left-two.mp3"),
