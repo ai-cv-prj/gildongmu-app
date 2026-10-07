@@ -5,14 +5,15 @@ const test = require("node:test");
 
 function harness({ noAudio = false, playFailure = false, deferred = false } = {}) {
   let audio = null, rejectPlayback = null, utterance = null, cancels = 0;
-  const audioSources = [], connections = [], timers = new Map();
-  let timerId = 0;
+  const audioSources = [], playbackSources = [], utterances = [], connections = [], timers = new Map();
+  let timerId = 0, clock = 0;
   class Audio {
     constructor() { audio = this; }
     pause() {}
     load() {}
     removeAttribute(name) { delete this[name]; }
     play() {
+      playbackSources.push(this.src);
       if (deferred && this.src.startsWith("/api")) return new Promise((_, reject) => { rejectPlayback = reject; });
       if (playFailure) throw Object.assign(new Error("Missing MP3"), { name: "NotSupportedError" });
       this.onplaying?.();
@@ -31,19 +32,34 @@ function harness({ noAudio = false, playFailure = false, deferred = false } = {}
       resume() { return Promise.resolve(); }
     },
     SpeechSynthesisUtterance: class { constructor(text) { this.text = text; } },
-    speechSynthesis: { getVoices: () => [{ lang: "ko-KR" }], speak(value) { utterance = value; value.onstart(); },
+    speechSynthesis: { getVoices: () => [{ lang: "ko-KR" }], speak(value) {
+      utterance = value; utterances.push(value); value.onstart();
+    },
       cancel() { cancels++; } },
-  }, performance: { now: () => 0 },
-    setTimeout(fn) { const id = ++timerId; timers.set(id, fn); return id; },
-    clearTimeout(id) { timers.delete(id); } };
+  }, performance: { now: () => clock },
+    setTimeout(fn, delay) { const id = ++timerId; timers.set(id, { fn, at: clock + delay }); return id; },
+    clearTimeout(id) { timers.delete(id); }, setInterval: () => 1, clearInterval() {} };
   vm.createContext(context);
-  for (const name of ["tts", "audio_coordinator"]) {
+  for (const name of ["tts", "audio_coordinator", "gps-motion", "gps-stop-select", "bus-journey"]) {
     vm.runInContext(fs.readFileSync(`frontend/js/${name}.js`, "utf8"), context);
   }
   const player = context.window.GTts.create();
   const coordinator = context.window.GAudioCoordinator.create({ player });
   return { player, coordinator, audio: () => audio, utterance: () => utterance, cancels: () => cancels,
-    audioSources, connections, timers,
+    journey: () => context.window.GBusJourney.create({ coordinator, geolocation: {},
+      now: () => 100000 + clock, monotonicNow: () => clock }),
+    audioSources, playbackSources, utterances, connections, timers,
+    step(ms) {
+      const end = clock + ms;
+      for (;;) {
+        const next = [...timers].filter(([, timer]) => timer.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
+        if (!next) break;
+        clock = next[1].at;
+        timers.delete(next[0]);
+        next[1].fn();
+      }
+      clock = end;
+    },
     rejectAudio() { rejectPlayback(Object.assign(new Error("late error"), { name: "NotSupportedError" })); } };
 }
 
@@ -69,11 +85,68 @@ test("버스 동적 MP3도 기존 재생기와 녹화 오디오 그래프를 공
   app.player.cancel();
 });
 
+test("확정된 다른 버스 이벤트가 전체 안내 경로를 거쳐 스피커·녹화용 MP3를 재생한다", () => {
+  const app = harness();
+  const journey = app.journey();
+  app.player.recordingStream();
+  app.coordinator.start();
+  journey.start("7011");
+  journey.accept({ status: "ready", captured_at_ms: 100000, event: { target_route: "7011",
+    matches: [], recognized_routes: [{ track_id: 2, route_number: "604", state: "matched_candidate",
+      token_score: .99, is_target: false }] } });
+  const message = "604번 버스, 다른 노선.";
+  const text = `${message} ${message}`;
+  assert.equal(app.audio().src, `/api/bus-arrival-speech?text=${encodeURIComponent(text)}`);
+  assert.equal(journey.snapshot().ocr.message, message);
+  assert.equal(app.playbackSources.length, 1);
+  assert.equal(app.connections.length, 2);
+  assert.equal(app.utterance(), null);
+  journey.stop();
+  app.coordinator.stop();
+});
+
+for (const [state, message] of [["recognized_single", "7011번 버스 인식 중."],
+  ["matched_candidate", "7011번 버스 확인함."]]) {
+  for (const [mode, options] of [["서버 MP3", {}], ["기기 음성 대체", { playFailure: true }],
+    ["MP3 지원 없는 기기", { noAudio: true }], ["서버 지연 시 기기 음성", { deferred: true }]]) {
+    test(`${mode}: ${state} 안내를 한 요청으로 정확히 두 번 읽으며 화면에는 한 번 표시한다`, () => {
+      const app = harness(options);
+      const journey = app.journey();
+      const event = { status: "ready", captured_at_ms: 100000, event: { target_route: "7011",
+        matches: [{ track_id: 2, route_number: "7011", state, token_score: .99 }] } };
+      const text = `${message} ${message}`;
+      app.coordinator.start();
+      journey.start("7011");
+      journey.accept(event);
+      if (!options.noAudio) {
+        assert.deepEqual(app.playbackSources, [`/api/bus-arrival-speech?text=${encodeURIComponent(text)}`]);
+      }
+      if (options.deferred) app.step(1000);
+      assert.equal(journey.snapshot().ocr.message, message);
+      const deviceSpeech = options.playFailure || options.noAudio || options.deferred;
+      if (deviceSpeech) {
+        assert.equal(app.utterance().text, text);
+        assert.equal(app.utterance().lang, "ko-KR");
+        assert.equal(app.utterances.length, 1);
+      } else assert.equal(app.utterance(), null);
+      journey.accept(event);
+      if (deviceSpeech) app.utterance().onend();
+      else { app.audio().ended = true; app.audio().onended(); }
+      journey.accept(event);
+      assert.equal(app.playbackSources.length, options.noAudio ? 0 : 1);
+      assert.equal(app.utterances.length, deviceSpeech ? 1 : 0);
+      assert.equal(app.timers.size, 0);
+      journey.stop();
+      app.coordinator.stop();
+    });
+  }
+}
+
 test("동적 MP3 재생 실패는 한국어 브라우저 음성으로 이어지고 취소 후 완료 콜백은 무시한다", () => {
   const app = harness({ playFailure: true });
   let completed = 0;
   app.player.setRate(1.2);
-  assert.equal(app.player.speak("143번 버스 번호를 확인했습니다.", 5000,
+  assert.equal(app.player.speak("143번 버스 확인함. 143번 버스 확인함.", 5000,
     { dynamic: true, onEnd: () => completed++ }), true);
   assert.equal(app.utterance().lang, "ko-KR");
   assert.equal(app.utterance().rate, 1.2);
@@ -86,7 +159,7 @@ test("동적 MP3 재생 실패는 한국어 브라우저 음성으로 이어지�
 
 test("HTML Audio 없는 환경에서도 버스 동적 안내를 브라우저 합성으로 재생한다", () => {
   const app = harness({ noAudio: true });
-  assert.equal(app.player.speak("143번 버스 번호를 확인했습니다.", 5000, { dynamic: true }), true);
+  assert.equal(app.player.speak("143번 버스 확인함. 143번 버스 확인함.", 5000, { dynamic: true }), true);
   assert.match(app.utterance().text, /143번/);
   app.player.cancel();
   assert.equal(app.player.recordingStream(), null);
@@ -96,7 +169,7 @@ test("긴급 음성이 동적 MP3를 취소한 뒤 늦은 MP3 오류가 버스 �
   const app = harness({ deferred: true });
   app.coordinator.start();
   app.coordinator.request({ source: "bus-ocr", priority: app.coordinator.PRIORITY.busOcr,
-    dynamic: true, text: "143번으로 보이는 버스가 있습니다.", validUntil: 3000 });
+    dynamic: true, text: "143번 버스 인식 중. 143번 버스 인식 중.", validUntil: 3000 });
   assert.ok(app.audio().src.startsWith("/api/bus-arrival-speech"));
   app.coordinator.request({ source: "walking", priority: app.coordinator.PRIORITY.emergency,
     text: "멈추세요.", validUntil: 3000 });
@@ -105,4 +178,51 @@ test("긴급 음성이 동적 MP3를 취소한 뒤 늦은 MP3 오류가 버스 �
   assert.equal(app.utterance(), null);
   assert.equal(app.audio().src, "/audio/walking-stop.mp3?v=walking-action-v9");
   app.coordinator.stop();
+});
+
+test("버스 MP3 로딩이 멈추면 촬영 결과가 만료되기 전에 기기 한국어 음성으로 안내한다", async () => {
+  const app = harness({ deferred: true });
+  let started = 0, completed = 0, failed = 0;
+  const text = "7011번 버스 확인함. 7011번 버스 확인함.";
+  app.player.speak(text, 3000, { dynamic: true, onStart: () => started++,
+    onEnd: () => completed++, onFailure: () => failed++ });
+  app.step(999);
+  assert.equal(app.utterance(), null);
+  app.step(1);
+  assert.equal(app.utterance().text, text);
+  assert.equal(app.utterance().lang, "ko-KR");
+  assert.equal(started, 1);
+  app.rejectAudio();
+  await Promise.resolve();
+  assert.equal(failed, 0, "취소된 서버 음원의 늦은 오류가 기기 안내를 끊지 않는다");
+  app.step(2500);
+  assert.equal(app.cancels(), 0, "유효한 프레임에서 시작한 문장은 끝까지 읽는다");
+  app.utterance().onend();
+  assert.equal(completed, 1);
+  assert.equal(app.timers.size, 0);
+});
+
+test("남은 OCR 유효 시간이 짧아도 절반을 기기 음성 시작에 남긴다", () => {
+  const app = harness({ deferred: true });
+  app.player.speak("7011번 버스 확인함. 7011번 버스 확인함.", 200, { dynamic: true });
+  app.step(99);
+  assert.equal(app.utterance(), null);
+  app.step(1);
+  assert.ok(app.utterance());
+  app.player.cancel();
+  assert.equal(app.timers.size, 0);
+});
+
+test("서버 MP3가 시작했거나 안내가 취소되면 지연 대체 음성을 재생하지 않는다", () => {
+  const playing = harness();
+  playing.player.speak("7011번 버스 확인함. 7011번 버스 확인함.", 3000, { dynamic: true });
+  playing.step(1200);
+  assert.equal(playing.utterance(), null);
+  playing.player.cancel();
+  const cancelled = harness({ deferred: true });
+  cancelled.player.speak("7011번 버스 확인함. 7011번 버스 확인함.", 3000, { dynamic: true });
+  cancelled.player.cancel();
+  cancelled.step(1200);
+  assert.equal(cancelled.utterance(), null);
+  assert.equal(cancelled.timers.size, 0);
 });

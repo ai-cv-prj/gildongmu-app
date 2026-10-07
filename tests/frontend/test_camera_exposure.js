@@ -48,6 +48,8 @@ const exposureValues = request => Object.assign({}, request, ...(request.advance
 test("initial camera and repeated disabled mode leave the default stream untouched", async () => {
   const app = harness();
   assert.equal(app.controller.snapshot().status, "default");
+  assert.equal(app.controller.snapshot().actual_us, null,
+    "automatic exposure time readback is not a verified shutter measurement");
   await app.controller.setBusMode(false);
   await app.controller.settled();
   assert.equal(app.calls.length, 0);
@@ -69,6 +71,8 @@ test("bus mode selects manual exposure then 1/60 second in 100 microsecond units
   assert.equal(result.requested, true);
   assert.equal(result.target_us, 16667);
   assert.equal(result.actual_us, 16700);
+  assert.equal(result.baseline_settings.exposureMode, "continuous");
+  assert.equal(result.capabilities.exposureTime.step, 1);
   assert.equal(app.fatals.length, 0);
   for (const request of app.calls) {
     assert.deepEqual(request.width, app.original.width);
@@ -139,9 +143,57 @@ test("a driver silently ignoring mode or time is rolled back and never reported 
     assert.equal(app.current.exposureMode, "continuous");
     assert.deepEqual(app.calls.at(-1), app.original);
     assert.equal(app.changes.some(change => change.status === "applied"), false);
+    assert.equal(result.failed_settings.exposureMode, ignored === "ignoreMode" ? "continuous" : "manual");
+    assert.equal(result.failed_settings.exposureTime, 50,
+      "failed readback must survive restoration of the automatic mode");
+    assert.equal(result.settings.exposureMode, "continuous");
     assert.equal(app.fatals.length, 0);
     app.controller.dispose();
   });
+});
+
+test("unsupported exposure reports distinguish missing controls from an out-of-range target", async t => {
+  const cases = [
+    { capabilities: { exposureMode: ["continuous"] }, reason: "manual_mode_unavailable" },
+    { capabilities: { exposureMode: ["continuous", "manual"] }, reason: "exposure_time_unavailable" },
+    { capabilities: { exposureMode: ["continuous", "manual"], exposureTime: { min: 1, max: 100, step: 1 } },
+      reason: "exposure_time_out_of_range" },
+  ];
+  for (const scenario of cases) await t.test(scenario.reason, async () => {
+    const app = harness(scenario);
+    const result = await app.controller.setBusMode(true);
+    assert.equal(result.status, "unsupported");
+    assert.equal(result.reason, scenario.reason);
+    assert.deepEqual(clone(result.capabilities), scenario.capabilities);
+    assert.equal(result.baseline_settings.exposureMode, "continuous");
+    assert.equal(app.calls.length, 0);
+    app.controller.dispose();
+  });
+});
+
+test("a changed shutter is reported once before capture and the original mode still restores", async t => {
+  for (const drift of [{ exposureMode: "continuous" }, { exposureTime: 30 }, { exposureTime: undefined }]) {
+    await t.test(JSON.stringify(drift), async () => {
+      const app = harness();
+      await app.controller.setBusMode(true);
+      const nativeCalls = app.calls.length;
+      assert.equal(app.controller.check().status, "applied");
+      Object.assign(app.current, drift);
+      const result = app.controller.check();
+      assert.equal(result.status, "changed");
+      assert.equal(result.reason, "settings_changed");
+      assert.equal(result.requested_time_us, 16700);
+      assert.deepEqual(result.failed_settings, result.settings);
+      for (let i = 0; i < 3; i++) app.controller.check();
+      assert.equal(app.changes.filter(change => change.status === "changed").length, 1);
+      assert.equal(app.calls.length, nativeCalls, "drift monitoring must not reconfigure a streaming camera");
+      await app.controller.setBusMode(false);
+      assert.equal(app.controller.snapshot().status, "default");
+      assert.equal(app.current.exposureMode, "continuous");
+      assert.deepEqual(app.calls.at(-1), app.original);
+      app.controller.dispose();
+    });
+  }
 });
 
 test("a rejected shutter request rolls back the successfully selected manual mode", async () => {

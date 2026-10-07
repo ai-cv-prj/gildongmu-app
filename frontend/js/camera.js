@@ -201,6 +201,7 @@ window.GCamera = (() => {
     try {
       await exposure?.settled();
       if (version !== cameraVersion || !active()) return null;
+      exposure?.check();
       return await captureFrame(maxSide, quality);
     }
     finally { capturing = false; }

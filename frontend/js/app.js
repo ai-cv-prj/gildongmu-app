@@ -833,12 +833,14 @@
   GCamera.setOnExposureChange(report => {
     const text = {
       stopped: "카메라 종료 · 다음 시작 시 기본 촬영",
-      default: "기본 촬영 · 버스 번호 확정 후 LED 촬영 설정 시도",
-      applying: "버스 LED 촬영 설정 적용 중",
-      applied: `버스 LED 촬영 설정 적용 · 노출 약 ${((report.actual_us || 0) / 1000).toFixed(2)}ms`,
-      unsupported: report.reason === "disabled" ? "기본 촬영 · LED 촬영 설정 꺼짐"
-        : "기본 촬영 · 이 기기에서는 LED 촬영 설정을 지원하지 않음",
-      failed: "기본 촬영으로 복원 · LED 촬영 설정 적용 확인 실패",
+      default: "기본 촬영 · 버스 찾기 시작 시 수동 노출 시도",
+      applying: "버스 촬영 수동 노출 적용 중",
+      applied: `수동 노출 확인 · 약 ${((report.actual_us || 0) / 1000).toFixed(2)}ms (LED 개선 여부는 별도 확인)`,
+      changed: "노출 설정이 달라짐 · 요청한 수동 노출이 유지되지 않음",
+      unsupported: report.reason === "disabled" ? "기본 촬영 · 수동 노출 시험 꺼짐"
+        : report.reason === "not_android" ? "기본 촬영 · 수동 노출 시험은 Android 지원 기기에서만 가능"
+        : "기본 촬영 · 이 기기에서는 요청한 수동 노출을 지원하지 않음",
+      failed: "이전 촬영 설정으로 복원 · 수동 노출 적용 확인 실패",
       restoring: "버스 찾기 종료 · 이전 촬영 설정 복원 중",
       restore_failed: "촬영 설정 복원을 확인할 수 없어 카메라를 종료했습니다. 다시 시작해 주세요.",
     }[report.status] || "카메라 촬영 설정 확인 중";

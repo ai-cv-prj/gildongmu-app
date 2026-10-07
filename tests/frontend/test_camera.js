@@ -28,7 +28,8 @@ function harness({ deferPermission = false, android = false, applyBehavior = asy
     window: { GConfig: { get: () => ({ camera: { width: 640, height: 480, facing_mode: "environment", bus_led_exposure_enabled: true } }) } } };
   vm.runInNewContext(fs.readFileSync("frontend/js/camera-exposure.js", "utf8"), context);
   vm.runInNewContext(fs.readFileSync("frontend/js/camera.js", "utf8"), context);
-  return { camera: context.window.GCamera, track, video, listeners, draws: () => draws, grant: () => grant(stream) };
+  return { camera: context.window.GCamera, track, video, listeners, cameraSettings,
+    draws: () => draws, grant: () => grant(stream) };
 }
 
 test("ending during camera permission stops a subsequently granted stream", async () => {
@@ -110,6 +111,22 @@ test("a failed restoration retires the real track and notifies camera loss", asy
   assert.equal(ended, 1);
   assert.equal(reports.at(-1).status, "restore_failed");
   assert.equal(await app.camera.capture(640, .72), null);
+});
+
+test("capture reports exposure drift without interrupting number recognition", async () => {
+  const app = harness({ android: true });
+  const reports = [];
+  app.camera.setOnExposureChange(report => reports.push(report));
+  await openCamera(app);
+  await app.camera.setBusMode(true);
+  app.cameraSettings.exposureMode = "continuous";
+  assert.equal((await app.camera.capture(640, .72)).size, 1);
+  assert.equal(app.camera.exposureStatus().status, "changed");
+  assert.equal(app.camera.exposureStatus().actual_us, null);
+  await app.camera.capture(640, .72);
+  assert.equal(reports.filter(report => report.status === "changed").length, 1);
+  assert.equal(app.camera.active(), true);
+  app.camera.stop();
 });
 
 test("stop releases a capture waiting on native camera settings", async () => {

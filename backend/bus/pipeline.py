@@ -20,6 +20,7 @@ from .bus_runtime.evidence import (select_candidates, recover_duplicate_bus_cand
                                    recover_regions)
 from .bus_runtime.route_evidence import context_boxes, context_rejection, text_rejection
 from .bus_runtime.target import TargetMatcher, exact_route, token_quality
+from .bus_runtime.observed import ObservedRouteMatcher
 from .bus_runtime.led_diagnostics import led_row_diagnostics
 
 log = logging.getLogger(__name__)
@@ -42,6 +43,7 @@ class BusPipeline:
         self.matcher: TargetMatcher | None = None
         self.session_id: str | None = None
         self.last_capture_ms: int | None = None
+        self.observed_matcher = ObservedRouteMatcher()
 
     def load(self) -> None:
         if self.weights is None or not self.weights.is_file():
@@ -72,6 +74,7 @@ class BusPipeline:
     def reset_session(self, session_id: str) -> None:
         self.session_id = session_id
         self.last_capture_ms = None
+        self.observed_matcher = ObservedRouteMatcher()
         self.matcher = (TargetMatcher(self.target_route, single_score=.98)
                         if self.target_route else None)
         if self.detector is not None:
@@ -86,6 +89,7 @@ class BusPipeline:
         self.target_route = None
         self.matcher = None
         self.last_capture_ms = None
+        self.observed_matcher = ObservedRouteMatcher()
 
     @staticmethod
     def _led_diagnostics(rgb: np.ndarray, box) -> dict | None:
@@ -179,6 +183,7 @@ class BusPipeline:
         detections: list[dict] = []
         event_buses: list[dict] = []
         matches: list[dict] = []
+        recognized_routes: list[dict] = []
         for bus_index, bus in enumerate(buses):
             track_id = bus['track_id']
             bus_box = bus['bus_box']
@@ -218,6 +223,10 @@ class BusPipeline:
                                                                if p['eligible']), None),
                                          'target_state': decision['state']}})
             event_buses.append(bus_record)
+            if ordered:
+                recognized_routes.extend(self.observed_matcher.update(
+                    track_id, timestamp_s, observations, bus_box,
+                    target=self.target_route, complete=complete))
             if (self.target_route and track_id is not None and
                     decision['state'] in {'recognized_single', 'matched_candidate'}):
                 supporting = [p for p in observations if p['eligible']
@@ -228,8 +237,10 @@ class BusPipeline:
                                     'state': decision['state'],
                                     'token_score': max(token_quality(p['token_scores'])
                                                        for p in supporting)})
+        recognized_routes = [{**match, 'is_target': True} for match in matches] + recognized_routes
         event = {'type': 'bus_detection', 'target_route': self.target_route,
                  'buses': event_buses, 'matches': matches,
+                 'recognized_routes': recognized_routes,
                  'bus_number': matches[0]['route_number'] if len(matches) == 1 else None,
                  'is_target': len(matches) == 1,
                  'errors': errors}

@@ -18,6 +18,7 @@
     let manualStationKey = null, gps = {}, ocr = {}, arrivalEntry = null;
     let ocrPending = null, speakingArrival = null, speakingOcr = null;
     const ocrAnnounced = new Set();
+    const otherRouteAnnouncedAt = new Map();
     const emit = (type, fields = {}) => onEvent({ type, at_ms: now(), route, ...fields });
     const snapshot = () => ({ active, paused, route, gps: { ...gps }, ocr: { ...ocr } });
     const publish = () => onChange(snapshot());
@@ -27,6 +28,7 @@
       && Number.isFinite(location.accuracy) && location.accuracy >= 0
       && location.accuracy <= limits.liveMaxAccuracyM;
     const validGeneration = token => active && !paused && generation === token;
+    const otherRecentlyAnnounced = value => now() - (otherRouteAnnouncedAt.get(value) ?? -Infinity) < 10000;
 
     function newTracker() {
       return { busNumber: route, samples: [], trackSamples: [], walkingVotes: [],
@@ -130,23 +132,36 @@
       const item = ocrPending;
       if (!item || !active || paused || !freshCapture(item.capturedAt) || speakingOcr
           || (!replay && ocrAnnounced.has(item.key))) return false;
+      const alreadyConfirmed = item.state === "recognized_single" && ocrAnnounced.has(
+        `${item.track_id ?? "unknown"}:${item.route_number}:confirmed`);
+      if (!replay && (alreadyConfirmed || !item.isTarget && otherRecentlyAnnounced(item.route_number))) return false;
       const token = generation;
+      // Keep both repetitions in one cancellable playback; coordinator.repeat
+      // would keep replaying until the recognition expires.
+      const speechText = `${item.message} ${item.message}`;
       speakingOcr = item;
       item.started = false;
       const accepted = coordinator.request({ source: "bus-ocr", priority: coordinator.PRIORITY.busOcr,
-        dynamic: true, text: item.message, kind: item.key,
+        dynamic: true, text: speechText, kind: item.key,
         validUntil: monotonicNow() + Math.max(0, item.capturedAt + limits.busDetectionWindowMs - now()),
-        metadata: { bus_route: route, track_id: item.track_id, channel: "ocr" },
-        onStart: () => { item.started = true; emit("bus_ocr_speech_started", {
-          text: item.message, captured_at_ms: item.capturedAt, track_id: item.track_id ?? null,
-          voice_delay_ms: Math.max(0, now() - item.capturedAt),
-        }); },
+        metadata: { bus_route: item.route_number, target_route: route, is_target: item.isTarget,
+          captured_at_ms: item.capturedAt, track_id: item.track_id, channel: "ocr" },
+        onStart: () => {
+          if (!validGeneration(token) || speakingOcr !== item) return;
+          item.started = true;
+          emit("bus_ocr_speech_started", {
+            text: speechText, captured_at_ms: item.capturedAt, track_id: item.track_id ?? null,
+            voice_delay_ms: Math.max(0, now() - item.capturedAt),
+          });
+        },
         onComplete: () => {
-          if (!validGeneration(token)) return;
+          if (!validGeneration(token) || speakingOcr !== item) return;
           ocrAnnounced.add(item.key);
           if (ocrAnnounced.size > 200) ocrAnnounced.delete(ocrAnnounced.values().next().value);
+          if (!item.isTarget) otherRouteAnnouncedAt.set(item.route_number, now());
+          if (otherRouteAnnouncedAt.size > 200) otherRouteAnnouncedAt.delete(otherRouteAnnouncedAt.keys().next().value);
           if (speakingOcr === item) speakingOcr = null;
-          emit("bus_ocr_speech_completed", { text: item.message });
+          emit("bus_ocr_speech_completed", { text: speechText });
         },
         onCancel: () => { if (speakingOcr === item) speakingOcr = null; },
       });
@@ -362,7 +377,7 @@
         gpsUnavailable("refreshing", "버스 도착정보를 갱신하고 있습니다.");
       }
       if (freshLocation() && now() - lastLookupAt >= limits.refreshIntervalMs) void lookup();
-      if (["candidate", "confirmed"].includes(ocr.status) && !freshCapture(ocr.capturedAt)) {
+      if (["candidate", "confirmed", "other"].includes(ocr.status) && !freshCapture(ocr.capturedAt)) {
         ocr = { ...ocr, status: "stale", confirmed: false,
           message: "번호 인식 결과가 오래되었습니다. 현재 버스 번호를 다시 확인합니다." };
         ocrPending = null;
@@ -400,6 +415,7 @@
       active = true;
       paused = false;
       ocrAnnounced.clear();
+      otherRouteAnnouncedAt.clear();
       resetFreshness();
       emit("bus_journey_started");
       begin();
@@ -453,10 +469,18 @@
           && ["recognized_single", "matched_candidate"].includes(item.state))
         .sort((a, b) => Number(b.state === "matched_candidate") - Number(a.state === "matched_candidate")
           || (Number(b.token_score) || 0) - (Number(a.token_score) || 0));
-      const shown = matches[0];
+      // Raw boxes/text remain visual evidence. Only the backend's repeated,
+      // full-number recognition may identify a different bus aloud.
+      const others = (failed ? [] : Array.isArray(event.recognized_routes) ? event.recognized_routes : [])
+        .filter(item => item.is_target === false && item.state === "matched_candidate"
+          && item.track_id != null && ROUTE.test(normalize(item.route_number))
+          && normalize(item.route_number) !== route)
+        .sort((a, b) => (Number(b.token_score) || 0) - (Number(a.token_score) || 0));
+      const shown = matches[0] || others.find(item => !otherRecentlyAnnounced(normalize(item.route_number))
+        && !ocrAnnounced.has(`${item.track_id}:${normalize(item.route_number)}:confirmed`)) || others[0];
       if (!shown) {
         // 단일 프레임에서 번호가 안 읽혀도 3초 이내 근거의 안내 문장을 잘라 버리지 않는다.
-        if (!failed && ["candidate", "confirmed"].includes(ocr.status) && freshCapture(ocr.capturedAt)) return;
+        if (!failed && ["candidate", "confirmed", "other"].includes(ocr.status) && freshCapture(ocr.capturedAt)) return;
         ocr = { status: failed ? "error" : "searching", confirmed: false, routeNumber: null, capturedAt,
           message: failed ? recognitionMessage(result)
             : `${route}번 버스 번호를 찾고 있습니다.` };
@@ -466,13 +490,21 @@
         return;
       }
       const confirmed = shown.state === "matched_candidate";
-      const message = confirmed ? `${route}번 버스가 도착했습니다.` : `${route}번으로 보이는 버스가 있습니다.`;
-      ocr = { status: confirmed ? "confirmed" : "candidate", message, routeNumber: route, confirmed, capturedAt,
+      const observedRoute = normalize(shown.route_number);
+      const isTarget = observedRoute === route;
+      const message = !isTarget ? `${observedRoute}번 버스, 다른 노선.`
+        : confirmed ? `${route}번 버스 확인함.` : `${route}번 버스 인식 중.`;
+      ocr = { status: !isTarget ? "other" : confirmed ? "confirmed" : "candidate",
+        message, routeNumber: observedRoute, isTarget, confirmed, capturedAt,
         trackId: shown.track_id ?? null };
-      select.observeBusDetection(tracker, { routeNumber: route, capturedAtMs: capturedAt,
+      select.observeBusDetection(tracker, { routeNumber: observedRoute, capturedAtMs: capturedAt,
         confidence: shown.token_score, trackId: shown.track_id });
-      const key = `${shown.track_id ?? "unknown"}:${route}:${confirmed ? "confirmed" : "candidate"}`;
-      ocrPending = { ...shown, key, message, capturedAt };
+      const key = `${shown.track_id ?? "unknown"}:${observedRoute}:${confirmed ? "confirmed" : "candidate"}`;
+      // A confirmed target immediately replaces its tentative announcement or
+      // another route's speech, while safety speech retains its priority.
+      if (isTarget && speakingOcr && (!speakingOcr.isTarget
+          || confirmed && speakingOcr.state === "recognized_single")) clearSpeech("bus-ocr");
+      ocrPending = { ...shown, route_number: observedRoute, isTarget, key, message, capturedAt };
       publish();
       sayOcr();
     }
@@ -508,6 +540,7 @@
       route = "";
       arrivalEntry = ocrPending = null;
       ocrAnnounced.clear();
+      otherRouteAnnouncedAt.clear();
       gps = { status: "idle", message: "", selected: null, candidates: [] };
       ocr = { status: "idle", message: "", confirmed: false, routeNumber: null, capturedAt: null };
       publish();

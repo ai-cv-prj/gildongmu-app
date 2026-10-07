@@ -37,7 +37,7 @@
     // 클릭으로 시작한 재생기를 이후 신호 안내에도 재사용한다.
     const audio = window.Audio ? new window.Audio() : null;
     let audioContext = null, recordingDestination = null;
-    let current = null, timer = null;
+    let current = null, timer = null, fallbackTimer = null;
     let rate = Math.min(2, Math.max(0.75, Number(settings.playback_rate) || 1));
     const queue = [];
     if (audio) {
@@ -71,6 +71,8 @@
       current = null;
       clearTimeout(timer);
       timer = null;
+      clearTimeout(fallbackTimer);
+      fallbackTimer = null;
       if (hadSpeech) window.speechSynthesis?.cancel();
       if (audio && hadCurrent && !hadSpeech) {
         audio.onplaying = audio.onended = audio.onerror = null;
@@ -125,6 +127,8 @@
         request.started = true;
         request.onStart();
         clearTimeout(timer);
+        clearTimeout(fallbackTimer);
+        fallbackTimer = null;
         onStatus("음성 재생 중입니다. 들리지 않으면 미디어 음량과 연결된 이어폰을 확인해 주세요.");
         timer = setTimeout(() => fail("음성 재생이 끝나지 않아 중단했습니다. 다시 시작해 주세요."), settings.playback_timeout_ms);
       };
@@ -132,6 +136,8 @@
         if (current !== request || !request.started) return;
         clearTimeout(timer);
         timer = null;
+        clearTimeout(fallbackTimer);
+        fallbackTimer = null;
         current = null;
         if (audio) audio.onplaying = audio.onended = audio.onerror = null;
         onStatus("음성 재생이 끝났습니다.");
@@ -163,6 +169,8 @@
       };
       const rejected = error => {
         if (current !== request) return;
+        // A late MP3 rejection must not cancel speech already handed to the device.
+        if (request.synthesized && request.fallbackAttempted) return true;
         // 서버 MP3를 사용할 수 없을 때 같은 우선순위 요청 안에서 한국어 합성을 시도한다.
         if (request.dynamic && !request.started && synthesize()) return true;
         const messages = {
@@ -179,6 +187,14 @@
       }
       timer = setTimeout(() => fail("음성 재생이 지연되어 안내를 중단했습니다. 연결 상태를 확인하고 다시 시작해 주세요."),
         Math.max(0, validUntil - now()));
+      if (request.dynamic && audio && window.speechSynthesis && window.SpeechSynthesisUtterance) {
+        // OCR is valid for only a few seconds. A server that stalls instead of
+        // rejecting must leave time for Korean device speech before expiry.
+        fallbackTimer = setTimeout(() => {
+          fallbackTimer = null;
+          if (current === request && !request.started) synthesize();
+        }, Math.min(1000, Math.max(0, validUntil - now()) / 2));
+      }
       try {
         if (request.synthesized) {
           // 기존 번호 입력 질문은 브라우저 합성을 그대로 사용한다.

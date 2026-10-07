@@ -9,6 +9,7 @@ window.GCameraExposure = (() => {
     onChange = () => {}, onFatal = () => {}, timeoutMs = 3000, verifyMs = 800 } = {}) {
     let disposed = false, desired = false, revision = 0, baseline = null;
     let tail = Promise.resolve(), report = { status: "default", requested: false };
+    let diagnostics = {};
     const cancellations = new Set();
     const live = () => !disposed && track.readyState !== "ended";
     function settings() {
@@ -21,8 +22,10 @@ window.GCameraExposure = (() => {
       if (!live()) return;
       const current = settings();
       report = { status, requested: desired, target_us: exposureTimeUs,
-        actual_us: Number.isFinite(current.exposureTime) ? current.exposureTime * 100 : null,
-        settings: current, ...extra };
+        // The browser's exposureTime setting is only meaningful in manual mode.
+        actual_us: current.exposureMode === "manual" && Number.isFinite(current.exposureTime)
+          && current.exposureTime > 0 ? current.exposureTime * 100 : null,
+        settings: current, checked_at_ms: Date.now(), ...diagnostics, ...extra };
       onChange(copy(report));
     }
     function bounded(promise, duration = timeoutMs) {
@@ -96,6 +99,7 @@ window.GCameraExposure = (() => {
     }
     async function enable(token) {
       if (baseline || !live()) return;
+      diagnostics = {};
       if (!enabled || !android) return publish("unsupported", { reason: enabled ? "not_android" : "disabled" });
       if (!["getCapabilities", "getSettings", "getConstraints", "applyConstraints"].every(key => typeof track[key] === "function")) {
         return publish("unsupported", { reason: "missing_api" });
@@ -103,12 +107,24 @@ window.GCameraExposure = (() => {
       let caps, before, original;
       try { caps = track.getCapabilities(); before = settings(); original = copy(track.getConstraints()); }
       catch (_) { return publish("unsupported", { reason: "capabilities_unavailable" }); }
+      diagnostics = {
+        capabilities: copy(Object.fromEntries(fields.filter(key => caps[key] !== undefined)
+          .map(key => [key, caps[key]]))),
+        baseline_settings: before,
+      };
       const range = caps.exposureTime;
       const requested = exposureTimeUs / 100;
-      if (!caps.exposureMode?.includes("manual") || !range ||
-          !Number.isFinite(range.min) || !Number.isFinite(range.max) ||
-          !Number.isFinite(requested) || requested <= 0 || requested < range.min || requested > range.max) {
-        return publish("unsupported", { reason: "manual_exposure_unavailable" });
+      if (!caps.exposureMode?.includes("manual")) {
+        return publish("unsupported", { reason: "manual_mode_unavailable" });
+      }
+      if (!range || !Number.isFinite(range.min) || !Number.isFinite(range.max)) {
+        return publish("unsupported", { reason: "exposure_time_unavailable" });
+      }
+      if (!Number.isFinite(requested) || requested <= 0) {
+        return publish("unsupported", { reason: "invalid_target" });
+      }
+      if (requested < range.min || requested > range.max) {
+        return publish("unsupported", { reason: "exposure_time_out_of_range" });
       }
       // Refuse to change a state that we cannot restore and verify later.
       if (!["continuous", "manual"].includes(before.exposureMode) ||
@@ -122,7 +138,7 @@ window.GCameraExposure = (() => {
         return publish("unsupported", { reason: "exposure_step_too_large" });
       }
       const tolerance = Math.max(.1, requested * .02);
-      baseline = { constraints: original, settings: before, tolerance };
+      baseline = { constraints: original, settings: before, tolerance, target };
       publish("applying", { requested_time_us: target * 100 });
       try {
         await apply(constraintsWith({ exposureMode: "manual" }));
@@ -136,6 +152,8 @@ window.GCameraExposure = (() => {
         if (token === revision) publish("applied", { requested_time_us: target * 100 });
       } catch (error) {
         if (!live()) return;
+        // Preserve the failed readback before rollback replaces it with the old state.
+        diagnostics = { ...diagnostics, failed_settings: settings(), error_name: error.name };
         if (error.name === "TimeoutError") return fatal(error.message);
         await restore();
         if (live() && token === revision) publish("failed", { reason: error.message });
@@ -164,12 +182,24 @@ window.GCameraExposure = (() => {
       do { pending = tail; await pending; } while (pending !== tail);
       return copy(report);
     }
+    function check() {
+      if (live() && desired && baseline && report.status === "applied") {
+        const current = settings();
+        if (current.exposureMode !== "manual" || !Number.isFinite(current.exposureTime) ||
+            Math.abs(current.exposureTime - baseline.target) > baseline.tolerance) {
+          // Report once per trial. Reapplying while capturing could disrupt the stream.
+          publish("changed", { reason: "settings_changed", failed_settings: current,
+            requested_time_us: baseline.target * 100 });
+        }
+      }
+      return copy(report);
+    }
     function dispose() {
       disposed = true; desired = false; revision++;
       for (const cancel of [...cancellations]) cancel();
     }
     publish("default");
-    return { setBusMode, settled, dispose, snapshot: () => copy(report) };
+    return { setBusMode, settled, check, dispose, snapshot: () => copy(report) };
   }
   return { create };
 })();
