@@ -413,9 +413,15 @@ class WalkingVoice:
             if self.clear_since is not None and self.last_action is not None:
                 none_duration = output_time_s - self.clear_since
                 same_action = voice_action == self.last_action
+                lateral_to_straight = (self.last_action in ("left", "right")
+                                       and voice_action == "straight")
+                repeat_ready = none_duration + 1e-6 >= repeat_none_s(self.last_action)
+                # 좌우 안내 뒤 직진은 none이 3초 이상 유지된 경우에만 새로 안내한다.
+                if lateral_to_straight and not repeat_ready:
+                    self.last_action = voice_action
+                    self.last_steps = voice_steps
                 # none 전후 행동이 다르면 새 안내로 보고 안정화 시간 없이 즉시 재생한다.
-                if (not same_action
-                        or none_duration + 1e-6 >= repeat_none_s(self.last_action)):
+                elif not same_action or repeat_ready:
                     self.last_action = None
                     self.last_steps = None
             self.clear_since = None

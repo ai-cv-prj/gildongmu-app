@@ -154,10 +154,10 @@ class WalkingVoiceTests(unittest.TestCase):
                         messages[action],
                     )
 
-    # none 후 다른 행동의 즉시 재생 확인
+    # none 후 일반적인 다른 행동의 즉시 재생 확인
     def test_different_action_after_none_is_announced_immediately(self):
         """
-        none 유지시간과 관계없이 이전과 다른 행동은 첫 감지 시 바로 안내한다.
+        좌우에서 직진하는 예외를 제외하고 다른 행동은 첫 감지 시 바로 안내한다.
         """
         messages = {
             "left": ("왼쪽으로 한 걸음", "walking-move-left-one.mp3"),
@@ -168,7 +168,8 @@ class WalkingVoiceTests(unittest.TestCase):
         actions = ("left", "right", "straight", "stop")
         for previous in actions:
             for current in actions:
-                if current == previous:
+                if (current == previous
+                        or (previous in ("left", "right") and current == "straight")):
                     continue
                 with self.subTest(previous=previous, current=current):
                     voice = WalkingVoice()
@@ -183,6 +184,39 @@ class WalkingVoiceTests(unittest.TestCase):
                             voice.observe(prediction(level="monitor"), 100, 1.001),
                             messages[current],
                         )
+
+    # 좌우 안내 후 직진의 none 유지 기준 확인
+    def test_straight_after_lateral_requires_three_seconds_of_none(self):
+        """
+        좌우 안내 뒤에는 none이 3초 이상 유지된 경우에만 직진을 다시 안내한다.
+        """
+        straight_message = ("천천히 가세요.", "walking-straight.mp3")
+        for previous in ("left", "right"):
+            with self.subTest(previous=previous, interval="short"):
+                voice = WalkingVoice()
+                voice.last_action, voice.last_steps = previous, 1
+                with patch("src.walking_voice.walking_action", return_value=None):
+                    for timestamp in (1.0, 2.0, 3.0):
+                        self.assertIsNone(
+                            voice.observe(prediction(level="monitor"), 100, timestamp)
+                        )
+                with patch("src.walking_voice.walking_action", return_value="straight"):
+                    self.assertIsNone(
+                        voice.observe(prediction(level="monitor"), 100, 3.999)
+                    )
+            with self.subTest(previous=previous, interval="confirmed"):
+                voice = WalkingVoice()
+                voice.last_action, voice.last_steps = previous, 1
+                with patch("src.walking_voice.walking_action", return_value=None):
+                    for timestamp in (1.0, 2.0, 3.0):
+                        self.assertIsNone(
+                            voice.observe(prediction(level="monitor"), 100, timestamp)
+                        )
+                with patch("src.walking_voice.walking_action", return_value="straight"):
+                    self.assertEqual(
+                        voice.observe(prediction(level="monitor"), 100, 4.0),
+                        straight_message,
+                    )
 
     # 하단 발자국의 35·30·35 구역 침범 확인
     def test_direction_uses_footprint_overlap_with_intrusion_thresholds(self):
