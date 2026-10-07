@@ -353,12 +353,24 @@ class RiskPipelineTests(unittest.TestCase):
             "status": "candidate", "observations": 1, "required_observations": 3,
             "xyxy": [.1, .2, .5, .8], "held": False,
         }
-        self.assertEqual(stop_proximity_text(candidate), "STOP CANDIDATE 1/3")
+        self.assertEqual(stop_proximity_text(candidate), "정류장 후보 1/3")
         rendered = draw_stop_proximity(np.zeros((100, 100, 3), dtype=np.uint8), candidate)
         self.assertTrue(np.any(rendered != 0))
         self.assertEqual(
             stop_proximity_text({"status": "nearby", "basis": "left", "held": True}),
-            "LEFT STOP NEARBY HOLD",
+            "좌측 정류장 근접 유지 · 재확인 중",
+        )
+        self.assertEqual(
+            stop_proximity_text({"status": "candidate", "arrival_recorded": True}),
+            "정류장 후보 재확인 중",
+        )
+        self.assertEqual(
+            stop_proximity_text({"status": "not_detected", "arrival_recorded": True}),
+            "정류장 도착 기록 있음 · 현재 화면에서 미검출",
+        )
+        self.assertEqual(
+            stop_proximity_text({"status": "unavailable", "arrival_recorded": True}),
+            "정류장 판정 보류",
         )
 
     def test_risk_enabled_preserves_traffic_input_filter_and_drawing(self):
