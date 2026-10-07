@@ -13,6 +13,7 @@ from src.video_audio import SAMPLE_RATE, decode_clip
 
 TRAFFIC_CHANGE_CLIPS = {"red-changed.mp3", "green-changed.mp3"}
 RED_TRAFFIC_CLIPS = {"red.mp3", "red-changed.mp3"}
+EMERGENCY_WALKING_CLIPS = {"walking-stop.mp3"}
 
 
 # 음원 길이 계산
@@ -89,7 +90,8 @@ class CrosswalkVoice:
 def prioritize_voice_events(walking_events, traffic_events, crosswalk_events,
                             walking_surface_events=()):
     """상위 음성이 재생 중인 시점의 하위 이벤트를 폐기해 단일 재생 시간축을 만든다."""
-    candidates = [(time_s, clip, 4, "walking" if clip else "walking_stop")
+    candidates = [(time_s, clip, 0 if clip in EMERGENCY_WALKING_CLIPS else 4,
+                   "walking" if clip else "walking_stop")
                   for time_s, clip in walking_events]
     candidates += [
         (time_s, clip, 2 if clip in RED_TRAFFIC_CLIPS
@@ -121,7 +123,8 @@ def prioritize_voice_events(walking_events, traffic_events, crosswalk_events,
                 active_source = None
                 active_clip = None
             continue
-        walking_action_changed = source == "walking" and active_source == "walking"
+        walking_action_changed = (source == "walking" and active_source == "walking"
+                                  and priority == active_priority)
         crosswalk_direction_changed = (source == "crosswalk" and active_source == "crosswalk"
                                        and clip != active_clip)
         if (time_s < active_end - 1e-9 and priority >= active_priority

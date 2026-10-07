@@ -54,7 +54,7 @@ DEFAULT_CROSSWALK_SAFETY = {
     "outside_finish_walkable_fraction": 0.80,
     "non_green_obstacle_voice_suppression": True,
     "non_green_obstacle_crosswalk_threshold": 0.20,
-    "non_green_obstacle_nonwalkable_threshold": 0.20,
+    "non_green_obstacle_nonwalkable_threshold": 0.50,
     "non_green_obstacle_contact_half_height": 0.02,
 }
 

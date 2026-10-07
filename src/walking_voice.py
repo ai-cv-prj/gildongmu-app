@@ -112,7 +112,7 @@ def suppress_non_green_crosswalk_voice(prediction, signal, class_map, label_ids,
             or state not in ("red", "unknown")):
         return prediction
     crosswalk_threshold = config.get("non_green_obstacle_crosswalk_threshold", .20)
-    nonwalkable_threshold = config.get("non_green_obstacle_nonwalkable_threshold", .20)
+    nonwalkable_threshold = config.get("non_green_obstacle_nonwalkable_threshold", .50)
     half_height = config.get("non_green_obstacle_contact_half_height", .02)
     for item in prediction.get("detections", []):
         if item.get("alert_level", item.get("risk_level")) != "danger":
