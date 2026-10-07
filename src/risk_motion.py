@@ -196,7 +196,7 @@ class BackgroundStationarityGuard:
 
     # 카메라 배경 정지 상태 갱신
     def update(self, frame, detections, timestamp, timestamp_valid=True):
-        """3초 연속 정지를 확인하고 짧은 흔들림에는 정지 상태를 유지한다."""
+        """설정된 시간 동안 연속 정지를 확인하고 짧은 흔들림에는 상태를 유지한다."""
         elapsed_s = None if self.previous_time is None else timestamp - self.previous_time
         if (not timestamp_valid or elapsed_s is not None
                 and (elapsed_s <= 0 or elapsed_s > self.cfg["hard_reset_gap_s"])):
