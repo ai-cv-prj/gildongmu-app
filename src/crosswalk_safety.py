@@ -54,8 +54,16 @@ DEFAULT_CROSSWALK_SAFETY = {
     "outside_finish_walkable_fraction": 0.80,
     "non_green_obstacle_voice_suppression": True,
     "non_green_obstacle_crosswalk_threshold": 0.20,
-    "non_green_obstacle_nonwalkable_threshold": 0.50,
-    "non_green_obstacle_contact_half_height": 0.02,
+    "non_green_obstacle_crosswalk_contact_half_height": 0.02,
+    "obstacle_surrounding_voice_suppression": True,
+    "obstacle_surrounding_walkable_threshold": 0.30,
+    "obstacle_surrounding_partial_walkable_threshold": 0.05,
+    "obstacle_surrounding_side_width_ratio": 0.15,
+    "obstacle_surrounding_side_height_ratio": 0.20,
+    "obstacle_surrounding_bottom_height_ratio": 0.10,
+    "obstacle_surrounding_max_side_width_ratio": 0.02,
+    "obstacle_surrounding_max_bottom_height_ratio": 0.02,
+    "obstacle_surrounding_min_region_pixels": 4,
 }
 
 
@@ -73,7 +81,10 @@ def crosswalk_safety_config(value=None):
     if not isinstance(value, dict) or set(value) - set(DEFAULT_CROSSWALK_SAFETY):
         raise ValueError("crosswalk_safety: unknown keys or invalid mapping")
     cfg = {**deepcopy(DEFAULT_CROSSWALK_SAFETY), **deepcopy(value)}
-    for key in ("enabled", "non_green_obstacle_voice_suppression"):
+    for key in (
+        "enabled", "non_green_obstacle_voice_suppression",
+        "obstacle_surrounding_voice_suppression",
+    ):
         if not isinstance(cfg[key], bool):
             raise ValueError(f"crosswalk_safety.{key} must be boolean")
     unit_keys = (
@@ -84,8 +95,15 @@ def crosswalk_safety_config(value=None):
         "roi_occlusion_threshold", "outside_finish_walkable_fraction",
         "exit_roi_left", "exit_roi_right", "exit_roi_top", "exit_roi_bottom",
         "exit_roi_crosswalk_threshold",
-        "non_green_obstacle_crosswalk_threshold", "non_green_obstacle_nonwalkable_threshold",
-        "non_green_obstacle_contact_half_height",
+        "non_green_obstacle_crosswalk_threshold",
+        "non_green_obstacle_crosswalk_contact_half_height",
+        "obstacle_surrounding_walkable_threshold",
+        "obstacle_surrounding_partial_walkable_threshold",
+        "obstacle_surrounding_side_width_ratio",
+        "obstacle_surrounding_side_height_ratio",
+        "obstacle_surrounding_bottom_height_ratio",
+        "obstacle_surrounding_max_side_width_ratio",
+        "obstacle_surrounding_max_bottom_height_ratio",
     )
     for key in unit_keys:
         item = cfg[key]
@@ -106,6 +124,10 @@ def crosswalk_safety_config(value=None):
     if (isinstance(cfg["min_valid_rows"], bool) or not isinstance(cfg["min_valid_rows"], int)
             or cfg["min_valid_rows"] < 3):
         raise ValueError("crosswalk_safety.min_valid_rows must be an integer of at least 3")
+    pixels = cfg["obstacle_surrounding_min_region_pixels"]
+    if isinstance(pixels, bool) or not isinstance(pixels, int) or pixels <= 0:
+        raise ValueError(
+            "crosswalk_safety.obstacle_surrounding_min_region_pixels must be a positive integer")
     if cfg["exit_margin"] >= cfg["edge_margin"]:
         raise ValueError("crosswalk exit margin must be below edge margin")
     if cfg["roi_left"] >= cfg["roi_right"] or cfg["roi_top"] >= cfg["roi_bottom"]:

@@ -91,13 +91,103 @@ def crosswalk_contact_fraction(item, class_map, label_ids, shape, half_height):
         item, class_map, label_ids, shape, half_height, "crosswalk")
 
 
-# 비초록 신호의 횡단보도·보행불가 장애물 음성 제외 표시
-def suppress_non_green_crosswalk_voice(prediction, signal, class_map, label_ids, shape, config):
-    """비초록 신호에서 횡단보도나 보행불가 영역 위 위험 객체를 음성에서 제외한다."""
+# 음성 판정용 bbox 바깥 U자 띠의 보행가능 비율 계산
+def voice_surrounding_walkability(item, class_map, label_ids, shape, config):
+    """bbox 좌우 하단 20%와 바로 아래 띠에서 walkable 픽셀의 통합 비율을 계산한다."""
+    unavailable = {
+        "status": "unavailable", "walkable_fraction": None,
+        "pixel_count": 0, "visible_region_count": 0,
+        "expected_region_count": 3, "regions": {},
+    }
+    if (class_map is None or not label_ids or "walkable" not in label_ids
+            or class_map.shape != tuple(shape[:2])):
+        return unavailable
+    try:
+        x1, y1, x2, y2 = map(float, item["xyxy"])
+    except (KeyError, TypeError, ValueError):
+        return unavailable
+    if not all(isfinite(value) for value in (x1, y1, x2, y2)):
+        return unavailable
+    height, width = shape[:2]
+    left = max(0, min(width, int(np.floor(x1))))
+    top = max(0, min(height, int(np.floor(y1))))
+    right = max(0, min(width, int(np.ceil(x2))))
+    bottom = max(0, min(height, int(np.ceil(y2))))
+    if right <= left or bottom <= top:
+        return unavailable
+    box_width, box_height = right - left, bottom - top
+    minimum = config.get("obstacle_surrounding_min_region_pixels", 4)
+    side_width = max(minimum, min(
+        round(box_width * config.get("obstacle_surrounding_side_width_ratio", .15)),
+        round(width * config.get("obstacle_surrounding_max_side_width_ratio", .02)),
+    ))
+    side_height = max(
+        minimum,
+        round(box_height * config.get("obstacle_surrounding_side_height_ratio", .20)),
+    )
+    bottom_height = max(minimum, min(
+        round(box_height * config.get("obstacle_surrounding_bottom_height_ratio", .10)),
+        round(height * config.get("obstacle_surrounding_max_bottom_height_ratio", .02)),
+    ))
+    candidates = {
+        "left": (left - side_width, bottom - side_height, left, bottom),
+        "right": (right, bottom - side_height, right + side_width, bottom),
+        "bottom": (left, bottom, right, bottom + bottom_height),
+    }
+    walkable_id = label_ids["walkable"]
+    regions = {}
+    total_pixels = 0
+    walkable_pixels = 0
+    for name, (rx1, ry1, rx2, ry2) in candidates.items():
+        rx1, rx2 = max(0, rx1), min(width, rx2)
+        ry1, ry2 = max(0, ry1), min(height, ry2)
+        if rx2 <= rx1 or ry2 <= ry1:
+            continue
+        patch = class_map[ry1:ry2, rx1:rx2]
+        if patch.size < minimum:
+            continue
+        region_walkable = int(np.count_nonzero(patch == walkable_id))
+        regions[name] = {
+            "walkable_fraction": region_walkable / int(patch.size),
+            "pixel_count": int(patch.size),
+        }
+        walkable_pixels += region_walkable
+        total_pixels += int(patch.size)
+    if not regions:
+        return {**unavailable, "status": "clipped"}
+    return {
+        "status": "available" if len(regions) == 3 else "partial",
+        "walkable_fraction": walkable_pixels / total_pixels,
+        "pixel_count": total_pixels,
+        "visible_region_count": len(regions),
+        "expected_region_count": 3,
+        "regions": regions,
+    }
+
+
+# 장애물 주변과 비초록 신호의 횡단보도 음성 제외 표시
+def apply_obstacle_voice_suppression(prediction, signal, class_map, label_ids, shape, config):
+    """바깥 띠와 비초록 횡단보도 근거에 따라 위험 객체를 음성에서 제외한다."""
     for item in prediction.get("detections", []):
         item.pop("voice_suppressed_reason", None)
         item.pop("crosswalk_contact_fraction", None)
-        item.pop("nonwalkable_contact_fraction", None)
+        item.pop("voice_surrounding_walkability", None)
+        if item.get("alert_level", item.get("risk_level")) != "danger":
+            continue
+        surroundings = voice_surrounding_walkability(
+            item, class_map, label_ids, shape, config)
+        item["voice_surrounding_walkability"] = surroundings
+        fraction = surroundings["walkable_fraction"]
+        if config.get("obstacle_surrounding_voice_suppression", True):
+            if fraction is None:
+                item["voice_suppressed_reason"] = "walkable_surroundings_unavailable"
+            else:
+                threshold = config.get(
+                    "obstacle_surrounding_partial_walkable_threshold", .05
+                ) if surroundings["status"] == "partial" else config.get(
+                    "obstacle_surrounding_walkable_threshold", .30)
+                if fraction <= threshold:
+                    item["voice_suppressed_reason"] = "low_walkable_surroundings"
     signal = signal or {}
     selected = signal.get("selected_detection_index")
     state = signal.get("signal_state")
@@ -106,23 +196,16 @@ def suppress_non_green_crosswalk_voice(prediction, signal, class_map, label_ids,
             or state not in ("red", "unknown")):
         return prediction
     crosswalk_threshold = config.get("non_green_obstacle_crosswalk_threshold", .20)
-    nonwalkable_threshold = config.get("non_green_obstacle_nonwalkable_threshold", .50)
-    half_height = config.get("non_green_obstacle_contact_half_height", .02)
+    half_height = config.get("non_green_obstacle_crosswalk_contact_half_height", .02)
     for item in prediction.get("detections", []):
         if item.get("alert_level", item.get("risk_level")) != "danger":
             continue
         crosswalk_fraction = crosswalk_contact_fraction(
             item, class_map, label_ids, shape, half_height)
-        nonwalkable_fraction = label_contact_fraction(
-            item, class_map, label_ids, shape, half_height, "non_walkable")
         if crosswalk_fraction is not None:
             item["crosswalk_contact_fraction"] = crosswalk_fraction
-        if nonwalkable_fraction is not None:
-            item["nonwalkable_contact_fraction"] = nonwalkable_fraction
         if crosswalk_fraction is not None and crosswalk_fraction >= crosswalk_threshold:
             item["voice_suppressed_reason"] = "non_green_signal_crosswalk_obstacle"
-        elif nonwalkable_fraction is not None and nonwalkable_fraction >= nonwalkable_threshold:
-            item["voice_suppressed_reason"] = "non_green_signal_nonwalkable_obstacle"
     return prediction
 
 

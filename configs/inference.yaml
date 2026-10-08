@@ -104,11 +104,21 @@ crosswalk_safety:
   finish_walkable_fraction: 0.60
   outside_finish_walkable_fraction: 0.80
 
-  # 빨간불·신호 미확인 중 장애물 음성 억제
+  # 빨간불·신호 미확인 중 횡단보도 장애물 음성 억제
   non_green_obstacle_voice_suppression: true
   non_green_obstacle_crosswalk_threshold: 0.20
-  non_green_obstacle_nonwalkable_threshold: 0.50
-  non_green_obstacle_contact_half_height: 0.02
+  non_green_obstacle_crosswalk_contact_half_height: 0.02
+
+  # 신호와 관계없이 bbox 좌·우·아래 바깥 띠의 통합 보행가능 비율로 음성 억제
+  obstacle_surrounding_voice_suppression: true
+  obstacle_surrounding_walkable_threshold: 0.30
+  obstacle_surrounding_partial_walkable_threshold: 0.05
+  obstacle_surrounding_side_width_ratio: 0.15
+  obstacle_surrounding_side_height_ratio: 0.20
+  obstacle_surrounding_bottom_height_ratio: 0.10
+  obstacle_surrounding_max_side_width_ratio: 0.02
+  obstacle_surrounding_max_bottom_height_ratio: 0.02
+  obstacle_surrounding_min_region_pixels: 4
 
 # 보행로 이탈 안내
 # 횡단보도 판정과 같은 가상 발 영역을 사용하되 상태와 음성은 따로 관리한다.
