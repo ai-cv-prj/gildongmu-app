@@ -23,7 +23,7 @@ class ObservedRouteMatcher:
     def update(self, track_id, timestamp, observations, bus_box, *, target, complete):
         # Bound history to the same short evidence window as target recognition.
         for key, (_, last_seen) in list(self.candidates.items()):
-            if timestamp - last_seen > 1.2:
+            if timestamp - last_seen > 2.0:
                 del self.candidates[key]
         for track, context in list(self.tracks.items()):
             if timestamp - context['last'] > .6 + 1e-6:
