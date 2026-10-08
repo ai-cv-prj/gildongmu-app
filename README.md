@@ -186,7 +186,8 @@ source .venv/bin/activate
 python -m scripts.run_video_inference --sample-dir data/samples/input/sample1
 ```
 
-지정한 폴더 바로 아래의 MP4만 파일명 순서대로 처리합니다. 하위 폴더는 탐색하지 않습니다.
+지정한 폴더 바로 아래의 MP4와 WebM을 파일명 순서대로 처리합니다. 하위 폴더는 탐색하지 않습니다.
+입력 형식과 관계없이 결과는 `result_원본이름.mp4`로 저장합니다.
 
 ### 영상 한 개 실행
 
@@ -558,7 +559,7 @@ node --test tests/frontend/test_*.js tests/frontend/test_*.cjs
 | 문제 | 확인할 내용 |
 | --- | --- |
 | 샘플 폴더가 없음 | `data/samples/input/sample1/`을 만들고 MP4를 넣었는지 확인 |
-| 샘플 MP4가 없음 | `--sample-dir`가 MP4가 직접 들어 있는 폴더인지 확인 |
+| 샘플 MP4·WebM이 없음 | `--sample-dir`가 MP4 또는 WebM이 직접 들어 있는 폴더인지 확인 |
 | 모델 파일이 없음 | `configs/paths.yaml`의 경로와 실제 가중치 위치 확인 |
 | Mask2Former 로딩 실패 | 설정·전처리 파일과 모든 가중치 조각이 있는지 확인 |
 | CUDA를 사용할 수 없음 | NVIDIA 드라이버와 CUDA 지원 PyTorch 확인 또는 `--device cpu` 사용 |

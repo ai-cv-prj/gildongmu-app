@@ -28,7 +28,7 @@ def main():
     )
     inputs = parser.add_mutually_exclusive_group()
     inputs.add_argument("--video-path", type=Path, help="입력 영상 한 개")
-    inputs.add_argument("--sample-dir", type=Path, help="모든 MP4를 처리할 샘플 폴더")
+    inputs.add_argument("--sample-dir", type=Path, help="모든 MP4·WebM을 처리할 샘플 폴더")
     outputs = parser.add_mutually_exclusive_group()
     outputs.add_argument("--output-path", type=Path, help="영상 한 개의 결과 MP4 경로")
     outputs.add_argument("--output-dir", type=Path, help="결과를 저장할 기존 폴더")
