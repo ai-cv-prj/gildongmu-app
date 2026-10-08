@@ -180,32 +180,16 @@ window.GOverlay = (() => {
     const accent = shown ? colorFor(shown) : checking ? checkingBlue : muted;
     ctx.lineWidth = 1.5 * scale;
     rounded(x, y, width, height, 12 * scale, "rgba(9, 20, 36, 0.94)", accent);
-    const heading = shown ? isTarget(shown) ? "인식한 버스 번호" : "다른 버스 번호" : "버스 번호 인식";
-    fittedText(heading, x + padding, y + 22 * scale, 11 * scale, width * .48, "#edf3fa");
-    if (target) {
-      const targetLabel = `찾는 번호 ${target}`;
-      ctx.font = `bold ${11 * scale}px system-ui`;
-      const targetWidth = Math.min(width * .48, ctx.measureText(targetLabel).width);
-      fittedText(targetLabel, x + width - padding - targetWidth, y + 22 * scale,
-        11 * scale, width * .48, muted);
-    }
-    const title = shown ? String(shown.route_number)
-      : failed ? "번호 인식을 사용할 수 없어요"
-      : preparing ? "번호 인식을 준비하고 있어요"
-      : checking ? "버스 번호 확인 중"
-      : !fresh && Number.isFinite(bus.captured_at_ms) ? "번호를 다시 확인하고 있어요"
-      : "버스를 찾고 있어요";
+    // Keep one status line; tentative readings must not claim target confirmation.
     const confirmedTarget = shown && isTarget(shown) && shown.state === "matched_candidate";
-    const detail = confirmedTarget ? null : shown ? isTarget(shown)
-      ? `${shown.route_number}번 버스 인식 중`
-      : `다른 노선 · 목표 ${target || "입력한 번호"}번`
-      : failed ? "번호 인식 상태를 확인해 주세요"
-      : preparing ? "잠시만 기다려 주세요"
-      : checking ? "번호를 읽고 있어요" : "버스 방향으로 유지해 주세요";
-    fittedText(title, x + padding, y + (confirmedTarget ? 88 : shown ? 78 : 64) * scale,
-      (confirmedTarget ? 56 : shown ? 52 : 23) * scale, width - padding * 2, accent);
-    if (detail) fittedText(detail, x + padding, y + (shown ? 99 : 88) * scale, 11 * scale,
-      width - padding * 2, "#edf3fa");
+    const title = shown && !isTarget(shown) ? `${shown.route_number} 다른 버스 확인`
+      : confirmedTarget ? `${shown.route_number} 목표 버스 확인`
+      : failed ? "번호 인식 오류"
+      : preparing ? "번호 인식 준비 중"
+      : shown || checking ? "버스 번호 확인중"
+      : "버스 찾는 중";
+    fittedText(title, x + padding, y + 65 * scale, 26 * scale,
+      width - padding * 2, accent);
     ctx.restore();
   }
 
