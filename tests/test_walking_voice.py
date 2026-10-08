@@ -25,9 +25,9 @@ from src.risk_visualization import action_status_text, risk_identity
 from src.walking_voice import (
     WalkingVoice,
     center_occupancy_ratio,
+    apply_obstacle_voice_suppression,
     movement_steps,
     repeat_none_s,
-    suppress_non_green_crosswalk_voice,
     transition_confirm_s,
     walking_action,
     warning_directions,
@@ -57,6 +57,35 @@ def prediction(*items, level="danger", source="object", epoch=0):
     index = items[0]["detection_index"] if items else None
     return {"warning": {"level": level, "source": source, "detection_index": index},
             "detections": list(items), "state_epoch": epoch}
+
+
+# 음성 제외 테스트용 U자 띠 마스크 만들기
+def voice_u_strip_map(walkable_pixels=0, label=1):
+    """100x100 프레임의 테스트 bbox 바깥 U자 띠에 지정 픽셀 수만큼 라벨을 채운다."""
+    class_map = np.zeros((100, 100), np.uint8)
+    strip = np.zeros_like(class_map, dtype=bool)
+    strip[68:80, 36:40] = True
+    strip[68:80, 60:64] = True
+    strip[80:84, 40:60] = True
+    coordinates = np.argwhere(strip)
+    selected = coordinates[:walkable_pixels]
+    if selected.size:
+        class_map[selected[:, 0], selected[:, 1]] = label
+    return class_map
+
+
+# 화면 하단에 잘린 bbox의 음성 제외 테스트용 띠 마스크 만들기
+def partial_voice_u_strip_map(walkable_pixels=0):
+    """아래 띠가 보이지 않는 테스트 bbox의 좌우 띠에 walkable을 채운다."""
+    class_map = np.zeros((100, 100), np.uint8)
+    strip = np.zeros_like(class_map, dtype=bool)
+    strip[84:100, 36:40] = True
+    strip[84:100, 60:64] = True
+    coordinates = np.argwhere(strip)
+    selected = coordinates[:walkable_pixels]
+    if selected.size:
+        class_map[selected[:, 0], selected[:, 1]] = 1
+    return class_map
 
 
 class WalkingVoiceTests(unittest.TestCase):
@@ -480,103 +509,175 @@ class WalkingVoiceTests(unittest.TestCase):
         on_crosswalk = danger_item(1, [40, 20, 60, 80])
         outside = danger_item(2, [60, 20, 95, 80], "car")
         result = prediction(on_crosswalk, outside)
-        class_map = np.zeros((100, 100), np.uint8)
+        class_map = np.ones((100, 100), np.uint8)
         class_map[76:84, 35:65] = 2
         config = {
             "non_green_obstacle_voice_suppression": True,
             "non_green_obstacle_crosswalk_threshold": .20,
-            "non_green_obstacle_nonwalkable_threshold": .50,
-            "non_green_obstacle_contact_half_height": .02,
+            "non_green_obstacle_crosswalk_contact_half_height": .02,
+            "obstacle_surrounding_voice_suppression": True,
+            "obstacle_surrounding_walkable_threshold": .30,
+            "obstacle_surrounding_partial_walkable_threshold": .05,
         }
         for state in ("red", "unknown"):
             on_crosswalk.pop("voice_suppressed_reason", None)
-            suppress_non_green_crosswalk_voice(
+            apply_obstacle_voice_suppression(
                 result, {"signal_state": state, "selected_detection_index": 0},
-                class_map, {"crosswalk": 2}, (100, 100, 3), config,
+                class_map, {"walkable": 1, "crosswalk": 2}, (100, 100, 3), config,
             )
             self.assertEqual(on_crosswalk["voice_suppressed_reason"],
                              "non_green_signal_crosswalk_obstacle")
         self.assertNotIn("voice_suppressed_reason", outside)
         self.assertEqual(walking_action(result, 100), "left")
 
-    # 비초록 신호의 보행불가 영역 장애물 음성 제외 확인
-    def test_non_green_signal_suppresses_nonwalkable_obstacle_voice(self):
-        """빨간불과 확인 중 신호에는 보행불가 영역 위 위험도 음성에서 제외한다."""
-        item = danger_item(1, [40, 20, 60, 80])
-        result = prediction(item)
-        class_map = np.zeros((100, 100), np.uint8)
-        class_map[76:84, 35:65] = 3
+    # 신호와 무관한 bbox 바깥 띠 음성 제외 확인
+    def test_low_walkable_surroundings_suppress_voice_for_every_signal(self):
+        """바깥 띠의 통합 보행가능 비율이 30% 이하면 신호와 관계없이 음성을 제외한다."""
         config = {
             "non_green_obstacle_voice_suppression": True,
             "non_green_obstacle_crosswalk_threshold": .20,
-            "non_green_obstacle_nonwalkable_threshold": .50,
-            "non_green_obstacle_contact_half_height": .02,
+            "non_green_obstacle_crosswalk_contact_half_height": .02,
+            "obstacle_surrounding_voice_suppression": True,
+            "obstacle_surrounding_walkable_threshold": .30,
         }
-        for state in ("red", "unknown"):
-            suppress_non_green_crosswalk_voice(
-                result, {"signal_state": state, "selected_detection_index": 0},
-                class_map, {"crosswalk": 2, "non_walkable": 3}, (100, 100, 3), config,
-            )
-            self.assertEqual(item["voice_suppressed_reason"],
-                             "non_green_signal_nonwalkable_obstacle")
-            self.assertEqual(item["nonwalkable_contact_fraction"], 1.0)
-            self.assertIsNone(walking_action(result, 100))
-
-    # 보행불가 접촉 비율 50% 경계 확인
-    def test_nonwalkable_obstacle_voice_threshold_is_fifty_percent(self):
-        """발밑 보행불가 비율이 50% 이상일 때만 위험 음성을 제외한다."""
-        config = {
-            "non_green_obstacle_voice_suppression": True,
-            "non_green_obstacle_crosswalk_threshold": .20,
-            "non_green_obstacle_nonwalkable_threshold": .50,
-            "non_green_obstacle_contact_half_height": .02,
-        }
-        for nonwalkable_pixels, suppressed in ((39, False), (40, True)):
-            with self.subTest(nonwalkable_pixels=nonwalkable_pixels):
+        for state, selected in (("green", 0), ("red", 0), ("unknown", 0), ("red", None)):
+            with self.subTest(state=state, selected=selected):
                 item = danger_item(1, [40, 20, 60, 80])
                 result = prediction(item)
-                class_map = np.zeros((100, 100), np.uint8)
-                contact_patch = class_map[78:82, 40:60]
-                contact_patch.flat[:nonwalkable_pixels] = 3
-                suppress_non_green_crosswalk_voice(
-                    result, {"signal_state": "red", "selected_detection_index": 0},
-                    class_map, {"crosswalk": 2, "non_walkable": 3},
+                apply_obstacle_voice_suppression(
+                    result, {"signal_state": state, "selected_detection_index": selected},
+                    np.zeros((100, 100), np.uint8), {"walkable": 1, "crosswalk": 2},
                     (100, 100, 3), config,
                 )
-                self.assertAlmostEqual(
-                    item["nonwalkable_contact_fraction"], nonwalkable_pixels / 80)
+                self.assertEqual(item["voice_suppressed_reason"], "low_walkable_surroundings")
+                self.assertEqual(
+                    item["voice_surrounding_walkability"]["walkable_fraction"], 0.0)
+                self.assertIsNone(walking_action(result, 100))
+
+    # bbox 바깥 띠 통합 비율의 30% 경계 확인
+    def test_surrounding_voice_full_strip_threshold(self):
+        """세 띠의 통합 비율이 30%를 넘으면 위험 음성을 유지한다."""
+        config = {
+            "non_green_obstacle_voice_suppression": True,
+            "non_green_obstacle_crosswalk_threshold": .20,
+            "non_green_obstacle_crosswalk_contact_half_height": .02,
+            "obstacle_surrounding_voice_suppression": True,
+            "obstacle_surrounding_walkable_threshold": .30,
+            "obstacle_surrounding_partial_walkable_threshold": .05,
+        }
+        item = danger_item(1, [40, 20, 60, 80], "car")
+        result = prediction(item)
+        apply_obstacle_voice_suppression(
+            result, {"signal_state": "green", "selected_detection_index": 0},
+            voice_u_strip_map(53), {"walkable": 1, "crosswalk": 2},
+            (100, 100, 3), config,
+        )
+        self.assertNotIn("voice_suppressed_reason", item)
+        self.assertEqual(walking_action(result, 100), "stop")
+
+    # 일부만 보이는 bbox 바깥 띠의 5% 경계 확인
+    def test_surrounding_voice_partial_strip_threshold(self):
+        """보이는 좌우 띠의 통합 비율이 5% 이하일 때만 음성을 제외한다."""
+        config = {
+            "non_green_obstacle_voice_suppression": True,
+            "non_green_obstacle_crosswalk_threshold": .20,
+            "non_green_obstacle_crosswalk_contact_half_height": .02,
+            "obstacle_surrounding_voice_suppression": True,
+            "obstacle_surrounding_walkable_threshold": .30,
+            "obstacle_surrounding_partial_walkable_threshold": .05,
+        }
+        for pixels, suppressed in ((6, True), (7, False)):
+            with self.subTest(walkable_pixels=pixels):
+                item = danger_item(1, [40, 20, 60, 100], "car")
+                result = prediction(item)
+                apply_obstacle_voice_suppression(
+                    result, {"signal_state": "green", "selected_detection_index": 0},
+                    partial_voice_u_strip_map(pixels),
+                    {"walkable": 1, "crosswalk": 2}, (100, 100, 3), config,
+                )
+                surroundings = item["voice_surrounding_walkability"]
+                self.assertEqual(surroundings["status"], "partial")
+                self.assertEqual(surroundings["visible_region_count"], 2)
+                self.assertAlmostEqual(surroundings["walkable_fraction"], pixels / 128)
                 if suppressed:
                     self.assertEqual(
-                        item["voice_suppressed_reason"],
-                        "non_green_signal_nonwalkable_obstacle",
-                    )
+                        item["voice_suppressed_reason"], "low_walkable_surroundings")
                     self.assertIsNone(walking_action(result, 100))
                 else:
                     self.assertNotIn("voice_suppressed_reason", item)
                     self.assertEqual(walking_action(result, 100), "stop")
 
-    # 초록불·신호 미선택·마스크 미확인 시 음성 유지 확인
-    def test_voice_is_not_suppressed_without_selected_non_green_evidence(self):
-        """초록불이거나 신호·횡단보도 근거가 없으면 위험 음성을 유지한다."""
+    # 보행가능 비율 계산 불가 시 음성 제외 확인
+    def test_surrounding_voice_unavailable_context_is_silent(self):
+        """마스크가 없거나 보이는 띠가 하나도 없으면 위험 음성을 제외한다."""
         config = {
             "non_green_obstacle_voice_suppression": True,
             "non_green_obstacle_crosswalk_threshold": .20,
-            "non_green_obstacle_nonwalkable_threshold": .50,
-            "non_green_obstacle_contact_half_height": .02,
+            "non_green_obstacle_crosswalk_contact_half_height": .02,
+            "obstacle_surrounding_voice_suppression": True,
+            "obstacle_surrounding_walkable_threshold": .30,
+            "obstacle_surrounding_partial_walkable_threshold": .05,
         }
         cases = (
-            ({"signal_state": "green", "selected_detection_index": 0}, np.full((100, 100), 2)),
-            ({"signal_state": "red", "selected_detection_index": None}, np.full((100, 100), 2)),
-            ({"signal_state": "red", "selected_detection_index": 0}, None),
+            ("mask_unavailable", [40, 20, 60, 80], None),
+            ("no_visible_region", [0, 20, 100, 100], np.zeros((100, 100), np.uint8)),
         )
-        for signal, class_map in cases:
-            with self.subTest(signal=signal["signal_state"], mask=class_map is not None):
-                item = danger_item(1, [40, 20, 60, 80])
+        for name, box, class_map in cases:
+            with self.subTest(name=name):
+                item = danger_item(1, box, "car")
                 result = prediction(item)
-                suppress_non_green_crosswalk_voice(
-                    result, signal, class_map, {"crosswalk": 2}, (100, 100, 3), config)
-                self.assertNotIn("voice_suppressed_reason", item)
-                self.assertEqual(walking_action(result, 100), "stop")
+                apply_obstacle_voice_suppression(
+                    result, {"signal_state": "green", "selected_detection_index": 0},
+                    class_map, {"walkable": 1, "crosswalk": 2},
+                    (100, 100, 3), config,
+                )
+                self.assertEqual(
+                    item["voice_suppressed_reason"], "walkable_surroundings_unavailable")
+                self.assertIsNone(walking_action(result, 100))
+
+    # 크기가 다른 bbox 바깥 띠의 픽셀 가중 통합 확인
+    def test_surrounding_voice_fraction_uses_all_strip_pixels(self):
+        """한 띠가 100%여도 전체 176픽셀 중 48픽셀인 27.27%로 음성을 제외한다."""
+        item = danger_item(1, [40, 20, 60, 80])
+        result = prediction(item)
+        class_map = np.zeros((100, 100), np.uint8)
+        class_map[68:80, 36:40] = 1
+        config = {
+            "non_green_obstacle_voice_suppression": True,
+            "non_green_obstacle_crosswalk_threshold": .20,
+            "non_green_obstacle_crosswalk_contact_half_height": .02,
+            "obstacle_surrounding_voice_suppression": True,
+            "obstacle_surrounding_walkable_threshold": .30,
+        }
+        apply_obstacle_voice_suppression(
+            result, {"signal_state": "green", "selected_detection_index": 0},
+            class_map, {"walkable": 1, "crosswalk": 2}, (100, 100, 3), config,
+        )
+        self.assertEqual(item["voice_suppressed_reason"], "low_walkable_surroundings")
+        self.assertAlmostEqual(
+            item["voice_surrounding_walkability"]["walkable_fraction"], 48 / 176)
+        self.assertIsNone(walking_action(result, 100))
+
+    # 횡단보도 라벨의 보행가능 비율 제외 확인
+    def test_surrounding_voice_fraction_excludes_crosswalk_pixels(self):
+        """U자 띠가 전부 crosswalk여도 walkable 비율은 0%로 계산한다."""
+        item = danger_item(1, [40, 20, 60, 80])
+        result = prediction(item)
+        config = {
+            "non_green_obstacle_voice_suppression": True,
+            "non_green_obstacle_crosswalk_threshold": .20,
+            "non_green_obstacle_crosswalk_contact_half_height": .02,
+            "obstacle_surrounding_voice_suppression": True,
+            "obstacle_surrounding_walkable_threshold": .30,
+        }
+        apply_obstacle_voice_suppression(
+            result, {"signal_state": "green", "selected_detection_index": 0},
+            voice_u_strip_map(176, label=2), {"walkable": 1, "crosswalk": 2},
+            (100, 100, 3), config,
+        )
+        self.assertEqual(
+            item["voice_surrounding_walkability"]["walkable_fraction"], 0.0)
+        self.assertEqual(item["voice_suppressed_reason"], "low_walkable_surroundings")
 
     # 저장 영상 식별자 문자열 확인
     def test_overlay_identity_contains_track_and_event_ids(self):
@@ -630,7 +731,10 @@ class WalkingVoiceTests(unittest.TestCase):
                 "src.pipeline.draw_risk", side_effect=lambda frame, *_: frame
             ), redirect_stdout(io.StringIO()):
                 self.assertEqual(process_video(source, output, detector=detector,
-                                               risk_config={"enabled": True}), 20)
+                                               risk_config={"enabled": True},
+                                               crosswalk_config={
+                                                   "obstacle_surrounding_voice_suppression": False,
+                                               }), 20)
             probe = subprocess.run(
                 [ffmpeg_executable(), "-v", "error", "-i", str(output),
                  "-map", "0:a:0", "-f", "s16le", "-ac", "1", "-ar", "16000", "pipe:1"],
@@ -702,7 +806,10 @@ class WalkingVoiceTests(unittest.TestCase):
             ), patch("src.pipeline.mux_voice", side_effect=RuntimeError("합성 오류")), \
                     redirect_stdout(io.StringIO()):
                 with self.assertRaisesRegex(RuntimeError, "합성 오류"):
-                    process_video(source, output, detector=detector, risk_config={"enabled": True})
+                    process_video(
+                        source, output, detector=detector, risk_config={"enabled": True},
+                        crosswalk_config={"obstacle_surrounding_voice_suppression": False},
+                    )
             self.assertFalse(output.exists())
             self.assertFalse(risk_log_path(output).exists())
             self.assertEqual(list(Path(folder).glob("*.partial.*")), [])
