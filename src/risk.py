@@ -240,9 +240,11 @@ class RiskEngine:
                 g["central_immediate_overlap"] >= threshold or
                 (g["point"][1] >= self.config["side_danger_y"] and g["close_candidate"]))
             if static:
-                if related and p["band"] == "near" and immediate_danger:
+                if g["immediate_overlap"] >= threshold and immediate_danger:
                     item["risk_level"] = "danger"
-                    item["reasons"].append("static_near_contact")
+                    item["reasons"].append(
+                        "static_near_contact" if p["band"] == "near"
+                        else "near_path_occupied")
                 elif related and p["band"] in ("middle","unknown","near"):
                     item["risk_level"] = "caution"
                     item["reasons"].append("static_path_candidate")

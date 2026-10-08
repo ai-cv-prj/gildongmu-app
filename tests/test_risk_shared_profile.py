@@ -37,9 +37,11 @@ class SharedProfileTests(unittest.TestCase):
             self.assertIn(item["alert_level"],("caution","danger"))
 
     def test_g25u_close_tree_warns_even_with_clipped_top(self):
-        for box in [(12.7,0,35.2,50.7),(0,.1,29.2,65.4)]:
+        cases = [((12.7,0,35.2,50.7), "caution"),
+                 ((0,.1,29.2,65.4), "caution")]
+        for box, expected in cases:
             item=engine(None,config=CFG).update(FRAME,[detection(box,"tree_trunk",27)],0)["detections"][0]
-            self.assertEqual(item["risk_level"],"caution")
+            self.assertEqual(item["risk_level"],expected)
             self.assertIsNone(item["motion"]["ttc_scale_s"])
 
     def test_side_proximity_requires_size_and_low_contact(self):
@@ -48,10 +50,10 @@ class SharedProfileTests(unittest.TestCase):
             item=engine(None,config=CFG).update(FRAME,[detection(box)],0)["detections"][0]
             self.assertEqual(item["risk_level"],wanted)
 
-    def test_reported_far_pole_does_not_return_to_danger(self):
+    def test_reported_pole_inside_immediate_roi_is_danger(self):
         f=np.zeros((1920,1080,3),np.uint8)
         item=engine(config=CFG).update(f,[detection([483.43,435.45,557.05,1489.25],"pole",20)],0)["detections"][0]
-        self.assertEqual(item["risk_level"],"caution")
+        self.assertEqual(item["risk_level"],"danger")
 
     def test_static_contact_uses_full_detected_width(self):
         item=engine(config=CFG).update(FRAME,[detection((5,0,35,65),"tree_trunk",27)],0)["detections"][0]
