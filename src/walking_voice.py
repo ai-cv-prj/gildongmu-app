@@ -24,6 +24,8 @@ TWO_STEP_ENTER_RATIO = GUIDANCE["walking_two_step_enter_ratio"]
 TWO_STEP_EXIT_RATIO = GUIDANCE["walking_two_step_exit_ratio"]
 LATERAL_CONFIRM_S = GUIDANCE.get("walking_lateral_confirm_ms", 200) / 1000
 FROM_STOP_CONFIRM_S = GUIDANCE.get("walking_from_stop_confirm_ms", 500) / 1000
+SAME_DIRECTION_REPEAT_S = GUIDANCE.get("walking_same_direction_repeat_ms", 1500) / 1000
+CROWDED_REDIRECT_S = GUIDANCE.get("walking_crowded_redirect_ms", 3000) / 1000
 REPEAT_NONE_S = GUIDANCE.get("walking_repeat_none_ms", 3000) / 1000
 STOP_REPEAT_NONE_S = GUIDANCE.get("walking_stop_repeat_none_ms", 1000) / 1000
 ACTION_MESSAGES = {
@@ -427,6 +429,9 @@ class WalkingVoice:
         self.hazards = {}
         self.voice_event_id = 0
         self.missing_hold_s = GUIDANCE.get("walking_missing_hold_ms", 800) / 1000
+        self.crowded_until = 0.0
+        self.crowded_redirect_action = None
+        self.last_direction_voice_at = {"left": None, "right": None}
 
     def _evidence(self, prediction, timestamp):
         """짧은 미검출을 안전한 경로라는 증거로 사용하지 않는다."""
@@ -436,6 +441,9 @@ class WalkingVoice:
             self.hazards.clear()
             self.last_action = self.last_steps = None
             self.pending_action = self.pending_since = self.clear_since = None
+            self.crowded_until = 0.0
+            self.crowded_redirect_action = None
+            self.last_direction_voice_at = {"left": None, "right": None}
         self.previous_time = timestamp
         self.epoch = prediction.get("state_epoch", 0)
         self.hazards = {key: value for key, value in self.hazards.items()
@@ -485,6 +493,14 @@ class WalkingVoice:
         )
         voice_action = raw_action
         voice_steps = raw_steps
+        redirected_crowded = False
+        if raw_action in ("left", "right") and output_time_s < self.crowded_until:
+            redirected_crowded = raw_action != self.crowded_redirect_action
+            self.crowded_redirect_action = raw_action
+            voice_action = "crowded"
+            voice_steps = None
+        elif raw_action != "crowded":
+            self.crowded_redirect_action = None
         stationary_clear = ((prediction.get("stationarity") or {}).get("status") == "stationary"
                             and raw_action is None)
         if raw_action is None:
@@ -535,6 +551,8 @@ class WalkingVoice:
                       for item in eligible}
         prediction["voice_diagnostics"] = {"raw_action": raw_action, "action": voice_action,
                                             "retained_hazards": retained,
+                                            "crowded_until_s": self.crowded_until,
+                                            "crowded_redirect_action": self.crowded_redirect_action,
                                             "pending_action": (self.pending_action[0]
                                                 if isinstance(self.pending_action, tuple)
                                                 else self.pending_action),
@@ -553,7 +571,13 @@ class WalkingVoice:
                 self.events.append((output_time_s, None))
             return None
         message = ACTION_MESSAGES[(voice_action, voice_steps)] if voice_steps else ACTION_MESSAGES[voice_action]
-        changed = (voice_action, voice_steps) != (self.last_action, self.last_steps)
+        last_direction_at = self.last_direction_voice_at.get(voice_action)
+        direction_repeat = (voice_action in ("left", "right")
+                            and last_direction_at is not None
+                            and output_time_s - last_direction_at + 1e-6
+                            >= SAME_DIRECTION_REPEAT_S)
+        changed = ((voice_action, voice_steps) != (self.last_action, self.last_steps)
+                   or redirected_crowded or direction_repeat)
         if changed:
             self.voice_event_id += 1
         prediction["voice_event"] = {"action": voice_action, "text": message[0],
@@ -566,6 +590,11 @@ class WalkingVoice:
             return None
         self.last_action = voice_action
         self.last_steps = voice_steps
+        if voice_action in ("left", "right"):
+            self.last_direction_voice_at[voice_action] = output_time_s
+        if raw_action == "crowded":
+            self.crowded_until = output_time_s + CROWDED_REDIRECT_S
+            self.crowded_redirect_action = None
         prediction["voice_text"] = message[0]
         self.events.append((output_time_s, message[1]))
         prediction["voice_clip"] = message[1]

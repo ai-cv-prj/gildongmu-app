@@ -28,7 +28,7 @@ def test_predicted_person_outside_near_roi_is_spoken():
 
 
 def test_rapid_approach_remains_danger_but_caution_does_not_block_route():
-    left = danger_item(1, [28, 40, 41, 73])
+    left = danger_item(1, [20, 40, 41, 73])
     right = danger_item(2, [67, 49, 77, 66], "bicycle",
                         geometry={"immediate_overlap": 0, "corridor_overlap": 1},
                         reasons=["approaching_near_path"], motion={"quality": "valid"})

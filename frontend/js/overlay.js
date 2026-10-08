@@ -32,6 +32,26 @@ window.GOverlay = (() => {
     ctx.stroke();
   }
 
+  // 왼쪽·가운데·오른쪽 방향 구역 경계 표시
+  /** 음성 판단과 같은 30%·70% 경계를 화면 전체 높이의 점선으로 표시한다. */
+  function directionBoundaries() {
+    const guidance = window.GConfig?.get?.().audio?.guidance || {};
+    const boundaries = [guidance.walking_left_max_ratio ?? .30,
+      guidance.walking_right_min_ratio ?? .70];
+    ctx.save();
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.65)";
+    ctx.lineWidth = Math.max(1, canvas.width / 480);
+    ctx.setLineDash([Math.max(8, canvas.height / 45), Math.max(6, canvas.height / 60)]);
+    for (const ratio of boundaries) {
+      ctx.beginPath();
+      ctx.moveTo(ratio * canvas.width, 0);
+      ctx.lineTo(ratio * canvas.width, canvas.height);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
   // 정규화된 탐지 박스와 라벨 표시
   /** 보행 장애물과 신호등을 색상과 짧은 이름으로 구분한다. */
   function boxes(items, kind) {
@@ -363,6 +383,7 @@ window.GOverlay = (() => {
       for (const points of roi.corridor_polygons || [roi.corridor_polygon])
         polygon(points, "#4ce3fa", "#4ce3fa20");
       polygon(roi.immediate_polygon, "#ff88ba", "#ff88ba24");
+      if (obstacles) directionBoundaries();
       crosswalkRoi(result.crosswalk?.event);
       walkingSurfaceRoi(result.walking_surface?.event);
       if (obstacles) boxes(result.walking?.detections, "walking");

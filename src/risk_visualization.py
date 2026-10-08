@@ -7,17 +7,38 @@ import cv2
 import numpy as np
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
+from src.settings import load_audio_settings
 
 # 실시간 UI의 RGB 색상을 OpenCV BGR 순서로 변환한 값
 COLORS = {"monitor": (180,180,180), "caution": (102,183,255), "danger": (113,101,255)}
 PATH_ROI_COLOR = (250, 227, 76)
 NEAR_ROI_COLOR = (186, 136, 255)
 DARK_TEXT_COLOR = (31, 19, 8)
+GUIDANCE = load_audio_settings()["guidance"]
+DIRECTION_BOUNDARIES = (
+    GUIDANCE["walking_left_max_ratio"], GUIDANCE["walking_right_min_ratio"])
 KOREAN_FONT_PATHS = (
     Path("/mnt/c/Windows/Fonts/malgunbd.ttf"),
     Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"),
     Path("/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf"),
 )
+
+
+# 왼쪽·가운데·오른쪽 방향 구역 경계 표시
+def draw_direction_boundaries(frame):
+    """설정된 방향 구역 경계를 화면 전체 높이의 반투명 흰색 점선으로 표시한다."""
+    result = frame.copy()
+    overlay = result.copy()
+    height, width = result.shape[:2]
+    thickness = max(1, round(width / 480))
+    dash = max(8, round(height / 45))
+    gap = max(6, round(height / 60))
+    for ratio in DIRECTION_BOUNDARIES:
+        x = max(0, min(width - 1, round((width - 1) * ratio)))
+        for top in range(0, height, dash + gap):
+            cv2.line(overlay, (x, top), (x, min(height - 1, top + dash)),
+                     (255, 255, 255), thickness, cv2.LINE_AA)
+    return cv2.addWeighted(overlay, .65, result, .35, 0)
 
 
 # 장애물 행동과 음성·움직임 상태 문구 생성
@@ -179,6 +200,7 @@ def draw_risk(frame, prediction, config):
             cv2.fillPoly(tint, [points], color)
             result = cv2.addWeighted(tint, alpha, result, 1-alpha, 0)
             cv2.polylines(result, [points], True, color, max(2, round(w/320)), cv2.LINE_AA)
+    result = draw_direction_boundaries(result)
     counts = {"monitor":0,"caution":0,"danger":0}
     labels = []
     for item in prediction["detections"]:
@@ -238,6 +260,7 @@ def draw_review(frame, prediction, config):
             cv2.polylines(result,[points],True,color,thick,cv2.LINE_AA)
             left, top = points[0]
             text(label,(max(8,int(left)),max(30,int(top)-14)),.9*scale,color,max(1,round(2*scale)))
+    result = draw_direction_boundaries(result)
     counts = {"monitor":0,"caution":0,"danger":0}
     occupied = []
     cards = []

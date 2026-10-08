@@ -19,7 +19,8 @@ from src.tracking import DetectionTracker
 from src.alert_policy import AlertPolicy
 from src.pipeline import process_video, publish_video_result
 from src.risk_log import RiskLog, risk_log_path
-from src.risk_visualization import draw_risk, draw_stop_proximity, stop_proximity_text
+from src.risk_visualization import (
+    draw_direction_boundaries, draw_risk, draw_stop_proximity, stop_proximity_text)
 
 FRAME = np.zeros((100,100,3),np.uint8)
 
@@ -214,9 +215,16 @@ class RiskTests(unittest.TestCase):
         self.assertIsNone(result["detections"][0]["risk_level"])
         self.assertEqual(result["events"],[])
         rendered=draw_risk(FRAME,result,risk_config({"draw_roi":False}))
-        # 일반 신호등 bbox는 제외하고 왼쪽 위 3줄 상태 배지만 표시한다.
+        # 일반 신호등 bbox는 제외하고 상태 배지와 방향 구역 경계만 표시한다.
         self.assertFalse(np.array_equal(rendered[:86], FRAME[:86]))
-        np.testing.assert_array_equal(rendered[86:], FRAME[86:])
+
+    def test_direction_boundaries_split_left_center_and_right(self):
+        """저장 영상에 설정된 30%·70% 세로 점선을 전체 높이로 표시한다."""
+        frame = np.zeros((100, 200, 3), np.uint8)
+        rendered = draw_direction_boundaries(frame)
+        self.assertTrue(np.any(rendered[:, 60]))
+        self.assertTrue(np.any(rendered[:, 139]))
+        self.assertFalse(np.any(rendered[:, 100]))
 
     # 처음 핑크 ROI에서 포착된 객체의 경고 복원 확인
     def test_first_obstacle_inside_immediate_roi_can_warn(self):
