@@ -474,6 +474,12 @@
     view.setPaused(paused);
   }
   const obstaclesEnabled = state => !["awaiting_stop", "pending", "submitted"].includes(state?.status);
+  function visibleMask(result) {
+    if (obstaclesEnabled(boardingState)) return result.walking?.mask_png;
+    return result.boarding?.obstacle_detection_enabled === false
+      && result.walking_surface?.event?.status === "disabled"
+      ? result.walking?.mask_png : null;
+  }
   function boardingChanged(next) {
     const previous = boardingState; boardingState = next;
     view.setObstacleDetection(obstaclesEnabled(next));
@@ -543,7 +549,8 @@
     // restore obstacle warnings after the user manually confirms arrival.
     boarding.accept(result, capturedAt);
     if (!obstaclesEnabled(boardingState)) result = { ...result,
-      walking: { ...result.walking, detections: [], event: { enabled: false } },
+      walking: { ...result.walking, mask_png: visibleMask(result),
+        detections: [], event: { enabled: false } },
       walking_surface: { event: { enabled: false, status: "disabled" } } };
     lastResult = result;
     $("metrics").textContent = `${result.frame_id} 프레임 · 추론 ${result.inference_ms}ms`;
@@ -681,7 +688,7 @@
           busBlob, busCapturedAtMs, version);
         frameStage = "present";
         const clipFrame = bufferClipFrame(selectedClip, result.frame_id, capturedAtMs, blob,
-          result.walking?.mask_png);
+          visibleMask(result));
         if (!running || version !== generation) return;
         frameId = result.frame_id; // Even an in-flight paused request advances the server sequence.
         const returnedAt = performance.now();

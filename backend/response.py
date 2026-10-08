@@ -31,15 +31,16 @@ def normalize_detections(items, width, height):
 
 
 # 모바일 화면에 합성할 분할 마스크 압축
-def encode_mask(class_map, label_ids, width=320):
-    """보행가능영역과 횡단보도만 반투명 PNG로 인코딩한다."""
+def encode_mask(class_map, label_ids, width=320, include_walkable=True):
+    """보행 안내 중에만 보행가능영역을, 항상 횡단보도를 반투명 PNG로 인코딩한다."""
     height, original_width = class_map.shape
     target_width = min(width, original_width)
     target_height = max(1, round(height * target_width / original_width))
     small = cv2.resize(class_map.astype(np.uint8), (target_width, target_height),
                        interpolation=cv2.INTER_NEAREST)
     rgba = np.zeros((target_height, target_width, 4), dtype=np.uint8)
-    rgba[small == label_ids["walkable"]] = (50, 185, 85, 140)
+    if include_walkable:
+        rgba[small == label_ids["walkable"]] = (50, 185, 85, 140)
     rgba[small == label_ids["crosswalk"]] = (208, 80, 205, 140)
     success, png = cv2.imencode(".png", rgba)
     if not success:
@@ -69,7 +70,8 @@ def make_response(session_id, frame_id, captured_at_ms, frame, risk, signal, cro
                 "voice_event": risk.get("voice_event"),
                 "voice_clear": risk.get("voice_clear", False),
             },
-            "mask_png": encode_mask(class_map, label_ids),
+            "mask_png": encode_mask(class_map, label_ids, include_walkable=
+                                    risk.get("boarding", {}).get("obstacle_detection_enabled") is not False),
         },
         "traffic": {
             "detections": normalize_detections(signal["detections"], width, height),

@@ -84,7 +84,6 @@
     <p id="app-status" class="app-status sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
     <section class="recovery-stack" aria-label="테스트 기록 복구">
       <button class="retry-upload" type="button" id="retry-upload" data-action="retry-upload" hidden>영상 전송 다시 시도</button>
-      <div class="recovery-card" id="local-clips-panel" hidden><div class="recovery-text"><strong>기기에 보관한 원본 영상</strong><p id="local-clips-status" role="status"></p></div><label class="sr-only" for="local-clip-choice">보관한 영상 선택</label><select id="local-clip-choice"></select><button type="button" data-action="save-local-clip" id="save-local-clip">선택한 영상 저장</button></div>
       <div class="recovery-card" id="error-log-controls" hidden><div class="recovery-text"><strong>오류 기록</strong><p id="fetch-error-log-status" role="status"></p></div><button type="button" data-action="save-error-log" id="save-error-log">오류 로그 저장</button></div>
     </section>
     <div class="sr-only" id="announcer" role="status" aria-live="polite" aria-atomic="true"></div>
@@ -116,6 +115,9 @@
         </section>
       </div>
     </details>
+    <section class="recovery-stack" aria-label="보관 영상 저장">
+      <div class="recovery-card" id="local-clips-panel" hidden><div class="recovery-text"><strong>기기에 보관한 원본 영상</strong><p id="local-clips-status" role="status"></p></div><label class="sr-only" for="local-clip-choice">보관한 영상 선택</label><select id="local-clip-choice"></select><button type="button" data-action="save-local-clip" id="save-local-clip">선택한 영상 저장</button></div>
+    </section>
   </main>
   <script defer src="/static/js/fetch-diagnostics.js"></script>
   <script defer src="/static/js/config.js"></script>

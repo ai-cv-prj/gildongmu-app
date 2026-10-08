@@ -670,13 +670,16 @@ test("정류장 도착 후 늦은 장애물 결과와 재개를 차단하고 취
   assert.equal(walking.stops, stops + 1);
   assert.notEqual(app.voice()?.text, "보행로 이탈 오른쪽 이동!");
   await app.respond(1, { boarding: { status: "searching", revision: 0 },
-    walking: { detections: [{ class_name: "person" }], event: { level: "danger", voice_text: "멈추세요" } },
+    walking: { mask_png: "stale-walkable-mask",
+      detections: [{ class_name: "person" }], event: { level: "danger", voice_text: "멈추세요" } },
     walking_surface: { event: { status: "outside_left", repeat: true,
       voice_text: "보행로 이탈 오른쪽 이동!" } } });
   assert.equal(walking.accepted.length, 0);
   assert.equal(app.renders.at(-1).walking.event.enabled, false);
+  assert.equal(app.renders.at(-1).walking.mask_png, null);
   assert.equal(app.renders.at(-1).walking_surface.event.status, "disabled");
   assert.equal(app.overlayRenders.at(-1).walking_surface.event.status, "disabled");
+  assert.equal(app.overlayRenders.at(-1).walking.mask_png, null);
   assert.notEqual(app.voice()?.text, "보행로 이탈 오른쪽 이동!");
   await app.finishVoice();
   await app.confirmRoute("143");

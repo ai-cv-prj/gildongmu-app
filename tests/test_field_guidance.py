@@ -70,6 +70,67 @@ def test_one_missing_frame_does_not_release_center_obstacle():
     assert missing["voice_diagnostics"]["retained_hazards"] == 1
 
 
+def test_reidentified_tree_replaces_old_position_in_voice_evidence():
+    """새 트랙의 나무를 과거 넓은 박스와 함께 혼잡으로 계산하지 않는다."""
+    voice = WalkingVoice()
+    old = danger_item(1, [20, 20, 80, 95], "tree_trunk", hazard_id="track:1")
+    voice.observe(prediction(old), 100, 0)
+    new = danger_item(2, [25, 20, 60, 95], "tree_trunk", hazard_id="track:2")
+    result = prediction(new)
+    voice.observe(result, 100, .2)
+    assert result["voice_diagnostics"]["raw_action"] == "right"
+    assert result["voice_diagnostics"]["retained_hazards"] == 0
+    assert result["voice_event"]["hazard_ids"] == ["tree_trunk:track:2"]
+
+
+def test_duplicate_tree_boxes_do_not_create_a_crowded_instruction():
+    narrow = danger_item(1, [25, 20, 60, 95], "tree_trunk", confidence=.9)
+    wide = danger_item(2, [20, 20, 80, 95], "tree_trunk", confidence=.4)
+    result = prediction(narrow, wide)
+    assert WalkingVoice().observe(result, 100, 0)[0] == "오른쪽으로 두 걸음"
+    assert result["voice_diagnostics"]["duplicate_hazards"] == 1
+    assert len(result["detections"]) == 2
+    assert all(item["alert_level"] == "danger" for item in result["detections"])
+
+
+def test_distinct_tree_and_overlapping_people_are_not_merged():
+    for name, boxes in (("tree_trunk", ([20, 20, 43, 95], [57, 20, 80, 95])),
+                        ("person", ([20, 20, 80, 95], [25, 20, 60, 95]))):
+        result = prediction(*(danger_item(i, box, name) for i, box in enumerate(boxes, 1)))
+        assert WalkingVoice().observe(result, 100, 0)[0] == "전방 혼잡 주의하세요"
+        assert result["voice_diagnostics"]["duplicate_hazards"] == 0
+
+
+def test_observed_tree_release_does_not_keep_old_danger_track():
+    voice = WalkingVoice()
+    voice.observe(prediction(danger_item(1, [25, 20, 60, 95], "tree_trunk")), 100, 0)
+    result = prediction(caution_item(2, [25, 20, 60, 95], class_name="tree_trunk"))
+    assert voice.observe(result, 100, .2) is None
+    assert result["voice_diagnostics"]["retained_hazards"] == 0
+    assert result["voice_action"] is None
+
+
+def test_emergency_stop_interrupts_pending_direction_change_immediately():
+    voice = WalkingVoice()
+    voice.observe(prediction(danger_item(1, [20, 20, 43, 95])), 100, 0)
+    assert voice.observe(prediction(danger_item(1, [57, 20, 80, 95])), 100, .1) is None
+    result = prediction(danger_item(1, [57, 20, 80, 95], reasons=["predicted_moving_conflict"]))
+    assert voice.observe(result, 100, .2)[0] == "멈추세요"
+
+
+def test_repeat_timer_does_not_reannounce_opposite_pending_direction():
+    """반대 방향 확인 중 반복 시간이 지나도 이전 방향을 다시 발화하지 않는다."""
+    voice = WalkingVoice()
+    right = danger_item(1, [20, 20, 43, 95])
+    voice.observe(prediction(right), 100, 0)
+    for timestamp in (1.0, 2.0, 3.0):
+        assert voice.observe(prediction(right), 100, timestamp) is None
+    opposite = danger_item(1, [57, 20, 80, 95])
+    assert voice.observe(prediction(opposite), 100, 4.0) is None
+    assert voice.observe(prediction(opposite), 100, 4.2) is None
+    assert voice.observe(prediction(opposite), 100, 4.6)[0] == "왼쪽으로 한 걸음"
+
+
 def test_side_hazard_never_instructs_typing_user_to_walk():
     result = prediction(danger_item(1, [5, 20, 15, 90]))
     result["boarding"] = {"assumed_stationary": True}

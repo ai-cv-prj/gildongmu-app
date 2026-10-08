@@ -10,6 +10,7 @@ from copy import deepcopy
 
 import numpy as np
 from src.settings import load_audio_settings
+from src.risk_config import DEFAULT_RISK
 
 
 GUIDANCE = load_audio_settings()["guidance"]
@@ -38,6 +39,30 @@ ACTION_MESSAGES = {
     "stop": ("멈추세요", "walking-stop.mp3"),
 }
 VEHICLE_CLASSES = frozenset({"car", "bus", "truck", "motorcycle"})
+STATIC_CLASSES = frozenset(DEFAULT_RISK["static_ground_classes"])
+
+
+def same_static_obstacle(a, b):
+    """같은 지면 접촉 위치의 겹친 정적 객체만 중복 관측으로 판단한다."""
+    if a.get("class_name") not in STATIC_CLASSES or a.get("class_name") != b.get("class_name"):
+        return False
+    try:
+        first, second = np.asarray(a["xyxy"], float), np.asarray(b["xyxy"], float)
+        if first.shape != (4,) or second.shape != (4,):
+            return False
+        sizes = [box[2:] - box[:2] for box in (first, second)]
+        if not np.isfinite([first, second]).all() or any((size <= 0).any() for size in sizes):
+            return False
+        if abs(first[3] - second[3]) > min(size[1] for size in sizes) * .10:
+            return False
+        areas = [float(np.prod(size)) for size in sizes]
+        intersection = float(np.prod(np.maximum(
+            0, np.minimum(first[2:], second[2:]) - np.maximum(first[:2], second[:2]))))
+        return (max(areas) / min(areas) <= 2.5
+                and (intersection / (sum(areas) - intersection) >= .65
+                     or intersection / min(areas) >= .85))
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 # 이전 행동과 다음 행동에 맞는 음성 확정 시간 선택
@@ -502,7 +527,6 @@ class WalkingVoice:
         self.voice_event_id = 0
         self.missing_hold_s = GUIDANCE.get("walking_missing_hold_ms", 800) / 1000
         self.crowded_until = 0.0
-        self.crowded_redirect_action = None
         self.last_direction_voice_at = {"left": None, "right": None}
 
     def _evidence(self, prediction, timestamp):
@@ -514,13 +538,31 @@ class WalkingVoice:
             self.last_action = self.last_steps = None
             self.pending_action = self.pending_since = self.clear_since = None
             self.crowded_until = 0.0
-            self.crowded_redirect_action = None
             self.last_direction_voice_at = {"left": None, "right": None}
         self.previous_time = timestamp
         self.epoch = prediction.get("state_epoch", 0)
         self.hazards = {key: value for key, value in self.hazards.items()
                         if timestamp - value[0] <= self.missing_hold_s}
-        current = prediction.get("detections", [])
+        observed = prediction.get("detections", [])
+        # 새 ID가 같은 정적 객체를 관측하면 과거 위치를 별도 위험으로 유지하지 않는다.
+        replaced = [key for key, (_, old) in self.hazards.items()
+                    if any(same_static_obstacle(old, item) for item in observed)]
+        for key in replaced:
+            self.hazards.pop(key)
+        # 현재 프레임도 높은 위험도·신뢰도의 관측 하나로 안내한다. 원본 검출은 보존한다.
+        current = []
+        duplicates = 0
+        levels = {"monitor": 0, "caution": 1, "danger": 2}
+        for item in sorted(observed, key=lambda item: (
+                "predicted_moving_conflict" in item.get("reasons", []),
+                not item.get("risk_suppressed_reason"),
+                not item.get("voice_suppressed_reason"), item.get("warning_primary", True),
+                levels.get(item.get("alert_level", item.get("risk_level")), 0),
+                rapid_approach_hazard(item), item.get("confidence", 0)), reverse=True):
+            if any(same_static_obstacle(item, other) for other in current):
+                duplicates += 1
+            else:
+                current.append(item)
         keys = set()
         suppress_stop = (prediction.get("boarding") or {}).get("assumed_stationary", False)
         if suppress_stop:
@@ -540,7 +582,7 @@ class WalkingVoice:
             else:
                 self.hazards.pop(identity, None)
         retained = [dict(item, observed=False) for key, (_, item) in self.hazards.items() if key not in keys]
-        return {**prediction, "detections": current + retained}, len(retained)
+        return {**prediction, "detections": current + retained}, len(retained), duplicates
 
     # 현재 프레임의 신규 위험 안내 기록
     def observe(self, prediction, image_width, output_time_s, crossing_active=False,
@@ -549,7 +591,7 @@ class WalkingVoice:
         prediction.pop("voice_text", None)
         prediction.pop("voice_clip", None)
         prediction.pop("voice_event", None)
-        evidence, retained = self._evidence(prediction, output_time_s)
+        evidence, retained, duplicates = self._evidence(prediction, output_time_s)
         previous_action = self.last_action
         previous_steps = self.last_steps
         display_action = walking_action(evidence, image_width)
@@ -566,14 +608,9 @@ class WalkingVoice:
         )
         voice_action = raw_action
         voice_steps = raw_steps
-        redirected_crowded = False
         if raw_action in ("left", "right") and output_time_s < self.crowded_until:
-            redirected_crowded = raw_action != self.crowded_redirect_action
-            self.crowded_redirect_action = raw_action
             voice_action = "crowded"
             voice_steps = None
-        elif raw_action != "crowded":
-            self.crowded_redirect_action = None
         stationary_clear = ((prediction.get("stationarity") or {}).get("status") == "stationary"
                             and raw_action is None)
         if raw_action is None:
@@ -588,10 +625,9 @@ class WalkingVoice:
         else:
             if self.clear_since is not None and self.last_action is not None:
                 none_duration = output_time_s - self.clear_since
-                same_action = voice_action == self.last_action
                 repeat_ready = none_duration + 1e-6 >= repeat_none_s(self.last_action)
-                # none 전후 행동이 다르면 새 안내로 보고 안정화 시간 없이 즉시 재생한다.
-                if not same_action or repeat_ready:
+                # 짧은 none 뒤에도 반대 방향은 기존 안내로부터 안정화 시간을 확인한다.
+                if repeat_ready:
                     self.last_action = None
                     self.last_steps = None
             self.clear_since = None
@@ -624,8 +660,8 @@ class WalkingVoice:
                       for item in eligible}
         prediction["voice_diagnostics"] = {"raw_action": raw_action, "action": voice_action,
                                             "retained_hazards": retained,
+                                            "duplicate_hazards": duplicates,
                                             "crowded_until_s": self.crowded_until,
-                                            "crowded_redirect_action": self.crowded_redirect_action,
                                             "pending_action": (self.pending_action[0]
                                                 if isinstance(self.pending_action, tuple)
                                                 else self.pending_action),
@@ -646,11 +682,12 @@ class WalkingVoice:
         message = ACTION_MESSAGES[(voice_action, voice_steps)] if voice_steps else ACTION_MESSAGES[voice_action]
         last_direction_at = self.last_direction_voice_at.get(voice_action)
         direction_repeat = (voice_action in ("left", "right")
+                            and voice_action == raw_action
                             and last_direction_at is not None
                             and output_time_s - last_direction_at + 1e-6
                             >= SAME_DIRECTION_REPEAT_S)
         changed = ((voice_action, voice_steps) != (self.last_action, self.last_steps)
-                   or redirected_crowded or direction_repeat)
+                   or direction_repeat)
         if changed:
             self.voice_event_id += 1
         prediction["voice_event"] = {"action": voice_action, "text": message[0],
@@ -667,7 +704,6 @@ class WalkingVoice:
             self.last_direction_voice_at[voice_action] = output_time_s
         if raw_action == "crowded":
             self.crowded_until = output_time_s + CROWDED_REDIRECT_S
-            self.crowded_redirect_action = None
         prediction["voice_text"] = message[0]
         self.events.append((output_time_s, message[1]))
         prediction["voice_clip"] = message[1]
