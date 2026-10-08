@@ -144,6 +144,7 @@ def load_audio_settings(config_path=DEFAULT_AUDIO_CONFIG):
     number(guidance, "walking_side_intrusion_ratio", 0, 1)
     number(guidance, "walking_voice_immediate_overlap_ratio", 0, 1)
     number(guidance, "walking_distance_tie_ratio", 0, 1)
+    number(guidance, "walking_walkable_side_tie_ratio", 0, 1)
     two_step_enter = number(guidance, "walking_two_step_enter_ratio", 0, 1)
     two_step_exit = number(guidance, "walking_two_step_exit_ratio", 0, 1)
     for key in (

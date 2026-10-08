@@ -24,7 +24,7 @@ def test_predicted_person_outside_near_roi_is_spoken():
                        reasons=["approaching_near_path"])
     result = prediction(item)
     assert WalkingVoice().observe(result, 100, 0) is not None
-    assert result["voice_event"]["action"] == "stop"
+    assert result["voice_event"]["action"] == "blocked"
 
 
 def test_rapid_approach_remains_danger_but_caution_does_not_block_route():
@@ -32,7 +32,7 @@ def test_rapid_approach_remains_danger_but_caution_does_not_block_route():
     right = danger_item(2, [67, 49, 77, 66], "bicycle",
                         geometry={"immediate_overlap": 0, "corridor_overlap": 1},
                         reasons=["approaching_near_path"], motion={"quality": "valid"})
-    assert walking_action(prediction(left, right), 100) == "stop"
+    assert walking_action(prediction(left, right), 100) == "crowded"
     assert walking_action(prediction(left, caution_item(3, [75, 40, 90, 75])), 100) == "right"
 
 
@@ -63,10 +63,10 @@ def test_one_missing_frame_does_not_release_center_obstacle():
     side = danger_item(2, [5, 20, 15, 90])
     other_side = danger_item(3, [85, 20, 95, 90])
     center = danger_item(1, [45, 20, 55, 90], "bollard")
-    assert voice.observe(prediction(center, side, other_side), 100, 0)[0] == "멈추세요"
+    assert voice.observe(prediction(center, side, other_side), 100, 0)[0] == "전방 혼잡 주의하세요"
     missing = prediction(side, other_side)
     assert voice.observe(missing, 100, .2) is None
-    assert missing["voice_action"] == "stop"
+    assert missing["voice_action"] == "crowded"
     assert missing["voice_diagnostics"]["retained_hazards"] == 1
 
 
@@ -77,10 +77,10 @@ def test_side_hazard_never_instructs_typing_user_to_walk():
     assert result["voice_action"] == "stop"
 
 
-def test_new_hazard_does_not_repeat_an_unchanged_stop_action():
+def test_new_hazard_does_not_repeat_an_unchanged_blocked_action():
     voice = WalkingVoice()
     result = prediction(danger_item(1, [45, 20, 55, 90]))
-    assert voice.observe(result, 100, 0)[0] == "멈추세요"
+    assert voice.observe(result, 100, 0)[0] == "전방 장애물 주의하세요"
     first = result["voice_event"]["event_id"]
     result["detections"].append(danger_item(2, [48, 20, 58, 90], "car"))
     assert voice.observe(result, 100, .2) is None

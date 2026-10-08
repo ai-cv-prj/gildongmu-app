@@ -181,7 +181,7 @@
     function walkingPlaybackAction() {
       if (!current || current.source !== "walking" || !current.started) return null;
       const action = current.metadata?.action;
-      return ["left", "right", "stop"].includes(action) ? action : null;
+      return ["left", "right", "crowded", "blocked", "stop"].includes(action) ? action : null;
     }
 
     return { start, stop, request, clear, acceptCrosswalk, acceptWalkingSurface,

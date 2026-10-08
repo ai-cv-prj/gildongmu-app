@@ -23,7 +23,9 @@ audio:
     walking_center_intrusion_ratio: 0.05
     walking_side_intrusion_ratio: 0.10
     walking_voice_immediate_overlap_ratio: 0.10
-    walking_distance_tie_ratio: 0.05
+    walking_distance_tie_ratio: 0.03
+    # 위험 거리 동률 시 전체 화면 좌우 walkable 비율 차이가 이 값을 넘어야 방향을 안내한다.
+    walking_walkable_side_tie_ratio: 0.05
     # 가운데 점유율이 45~55%이면 직전 걸음 수를 유지해 안내 흔들림을 막는다.
     walking_two_step_enter_ratio: 0.55
     walking_two_step_exit_ratio: 0.45
