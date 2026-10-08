@@ -8,6 +8,7 @@ const fs = require("node:fs");
 const vm = require("node:vm");
 
 const labels = [];
+const textColors = [];
 const strokeColors = [];
 const rectangles = [];
 const dashedLines = [];
@@ -24,7 +25,7 @@ const context2d = {
   clearRect() {}, drawImage() { drawnImages++; }, arc() {},
   save() {}, restore() {},
   measureText(text) { return { width: text.length * 8 }; },
-  fillText(text) { labels.push(text); },
+  fillText(text) { labels.push(text); textColors.push({ text, color: this.fillStyle }); },
 };
 const canvas = { width: 0, height: 0, getContext: () => context2d };
 const context = {
@@ -140,19 +141,21 @@ assert.ok(!labels.some(label => /person|ACTION|VOICE/.test(label)));
 
 // Bus mode uses the same sample-style card for the screen and the saved canvas.
 context.performance = { timeOrigin: 1000, now: () => 10000 };
-function renderBusScene({ capturedAt = 10950, matches = [], recognized = [], status = "searching", errors = [], guidance } = {}) {
+function renderBusScene({ capturedAt = 10950, mainCapturedAt = 10950, busMode = true,
+  matches = [], recognized = [], status = "searching", errors = [], guidance, detections } = {}) {
   labels.length = rectangles.length = strokeColors.length = filledRects.length = 0;
+  textColors.length = 0;
   drawnImages = 0;
   context.window.GOverlay.render({ image_width: 360, image_height: 640,
-    captured_at_ms: 10950, bus_mode: true, target_route: "7011", bus_guidance: guidance,
-    walking: { mask_png: "should-not-load", detections: [{ xyxy: [.1, .2, .3, .6], class_name: "person" }],
+    captured_at_ms: mainCapturedAt, bus_mode: busMode, target_route: "7011", bus_guidance: guidance,
+    walking: { mask_png: busMode === false ? null : "should-not-load", detections: [{ xyxy: [.1, .2, .3, .6], class_name: "person" }],
       event: { roi: {}, last_action: "stop" } },
     traffic: { detections: [{ xyxy: [.1, .2, .3, .3], signal_state: "red" }] },
     crosswalk: { event: { status: "search" } },
     walking_surface: { event: { status: "inside" } },
     bus: { status, captured_at_ms: capturedAt,
       event: { target_route: "7011", matches, recognized_routes: recognized, errors },
-      detections: [
+      detections: detections || [
         { class_id: 0, class_name: "bus", track_id: 12,
           box: { x1: .1, y1: .3, x2: .6, y2: .8 }, extra: { route_number: "7011" } },
         { class_id: 1, class_name: "route_number", track_id: 12,
@@ -162,13 +165,24 @@ function renderBusScene({ capturedAt = 10950, matches = [], recognized = [], sta
 }
 renderBusScene();
 assert.equal(drawState, "drawn");
-assert.ok(labels.includes("버스를 찾고 있어요"));
+assert.ok(labels.includes("버스 번호 확인 중"));
+assert.ok(labels.includes("번호를 읽고 있어요"));
 assert.ok(labels.includes("찾는 번호 7011"));
-assert.ok(labels.includes("번호 확인 중"), "unvalidated raw OCR must not label a confirmed bus");
+assert.equal(labels.filter(label => label === "버스 번호 확인 중").length, 2,
+  "the status card and bus label share the sample's checking text");
+assert.ok(strokeColors.includes("#7cbdff"));
+assert.equal(textColors.find(item => item.text === "버스 번호 확인 중" && item.color === "#7cbdff")?.color, "#7cbdff");
+assert.ok(filledRects.some(rect => rect.color === "#7cbdff"));
+assert.ok(!strokeColors.includes("#ffd166"));
 assert.ok(!labels.includes("7011"));
 assert.ok(!labels.some(label => /person|ACTION|VOICE|CROSSWALK|WALKWAY|신호/.test(label)));
 assert.equal(drawnImages, 0, "walking masks must not obscure the bus scene");
 assert.deepEqual(rectangles[0], [36, 192, 180, 320]);
+
+renderBusScene({ detections: [] });
+assert.ok(labels.includes("버스를 찾고 있어요"));
+assert.ok(textColors.some(item => item.text === "버스를 찾고 있어요" && item.color === "#b9c5d5"));
+assert.ok(!strokeColors.includes("#7cbdff"));
 
 const match = { track_id: 12, route_number: "7011", state: "matched_candidate", token_score: .98 };
 renderBusScene({ matches: [match] });
@@ -180,7 +194,9 @@ assert.ok(strokeColors.includes("#ffffff"), "number region has a distinct thin o
 
 renderBusScene({ matches: [{ ...match, state: "recognized_single" }] });
 assert.ok(labels.includes("7011번 버스 인식 중"));
-assert.ok(!strokeColors.includes("#21d7bb"), "one observation is not displayed as confirmed");
+assert.ok(strokeColors.includes("#21d7bb"), "a read target number uses the sample's mint, with candidate text until confirmation");
+assert.ok(textColors.some(item => item.text === "7011" && item.color === "#21d7bb"));
+assert.ok(!labels.includes("7011번 버스 확인함"));
 
 renderBusScene({ recognized: [{ ...match, route_number: "604", is_target: false }] });
 assert.ok(labels.includes("604"));
@@ -205,13 +221,34 @@ assert.ok(labels.includes("번호 인식을 사용할 수 없어요"));
 assert.ok(!labels.includes("7011"));
 renderBusScene({ status: "loading", capturedAt: null });
 assert.ok(labels.includes("번호 인식을 준비하고 있어요"));
+// A delayed main response must not hide independently fresh bus number evidence.
+renderBusScene({ mainCapturedAt: 10000, capturedAt: 10000, matches: [match] });
+assert.equal(drawState, "drawn");
+assert.ok(labels.includes("7011"), "fresh bus text survives the walking geometry deadline");
+assert.equal(rectangles.length, 1, "old bus geometry still expires after 400ms");
+renderBusScene({ mainCapturedAt: 10000, capturedAt: 10950, matches: [match] });
+assert.ok(labels.includes("7011"));
+assert.equal(rectangles.length, 3, "bus geometry uses its own fresh capture timestamp");
+renderBusScene({ mainCapturedAt: 10000, capturedAt: 7999, matches: [match] });
+assert.equal(drawState, "drawn");
+assert.ok(!labels.includes("7011"), "delayed main responses do not extend bus evidence expiry");
+assert.ok(labels.includes("번호를 다시 확인하고 있어요"));
+assert.equal(rectangles.length, 1);
+renderBusScene({ mainCapturedAt: 10000, capturedAt: null, matches: [match] });
+assert.equal(drawState, "drawn");
+assert.ok(!labels.includes("7011"), "bus evidence without a timestamp remains unverified");
+assert.equal(rectangles.length, 1);
+renderBusScene({ mainCapturedAt: 10000, capturedAt: 10950, matches: [match], busMode: false });
+assert.equal(drawState, "stale", "explicit walking mode retains its 400ms deadline");
+assert.equal(labels.length, 0);
+assert.equal(rectangles.length, 0);
 console.log("bus overlay: pass");
 
 renderBusScene({ guidance: { status: "confirmed", routeNumber: "7011", confirmed: true, capturedAt: 9500 } });
 assert.ok(labels.includes("7011"), "brief unreadable frames retain the same recent confirmation as speech");
 assert.ok(labels.includes("인식한 버스 번호"));
 assert.ok(!labels.includes("7011번 버스 확인함"), "confirmation is shown by the prominent emerald number");
-assert.ok(labels.includes("번호 확인 중"), "current bus geometry must not borrow a previous recognition");
+assert.ok(labels.includes("버스 번호 확인 중"), "current bus geometry must not borrow a previous recognition");
 renderBusScene({ guidance: { status: "confirmed", routeNumber: "7011", confirmed: true, capturedAt: 7999 } });
 assert.ok(!labels.includes("7011"), "spoken-card evidence expires after 3 seconds");
 renderBusScene({ guidance: { status: "other", routeNumber: "03", confirmed: true, isTarget: false, capturedAt: 9500 } });

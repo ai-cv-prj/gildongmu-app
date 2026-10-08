@@ -95,8 +95,12 @@ window.GOverlay = (() => {
           state: guidance.confirmed ? "matched_candidate" : "recognized_single" }
       : evidence[0];
     const scale = canvas.width / 360;
-    const mint = "#21d7bb", amber = "#ffd166", muted = "#b9c5d5";
-    const colorFor = item => isTarget(item) && item.state === "matched_candidate" ? mint : amber;
+    // sample.mp4: gray while searching, blue while reading, mint for a read target number.
+    const mint = "#21d7bb", checkingBlue = "#7cbdff", amber = "#ffd166", muted = "#b9c5d5";
+    const colorFor = item => isTarget(item) ? mint : amber;
+    const checking = !failed && !preparing && fresh &&
+      ((bus.detections || []).some(item => item.class_name === "bus" || item.class_id === 0)
+        || event.buses?.length > 0);
     const rounded = (x, y, width, height, radius, fill, stroke) => {
       ctx.fillStyle = fill;
       ctx.strokeStyle = stroke;
@@ -133,13 +137,13 @@ window.GOverlay = (() => {
         const width = (x2 - x1) * canvas.width, height = (y2 - y1) * canvas.height;
         const isNumber = item.class_name === "route_number" || item.class_id === 1;
         const match = evidence.find(entry => entry.track_id != null && entry.track_id === item.track_id);
-        const color = match ? colorFor(match) : amber;
+        const color = match ? colorFor(match) : checkingBlue;
         ctx.strokeStyle = isNumber ? "#ffffff" : color;
         ctx.lineWidth = (isNumber ? 1.5 : 3) * scale;
         rounded(x, y, width, height, (isNumber ? 2 : 6) * scale, null, ctx.strokeStyle);
         // OCR crops remain visible, but only validated evidence labels the whole bus with a number.
         if (isNumber) continue;
-        const label = match ? String(match.route_number) : "번호 확인 중";
+        const label = match ? String(match.route_number) : "버스 번호 확인 중";
         ctx.font = `bold ${match ? 32 * scale : 15 * scale}px system-ui`;
         const labelWidth = Math.min(canvas.width - 16 * scale, ctx.measureText(label).width + 16 * scale);
         const labelHeight = (match ? 44 : 27) * scale;
@@ -153,7 +157,7 @@ window.GOverlay = (() => {
     }
     const x = 12 * scale, y = 12 * scale, width = canvas.width - 24 * scale;
     const height = 108 * scale, padding = 12 * scale;
-    const accent = shown ? colorFor(shown) : muted;
+    const accent = shown ? colorFor(shown) : checking ? checkingBlue : muted;
     ctx.lineWidth = 1.5 * scale;
     rounded(x, y, width, height, 12 * scale, "rgba(9, 20, 36, 0.94)", accent);
     const heading = shown ? isTarget(shown) ? "인식한 버스 번호" : "다른 버스 번호" : "버스 번호 인식";
@@ -168,6 +172,7 @@ window.GOverlay = (() => {
     const title = shown ? String(shown.route_number)
       : failed ? "번호 인식을 사용할 수 없어요"
       : preparing ? "번호 인식을 준비하고 있어요"
+      : checking ? "버스 번호 확인 중"
       : !fresh && Number.isFinite(bus.captured_at_ms) ? "번호를 다시 확인하고 있어요"
       : "버스를 찾고 있어요";
     const confirmedTarget = shown && isTarget(shown) && shown.state === "matched_candidate";
@@ -175,7 +180,8 @@ window.GOverlay = (() => {
       ? `${shown.route_number}번 버스 인식 중`
       : `다른 노선 · 목표 ${target || "입력한 번호"}번`
       : failed ? "번호 인식 상태를 확인해 주세요"
-      : preparing ? "잠시만 기다려 주세요" : "버스 방향으로 유지해 주세요";
+      : preparing ? "잠시만 기다려 주세요"
+      : checking ? "번호를 읽고 있어요" : "버스 방향으로 유지해 주세요";
     fittedText(title, x + padding, y + (confirmedTarget ? 88 : shown ? 78 : 64) * scale,
       (confirmedTarget ? 56 : shown ? 52 : 23) * scale, width - padding * 2, accent);
     if (detail) fittedText(detail, x + padding, y + (shown ? 99 : 88) * scale, 11 * scale,
@@ -336,11 +342,6 @@ window.GOverlay = (() => {
     const draw = mask => {
       if (current !== version) return onDrawn("superseded");
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      if (Number.isFinite(result.captured_at_ms) && typeof performance !== "undefined"
-          && Number.isFinite(performance.timeOrigin)
-          && performance.timeOrigin + performance.now() - result.captured_at_ms > 400) {
-        return onDrawn("stale");
-      }
       const busMode = result.bus_mode === true
         || (result.bus_mode !== false && Boolean(result.bus?.event?.target_route));
       const busAge = Number.isFinite(result.bus?.captured_at_ms)
@@ -349,6 +350,12 @@ window.GOverlay = (() => {
       if (busMode) {
         busScene(result, busAge);
         return onDrawn("drawn");
+      }
+      // Bus text and geometry use the independent OCR capture deadlines above.
+      if (Number.isFinite(result.captured_at_ms) && typeof performance !== "undefined"
+          && Number.isFinite(performance.timeOrigin)
+          && performance.timeOrigin + performance.now() - result.captured_at_ms > 400) {
+        return onDrawn("stale");
       }
       if (mask) ctx.drawImage(mask, 0, 0, canvas.width, canvas.height);
       const obstacles = result.walking?.event?.enabled !== false && result.boarding?.obstacle_detection_enabled !== false;
