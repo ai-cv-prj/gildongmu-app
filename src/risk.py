@@ -314,6 +314,19 @@ class RiskEngine:
                 item["risk_level"] = "caution"
                 item["reasons"].append("nonwalkable_surroundings")
                 item["release_evidence"] = "nonwalkable_surroundings"
+            ground_approach = m.get("ground_approach") or {}
+            ground_blocked = (
+                self.config["walkable_surroundings_filter_enabled"]
+                and surroundings["status"] == "available"
+                and surroundings["all_non_walkable"]
+            )
+            if (self.config["approach_danger_enabled"] and static and related
+                    and m["time_to_near_s"] is None
+                    and ground_approach.get("quality") == "valid"
+                    and ground_approach.get("time_to_near_s") is not None
+                    and not ground_blocked):
+                item["risk_level"] = "danger"
+                item["reasons"].append("ground_approaching_near_path")
             clear = (timestamp_valid and camera_stable and not g["clipped"] and not roi["changed"])
             if clear and item["risk_level"] == "monitor":
                 if (max(g["corridor_overlap"],g["immediate_overlap"]) < self.config["exit_overlap_threshold"]

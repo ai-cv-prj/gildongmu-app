@@ -257,6 +257,28 @@ class MotionHistory:
         self.histories = {key: history for key, history in self.histories.items()
                           if timestamp-history[-1][0] <= self.cfg["history_window_s"]}
 
+    def _time_to_near(self, detection, geometry, vx, vy):
+        """Predict near-zone entry from a separately validated position history."""
+        if vy < self.cfg["min_forward_speed"]:
+            return None
+        near_y = (self.cfg["static_danger_y"] if detection["class_name"] in
+                  self.cfg["static_ground_classes"] else geometry["immediate_top_y"])
+        if geometry["point"][1] >= near_y:
+            return None
+        until_near = (near_y - geometry["point"][1]) / vy
+        if until_near > self.cfg["approach_danger_s"]:
+            return None
+        left, _, right, _ = geometry["footprint"]
+        left += vx * until_near
+        right += vx * until_near
+        horizontal_overlap = max(
+            0.0, min(right, self.cfg["central_danger_right"])
+            - max(left, self.cfg["central_danger_left"]),
+        ) / (right - left)
+        if horizontal_overlap >= self.cfg["overlap_threshold"]:
+            return float(until_near)
+        return None
+
     def update(self, detection, geometry, timestamp, valid, corridor_polygon=None,
                background_transform=None):
         result = {"quality": "insufficient", "velocity_norm_per_s": None,
@@ -264,7 +286,8 @@ class MotionHistory:
                   "time_to_corridor_s": None, "time_to_path_s": None, "time_to_near_s": None,
                   "ttc_scale_s": None, "history_s": 0.0,
                   "relative_expansion_per_s": None, "approach_state": "unknown",
-                  "ttc_invalid_reason": "insufficient_history"}
+                  "ttc_invalid_reason": "insufficient_history",
+                  "ground_approach": {"quality": "insufficient", "time_to_near_s": None}}
         track_id = detection["track_id"]
         if track_id is None:
             return result
@@ -272,6 +295,7 @@ class MotionHistory:
             self.histories.pop(track_id, None)
             result["quality"] = "unstable"
             result["ttc_invalid_reason"] = "unstable_motion"
+            result["ground_approach"]["quality"] = "unstable"
             return result
         history = self.histories.setdefault(track_id, deque())
         # Do not interpret a changed class or reacquired stale track as continuous motion.
@@ -287,7 +311,8 @@ class MotionHistory:
             if elapsed > 0:
                 independent_velocity = tuple((np.asarray(geometry["point"]) - expected) / elapsed)
         history.append((timestamp, detection["class_id"], *geometry["point"],
-                        geometry["height"], geometry["clipped"], independent_velocity))
+                        geometry["height"], geometry["clipped"], independent_velocity,
+                        geometry.get("ground_contact_visible", not geometry["clipped"])))
         while history and timestamp-history[0][0] > self.cfg["history_window_s"] + 1e-9:
             history.popleft()
         duration = timestamp-history[0][0]
@@ -298,7 +323,23 @@ class MotionHistory:
         times = samples[:,0]-timestamp
         matrix = np.column_stack([times, np.ones(len(times))])
         fitted, *_ = np.linalg.lstsq(matrix, samples[:,2:5], rcond=None)
-        residual = float(np.max(np.sqrt(np.mean((matrix @ fitted-samples[:,2:5])**2, axis=0))))
+        contact_only_motion = (
+            self.cfg["approach_danger_enabled"]
+            and detection["class_name"] in self.cfg["static_ground_classes"]
+            and all(row[7] for row in history)
+            and any(row[5] for row in history)
+        )
+        errors = matrix @ fitted - samples[:,2:5]
+        if contact_only_motion:
+            # Ground evidence must not relax the shared motion/TTC/release gate.
+            ground_residual = float(np.max(np.sqrt(np.mean(errors[:, :2]**2, axis=0))))
+            ground = result["ground_approach"]
+            ground["quality"] = ("valid" if ground_residual <= self.cfg["max_motion_residual"]
+                                 else "unstable")
+            if ground["quality"] == "valid":
+                ground["time_to_near_s"] = self._time_to_near(
+                    detection, geometry, *map(float, fitted[0, :2]))
+        residual = float(np.max(np.sqrt(np.mean(errors**2, axis=0))))
         if residual > self.cfg["max_motion_residual"]:
             result["quality"] = "unstable"
             result["ttc_invalid_reason"] = "unstable_motion"
@@ -312,22 +353,8 @@ class MotionHistory:
             result["independent_velocity_norm_per_s"] = list(map(
                 float, np.median(valid_recent, axis=0)))
         # Only a tracked, stable image-space approach may anticipate the near zone.
-        if (self.cfg["approach_danger_enabled"] and not geometry["clipped"]
-                and vy >= self.cfg["min_forward_speed"]):
-            near_y = (self.cfg["static_danger_y"] if detection["class_name"] in
-                      self.cfg["static_ground_classes"] else
-                      geometry["immediate_top_y"])
-            if geometry["point"][1] < near_y:
-                until_near = (near_y - geometry["point"][1]) / vy
-                if until_near <= self.cfg["approach_danger_s"]:
-                    left, _, right, _ = geometry["footprint"]
-                    left += vx * until_near
-                    right += vx * until_near
-                    central_left = self.cfg["central_danger_left"]
-                    central_right = self.cfg["central_danger_right"]
-                    horizontal_overlap = max(0.0, min(right, central_right) - max(left, central_left)) / (right-left)
-                    if horizontal_overlap >= self.cfg["overlap_threshold"]:
-                        result["time_to_near_s"] = float(until_near)
+        if self.cfg["approach_danger_enabled"] and not geometry["clipped"]:
+            result["time_to_near_s"] = self._time_to_near(detection, geometry, vx, vy)
         # TTC uses relative expansion; do not subtract forward ego-motion.
         expansion = dh / geometry["height"]
         if any(row[5] for row in history):

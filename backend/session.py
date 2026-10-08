@@ -242,6 +242,7 @@ class SessionManager:
                     "bottom_y": (item.get("geometry") or {}).get("point", [None, None])[1],
                     "corridor_overlap": (item.get("geometry") or {}).get("corridor_overlap"),
                     "time_to_near_s": (item.get("motion") or {}).get("time_to_near_s"),
+                    "ground_approach": (item.get("motion") or {}).get("ground_approach"),
                     "time_to_moving_conflict_s": (item.get("motion") or {}).get("time_to_moving_conflict_s"),
                     "moving_conflict_basis": (item.get("motion") or {}).get("moving_conflict_basis"),
                     "ttc_scale_s": (item.get("motion") or {}).get("ttc_scale_s"),
