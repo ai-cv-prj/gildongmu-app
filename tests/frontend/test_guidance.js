@@ -34,7 +34,8 @@ for (const [index, time] of [100, 1200, 2300].entries()) {
   now = time;
   traffic.accept({ session_id: "test", frame_id: index + 1,
     detections: [{ track_id: 5 }],
-    event: { type: "traffic_signal", selected_detection_index: 0, signal_state: "red" } }, time);
+    event: { type: "traffic_signal", selected_detection_index: 0, signal_state: "red",
+      voice_gate: { allowed: true } } }, time);
 }
 assert.equal(spoken.filter(text => text === "빨간불.").length, 1);
 

@@ -31,6 +31,18 @@ class TrafficVoice:
         self.missing_announced = False
         self.last_announced_target = None
         self.last_announced_color = None
+        self.voice_allowed = False
+
+    # 횡단보도 근거 소실 시 신호 음성과 관측 이력 해제
+    def _suspend(self, time_s):
+        """재생 중인 신호만 중단하고 재진입 시 새 안정화 과정을 거치게 한다."""
+        if self.voice_allowed:
+            self.events.append((time_s, None))
+        self.voice_allowed = False
+        self._reset_evidence()
+        self.last_valid = self.last_frame = self.last_capture = None
+        self.confirmed = self.missing_announced = False
+        self.last_announced_target = self.last_announced_color = None
 
     # 현재 대상의 색상 증거 폐기
     def _reset_evidence(self):
@@ -47,6 +59,10 @@ class TrafficVoice:
     # 한 프레임의 신호 상태 관측
     def observe(self, result, frame_id, time_s):
         """테스트앱과 같은 3프레임·400ms, 소실·반복 억제 규칙을 적용한다."""
+        if (result.get("voice_gate") or {}).get("allowed") is not True:
+            self._suspend(time_s)
+            return
+        self.voice_allowed = True
         if self.last_valid is not None and time_s - self.last_valid > MAX_GAP_SECONDS:
             self._reset_evidence()
         if (self.confirmed and not self.missing_announced and self.last_valid is not None

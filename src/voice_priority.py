@@ -95,7 +95,7 @@ def prioritize_voice_events(walking_events, traffic_events, crosswalk_events,
                   for time_s, clip in walking_events]
     candidates += [
         (time_s, clip, 2 if clip in RED_TRAFFIC_CLIPS
-         else 5 if clip in TRAFFIC_CHANGE_CLIPS else 6, "traffic")
+         else 5 if clip in TRAFFIC_CHANGE_CLIPS else 6, "traffic" if clip else "traffic_stop")
         for time_s, clip in traffic_events
     ]
     candidates += list(crosswalk_events)
@@ -107,6 +107,14 @@ def prioritize_voice_events(walking_events, traffic_events, crosswalk_events,
     active_source = None
     active_clip = None
     for time_s, clip, priority, source in candidates:
+        if source == "traffic_stop":
+            if active_source == "traffic":
+                result.append((time_s, None))
+                active_end = time_s
+                active_priority = None
+                active_source = None
+                active_clip = None
+            continue
         if source == "walking_stop":
             if active_source == "walking":
                 result.append((time_s, None))

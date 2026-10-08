@@ -24,6 +24,7 @@ from src.risk_visualization import draw_risk, draw_stop_proximity
 from src.risk_log import RiskLog, risk_log_path
 from src.walking_voice import WalkingVoice, suppress_non_green_crosswalk_voice
 from src.traffic_voice import TrafficVoice
+from src.traffic_voice_gate import traffic_voice_gate
 from src.video_audio import render_voice_track, mux_voice
 from src.crosswalk_safety import (
     CrosswalkSafetyEngine, crosswalk_camera_stable,
@@ -293,6 +294,11 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
                     frame.shape, crosswalk_settings,
                 )
             if traffic_result is not None:
+                traffic_result["voice_gate"] = traffic_voice_gate(
+                    class_map, segmenter.label_ids if segmenter is not None else None,
+                    frame.shape, (risk_result or {}).get("roi"))
+                if risk_result is not None:
+                    risk_result["traffic_voice_gate"] = traffic_result["voice_gate"]
                 signal_voice.observe(traffic_result, processed_frames + 1, processed_frames / fps)
             crosswalk_result = None
             if crosswalk_engine is not None:
