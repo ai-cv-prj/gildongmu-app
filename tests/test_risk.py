@@ -219,11 +219,11 @@ class RiskTests(unittest.TestCase):
         self.assertFalse(np.array_equal(rendered[:86], FRAME[:86]))
 
     def test_direction_boundaries_split_left_center_and_right(self):
-        """저장 영상에 설정된 30%·70% 세로 점선을 전체 높이로 표시한다."""
+        """저장 영상에 설정된 35%·65% 세로 점선을 전체 높이로 표시한다."""
         frame = np.zeros((100, 200, 3), np.uint8)
         rendered = draw_direction_boundaries(frame)
-        self.assertTrue(np.any(rendered[:, 60]))
-        self.assertTrue(np.any(rendered[:, 139]))
+        self.assertTrue(np.any(rendered[:, 70]))
+        self.assertTrue(np.any(rendered[:, 129]))
         self.assertFalse(np.any(rendered[:, 100]))
 
     # 처음 핑크 ROI에서 포착된 객체의 경고 복원 확인

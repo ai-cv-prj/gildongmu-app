@@ -242,7 +242,7 @@ class WalkingVoiceTests(unittest.TestCase):
                             messages[current],
                         )
 
-    # 하단 발자국의 30·40·30 구역 침범 확인
+    # 하단 발자국의 35·30·35 구역 침범 확인
     def test_direction_uses_footprint_overlap_with_intrusion_thresholds(self):
         """최대 겹침 구역과 기준 이상 침범한 인접 구역을 모두 반환한다."""
         self.assertEqual(warning_directions(danger_item(1, [10, 0, 20, 20]), 100), {"left"})
@@ -267,7 +267,7 @@ class WalkingVoiceTests(unittest.TestCase):
     def test_center_occupancy_uses_union_of_overlapping_obstacles(self):
         """겹치는 여러 객체의 가운데 점유 구간을 한 번만 계산한다."""
         items = [danger_item(1, [35, 0, 50, 20]), danger_item(2, [45, 0, 55, 20])]
-        self.assertAlmostEqual(center_occupancy_ratio(items, 100), .5)
+        self.assertAlmostEqual(center_occupancy_ratio(items, 100), 2 / 3)
 
     # 한 걸음·두 걸음 경계와 유지 구간 확인
     def test_movement_steps_uses_center_occupancy_hysteresis(self):

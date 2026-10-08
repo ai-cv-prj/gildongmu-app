@@ -33,11 +33,11 @@ window.GOverlay = (() => {
   }
 
   // 왼쪽·가운데·오른쪽 방향 구역 경계 표시
-  /** 음성 판단과 같은 30%·70% 경계를 화면 전체 높이의 점선으로 표시한다. */
+  /** 음성 판단과 같은 35%·65% 경계를 화면 전체 높이의 점선으로 표시한다. */
   function directionBoundaries() {
     const guidance = window.GConfig?.get?.().audio?.guidance || {};
-    const boundaries = [guidance.walking_left_max_ratio ?? .30,
-      guidance.walking_right_min_ratio ?? .70];
+    const boundaries = [guidance.walking_left_max_ratio ?? .35,
+      guidance.walking_right_min_ratio ?? .65];
     ctx.save();
     ctx.strokeStyle = "rgba(255, 255, 255, 0.65)";
     ctx.lineWidth = Math.max(1, canvas.width / 480);
