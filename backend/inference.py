@@ -19,7 +19,7 @@ from src.risk_config import risk_config, tracking_config
 from src.sidewalk import SidewalkSegmenter
 from src.traffic import TrafficSignalPipeline, validate_traffic_config
 from src.traffic_voice_gate import traffic_voice_gate
-from src.walking_voice import WalkingVoice, suppress_non_green_crosswalk_voice
+from src.walking_voice import WalkingVoice, apply_obstacle_voice_suppression
 from src.walking_surface import WalkingSurfaceEngine, walking_surface_config
 
 
@@ -94,7 +94,7 @@ class RealtimeInference:
         signal = self.traffic.predict(frame, frame_id=frame_id,
                                       captured_at_ms=captured_at_ms)
         if not at_stop:
-            suppress_non_green_crosswalk_voice(
+            apply_obstacle_voice_suppression(
                 risk, signal, class_map, self.segmenter.label_ids, frame.shape,
                 self.crosswalk_settings,
             )
