@@ -51,7 +51,7 @@
 
     // 일반 안내 재생 요청
     /** 더 높은 우선순위만 현재 음성을 중단하며 나머지는 대기시키지 않고 폐기한다. */
-    function request({ source, priority, text, validUntil, repeat = false, dynamic = false,
+    function request({ source, priority, text, validUntil, repeat = false, dynamic = false, expireAfterStart = false,
       kind = null, metadata = {}, onStart = () => {}, onComplete = () => {}, onCancel = () => {} }) {
       if (!active || !text || !Number.isFinite(validUntil) || now() >= validUntil) {
         onDiagnostic({ ...metadata, source, status: "stale", at_ms: now() });
@@ -78,7 +78,7 @@
         player.cancel();
         previous.onCancel();
       }
-      current = { source, priority, text, validUntil, repeat, dynamic, kind, finishing: false,
+      current = { source, priority, text, validUntil, repeat, dynamic, expireAfterStart, kind, finishing: false,
         metadata, onStart, onComplete, onCancel, started: false };
       return play(current);
     }
@@ -173,7 +173,7 @@
     // 오래된 이탈 결과 정리
     /** 서버 응답이 끊기면 마지막 이탈 안내가 무한 반복되지 않게 중단한다. */
     function tick() {
-      if (current && now() >= current.validUntil && (!current.started || current.repeat)) clear(current.source);
+      if (current && now() >= current.validUntil && (!current.started || current.repeat || current.expireAfterStart)) clear(current.source);
     }
 
     // 실제 재생 중인 장애물 안내 행동 조회

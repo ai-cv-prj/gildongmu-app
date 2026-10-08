@@ -252,7 +252,7 @@
       }
       stop.visible = true;
       const status = arrivalState(arrival);
-      stop.phase = status === "unavailable" ? 0 : ["arriving", "arrived"].includes(status) ? 2 : 1;
+      stop.phase = status === "unavailable" ? 0 : status === "arrived" ? 3 : status === "arriving" ? 2 : 1;
       if (!stop.phase) continue;
       const id = vehicleIdentity(arrival?.first_vehicle_id);
       const plate = vehicleIdentity(arrival?.vehicle_number);
