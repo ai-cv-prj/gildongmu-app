@@ -10,14 +10,48 @@ test("노선 번호와 음성으로 말한 한국어·영문 접두사를 정규
     ["１１２－１", "112-1"], ["1 4 3", "143"], ["버스 번호는 143번입니다.", "143"],
     ["일사삼", "143"], ["백사십삼", "143"], ["칠천십육 번", "7016"], ["강남 공이", "강남02"],
     ["엔 이십육 번 버스", "N26"], ["m 6 4 1 0", "M6410"], ["일반 버스 143번 타고 싶어요", "143"],
+    ["750B", "750B"], ["750b", "750B"], ["７５０Ｂ", "750B"], ["750 B번", "750B"],
+    ["B750", "B750"], ["N26A", "N26A"], ["112-1A", "112-1A"],
   ]) assert.equal(normalize(raw), expected, raw);
 });
 
 test("대화·불완전한 번호·네 자리를 넘는 숫자는 노선으로 제출하지 않는다", () => {
   for (const raw of [null, 143, "", "버스 찾아 주세요", "아니 143", "143 아니고 271", "버스 아무거나", "143 또는 271",
-    "번호 다시 입력", "12345", "7016-1", "강남12345", "ABCDE123", "143-", "-143", "14--3", "십십", "ㄱㄴ02", "x".repeat(161)]) {
+    "번호 다시 입력", "12345", "7016-1", "강남12345", "ABCDE123", "143-", "-143", "14--3", "십십", "ㄱㄴ02", "x".repeat(161),
+    "12345B", "750ABCDE", "75B0", "750 B 아니고 271", "750B-", "750-B"]) {
     assert.equal(normalize(raw), null, String(raw));
   }
+});
+
+test("터치로 750 뒤에 B를 입력하면 표시·변경 알림·제출에서 750B를 유지한다", () => {
+  const h = harness(); h.keypad.open();
+  for (const digit of "750") h.click(`[data-key="${digit}"]`);
+  h.click('[data-key="letters"]');
+  h.click('[data-letter-group="english"]'); h.click('[data-letter="B"]');
+  assert.equal(h.trigger.value, "750B");
+  assert.equal(h.nodes.get("route-keypad-output").querySelector("span").textContent, "750B");
+  assert.equal(h.changes.at(-1), "750B");
+  h.keypad.setValue(h.changes.at(-1));
+  h.click('[data-keypad-action="search"]');
+  assert.deepEqual(h.submissions, ["750B"]);
+  h.click('[data-letter-action="delete"]');
+  assert.equal(h.trigger.value, "750");
+  h.keypad.destroy();
+});
+
+test("영문 접미사 번호를 키보드로 입력하고 다시 열어 마지막 입력부터 삭제한다", () => {
+  const h = harness(); h.keypad.open();
+  for (const char of "750b") h.press(char);
+  assert.equal(h.trigger.value, "750B");
+  h.keypad.close(); h.keypad.open("750B");
+  h.press("Backspace"); assert.equal(h.trigger.value, "750");
+  h.press("Backspace"); assert.equal(h.trigger.value, "75");
+  h.press("0"); h.press("b");
+  h.nodes.get("route-keypad-output").focus(); h.press("Enter");
+  assert.deepEqual(h.submissions, ["750B"]);
+  h.keypad.setValue("B750");
+  h.press("Backspace"); assert.equal(h.trigger.value, "B75");
+  h.keypad.destroy();
 });
 
 test("한글 키패드 자모를 노선 접두사로 조합하며 받침과 복합 모음을 구분한다", () => {

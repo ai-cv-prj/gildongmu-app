@@ -54,7 +54,7 @@
         if (numberText(rest) !== null) { text = letter + rest; break; }
       }
     }
-    const match = text.match(/^([A-Za-z가-힣]*?)\s*([0-9]+(?:\s*[0-9]+)*(?:\s*-\s*[0-9]+)?|[영공일이삼사오육륙칠팔구십백천만]+(?:\s+[영공일이삼사오육륙칠팔구십백천만]+)*)$/);
+    const match = text.match(/^([A-Za-z가-힣]*?)\s*([0-9]+(?:\s*[0-9]+)*(?:\s*-\s*[0-9]+)?|[영공일이삼사오육륙칠팔구십백천만]+(?:\s+[영공일이삼사오육륙칠팔구십백천만]+)*)\s*([A-Za-z]{0,4})$/);
     if (!match) return null;
     let prefix = match[1].toUpperCase();
     if (LETTER_NAMES[prefix]) prefix = LETTER_NAMES[prefix];
@@ -62,7 +62,7 @@
     if (number === null || number.replace(/\D/g, "").length > 4) return null;
     if (prefix && !/^(?:[A-Z]{1,4}|[가-힣]{1,8})$/.test(prefix)) return null;
     if (/버스|번호|타는|아니|입력|찾아|입니다|주세요|저는|제가|번/.test(prefix)) return null;
-    const value = prefix + number;
+    const value = prefix + number + match[3].toUpperCase();
     return value.length <= 20 ? value : null;
   }
 
@@ -94,7 +94,7 @@
     const numberKeys = doc.getElementById("number-keys"), letterKeys = doc.getElementById("letter-keys");
     const letterModes = layer.querySelector(".letter-modes");
     const listeners = [], inertStates = new Map();
-    let opened = false, destroyed = false, draft = "", prefix = "", digits = "";
+    let opened = false, destroyed = false, draft = "", input = "";
     let mode = "numbers", group = "consonants", page = 0;
 
     function listen(element, event, callback) {
@@ -121,13 +121,11 @@
       // A view may mirror onChange back here; keep the uncomposed jamo buffer.
       if (value === draft) { displayValue(); return; }
       draft = typeof value === "string" ? value : "";
-      const parts = draft.match(/^([A-Z가-힣ㄱ-ㅎㅏ-ㅣ]*)([0-9-]*)$/i);
-      prefix = parts ? parts[1] : "";
-      digits = parts ? parts[2] : "";
+      input = draft;
       displayValue();
     }
     function syncDraft() {
-      draft = composeHangul(prefix).toUpperCase() + digits;
+      draft = composeHangul(input).toUpperCase();
       displayValue();
       onChange(draft);
     }
@@ -186,7 +184,8 @@
     function open(value = "", nextMode = "numbers") {
       if (destroyed) return;
       setValue(value);
-      group = /^[A-Z]+$/i.test(prefix) ? "english" : "consonants";
+      const letters = input.replace(/[0-9-]/g, "");
+      group = /^[A-Z]+$/i.test(letters) ? "english" : "consonants";
       page = 0;
       mode = nextMode === "letters" ? "letters" : "numbers";
       if (!opened) {
@@ -216,21 +215,24 @@
       }
     }
     function deleteLast() {
-      if (digits) digits = digits.slice(0, -1);
-      else prefix = [...prefix].slice(0, -1).join("");
+      input = [...input].slice(0, -1).join("");
       syncDraft();
       onSpeak(draft ? spokenRoute(draft) : "입력 없음");
     }
     function inputDigit(value) {
-      if (digits.replace(/\D/g, "").length >= 4) { onSpeak("숫자 네 자리까지"); return; }
-      digits += value;
+      if (input.replace(/\D/g, "").length >= 4) { onSpeak("숫자 네 자리까지"); return; }
+      input += value;
       syncDraft();
       onSpeak(spokenRoute(value));
     }
     function inputLetter(value) {
-      const next = prefix + value;
-      if (composeHangul(next).length > 8) { onSpeak("입력 길이 초과"); return; }
-      prefix = next;
+      // English letters follow entry order; Korean route names remain prefixes.
+      const digitIndex = input.search(/[0-9]/);
+      const next = /^[A-Z]$/i.test(value) || digitIndex < 0
+        ? input + value
+        : input.slice(0, digitIndex) + value + input.slice(digitIndex);
+      if (composeHangul(next).replace(/[0-9-]/g, "").length > 8) { onSpeak("입력 길이 초과"); return; }
+      input = next;
       syncDraft();
       onSpeak(value);
     }
@@ -264,7 +266,8 @@
       if (mode !== "letters") return;
       if (button.dataset.letter) inputLetter(button.dataset.letter);
       else if (button.dataset.letterAction === "delete") {
-        prefix = [...prefix].slice(0, -1).join("");
+        // The letter keypad removes the last letter while retaining the number.
+        input = input.replace(/[^0-9-]([0-9-]*)$/, "$1");
         syncDraft(); onSpeak(draft ? spokenRoute(draft) : "입력 없음");
       } else if (button.dataset.letterAction === "page") {
         page++; renderLetters(); onSpeak("다음");
@@ -290,7 +293,9 @@
       else if (/^[0-9]$/.test(event.key)) { event.preventDefault(); inputDigit(event.key); }
       else if (event.key === "-") {
         event.preventDefault();
-        if (digits && !digits.includes("-") && digits.length < 4) { digits += "-"; syncDraft(); onSpeak("하이픈"); }
+        if (/[0-9]$/.test(input) && !input.includes("-") && input.replace(/\D/g, "").length < 4) {
+          input += "-"; syncDraft(); onSpeak("하이픈");
+        }
       } else if (/^[a-z]$/i.test(event.key)) { event.preventDefault(); inputLetter(event.key.toUpperCase()); }
     });
 
