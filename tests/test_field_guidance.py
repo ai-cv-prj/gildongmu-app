@@ -10,6 +10,7 @@ from backend.boarding import Boarding
 from backend.inference import RealtimeInference
 from backend.stop_proximity import StopProximity
 from src.walking_voice import WalkingVoice, walking_action
+from src.walking_surface import WalkingSurfaceEngine
 from test_risk import FRAME, detection, engine
 from test_walking_voice import danger_item, caution_item, prediction
 
@@ -101,7 +102,7 @@ def stop_model():
     model.crosswalk_settings = {}
     model.crosswalk = SimpleNamespace(update=lambda *args, **kwargs: {
         "crossing_active": False, "status": "search"})
-    model.walking_surface = SimpleNamespace(update=lambda *args, **kwargs: {})
+    model.walking_surface = WalkingSurfaceEngine()
     model.traffic = SimpleNamespace(predict=lambda *args, **kwargs: {
         "detections": [], "signal_state": "unknown", "selected_detection_index": None})
     return model, objects, calls
@@ -143,21 +144,28 @@ def assert_stopped(risk):
 def test_automatic_arrival_disables_obstacles_through_input_and_bus_search():
     model, objects, calls = stop_model()
     for i, ms in enumerate((1000, 1200, 1400), 1):
-        risk, *_ = model.predict(FRAME, i, ms)
+        risk, _, _, surface, *_ = model.predict(FRAME, i, ms)
     assert model.boarding.status == "awaiting_stop"
     assert_stopped(risk)
+    assert surface["enabled"] is False
+    assert surface["status"] == "disabled"
+    assert surface["voice_text"] is None
+    assert surface["roi"] is None
     assert len(calls) == 3
     objects.append(detection((42, 40, 58, 88), "person", 0))
     for i, action in enumerate((None, "stop_announced", "submit", "reopen"), 4):
         if action:
             model.boarding.act(action, 1, "143")
-        risk, *_ = model.predict(FRAME, i, 1000 + i * 200)
+        risk, _, _, surface, *_ = model.predict(FRAME, i, 1000 + i * 200)
         assert_stopped(risk)
+        assert surface["enabled"] is False
         assert len(calls) == 3, "Obstacle model must not run at the stop"
     epoch = model.risk.epoch
     model.boarding.act("cancel", 1)
-    risk, *_ = model.predict(FRAME, 8, 2800)
+    risk, _, _, surface, *_ = model.predict(FRAME, 8, 2800)
     assert risk["enabled"] is True
+    assert surface["enabled"] is True
+    assert surface["status"] == "inside"
     assert len(calls) == 4
     assert model.risk.epoch > epoch
     assert risk["detections"][0]["risk_level"] == "danger"
@@ -167,6 +175,7 @@ def test_manual_arrival_disables_obstacles_without_detecting_a_stop():
     model, objects, calls = stop_model()
     objects.clear()
     model.boarding.act("arrive")
-    risk, *_ = model.predict(FRAME, 1, 1000)
+    risk, _, _, surface, *_ = model.predict(FRAME, 1, 1000)
     assert_stopped(risk)
+    assert surface["enabled"] is False
     assert not calls

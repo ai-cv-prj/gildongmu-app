@@ -103,12 +103,13 @@ class RealtimeInference:
             captured_at_ms / 1000, camera_stable=camera_stable,
             detections=risk["detections"],
         )
+        risk["boarding"] = self.boarding.observe(
+            risk["stop_proximity"], crossing_active=crosswalk["crossing_active"])
         walking_surface = self.walking_surface.update(
             class_map, self.segmenter.label_ids, frame.shape, captured_at_ms / 1000,
             camera_stable=camera_stable, crosswalk_status=crosswalk["status"],
+            suspended=self.boarding.at_stop,
         )
-        risk["boarding"] = self.boarding.observe(
-            risk["stop_proximity"], crossing_active=crosswalk["crossing_active"])
         if self.boarding.at_stop:
             # Clear even the frame that first confirms arrival, before publishing it.
             risk = {**self.stopped_risk(), "stop_proximity": risk["stop_proximity"],

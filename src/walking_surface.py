@@ -182,17 +182,21 @@ class WalkingSurfaceEngine:
 
     # 프레임별 보행로 상태 갱신
     def update(self, class_map, label_ids, shape, timestamp, camera_stable=True,
-               crosswalk_status=None):
+               crosswalk_status=None, suspended=False):
         """초록색 보행가능 비율과 이전 연결 영역을 이용해 좌우 이탈을 반환한다."""
         roi = foot_roi(shape, self.config)
         result = {
-            "enabled": self.config["enabled"], "status": "disabled",
+            "enabled": self.config["enabled"] and not suspended, "status": "disabled",
             "direction": None, "voice_text": None, "voice_clip": None,
             "repeat": False, "event_id": self.event_id, "reasons": [],
             "walkable_fraction": None,
             "roi": {key: roi[key] for key in ("left", "right", "top", "bottom")},
             "stale_after_ms": round(self.config["stale_after_s"] * 1000),
         }
+        if suspended:
+            self.reset()
+            result.update(event_id=self.event_id, roi=None, reasons=["bus_stop"])
+            return result
         if not self.config["enabled"]:
             return result
         if (self.last_timestamp is not None and
