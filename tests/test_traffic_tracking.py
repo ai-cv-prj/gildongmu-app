@@ -360,6 +360,21 @@ class GeometryMotionTests(unittest.TestCase):
                            (np.random.default_rng(27).integers(0, 170, (640, 480, 3), dtype=np.uint8), [0, 180, 480, 640])]:
             self.assertIsNone(estimate_vanishing_point(frame, box, cv2))
 
+    def test_wide_frontal_crossing_uses_screen_center(self):
+        # 화면 좌우로 잘린 수평 줄무늬는 끝점 대신 화면 중앙을 진행 방향으로 쓴다.
+        frame = np.full((640, 360, 3), 60, dtype=np.uint8)
+        for y in (300, 360, 430, 510, 600):
+            frame[y - 10:y + 10] = 240
+        point = estimate_vanishing_point(frame, [0, 260, 360, 640], cv2)
+        self.assertEqual(point[0], 180)
+        self.assertLess(point[1], 260)
+
+    def test_tilted_clipped_stripes_stay_unknown(self):
+        frame = np.full((640, 360, 3), 60, dtype=np.uint8)
+        for y in (300, 360, 430, 510, 600):
+            cv2.line(frame, (0, y), (359, y - 60), (240, 240, 240), 20)
+        self.assertIsNone(estimate_vanishing_point(frame, [0, 200, 360, 640], cv2))
+
     def test_motion_compensates_global_shift_but_rejects_local_movement(self):
         image = scene()
         matrix, info = estimate_camera_motion(motion_gray(image, cv2),

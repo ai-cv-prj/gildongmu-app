@@ -121,10 +121,29 @@ def direction(bars, width, height, roi):
     return best[1], rails, pairs
 
 
+def straight_crossing_direction(bars, width, height, roi):
+    """정면에서 본 넓은 횡단보도는 화면 중앙을 진행 방향으로 쓴다.
+
+    가까운 줄무늬가 화면 좌우로 잘리면 경계선을 만들 끝점이 부족하다. 이때 줄무늬가
+    거의 수평이고 화면 폭의 절반 이상을 가로지르면 정면으로 건너는 것으로 본다.
+    줄무늬가 기울어 비스듬히 선 경우에는 방향을 미확정으로 남긴다.
+    """
+    if len(bars) < 4:
+        return None
+    slopes = [abs((bar['right'][1] - bar['left'][1]) / max(1e-6, bar['right'][0] - bar['left'][0]))
+              for bar in bars]
+    spans = [(bar['right'][0] - bar['left'][0]) / width for bar in bars]
+    if np.median(slopes) > 0.08 or np.median(spans) < 0.5:
+        return None
+    return [width / 2, roi[1] - 0.1 * height]
+
+
 def estimate_stripe_direction(frame, box, cv2):
     _, diagnostic = stripe_candidates(frame, box, cv2)
     if not diagnostic:
         return None
     height, width = frame.shape[:2]
     point, _, _ = direction(diagnostic['bars'], width, height, diagnostic['roi'])
+    if point is None:
+        point = straight_crossing_direction(diagnostic['bars'], width, height, diagnostic['roi'])
     return point

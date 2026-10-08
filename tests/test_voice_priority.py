@@ -183,3 +183,16 @@ def test_crossing_suppression_stops_active_walking_clip():
         events = prioritize_voice_events(
             [(0.0, "walking-move-right-two.mp3"), (0.2, None)], [], [])
     assert events == [(0.0, "walking-move-right-two.mp3"), (0.2, None)]
+
+
+# 신호 재안내 우선순위 확인
+def test_repeated_red_does_not_preempt_walking():
+    """같은 빨간불 재안내는 장애물 음성을 끊지 않고, 첫 빨간불만 장애물보다 우선한다."""
+    with patch("src.voice_priority.clip_duration", return_value=1.0):
+        events = prioritize_voice_events(
+            [(0.0, "walking-move-right-two.mp3"), (2.0, "walking-move-right-two.mp3")],
+            [(0.2, "red.mp3", "repeat"), (2.2, "red.mp3")],
+            [],
+        )
+    assert events == [(0.0, "walking-move-right-two.mp3"), (2.0, "walking-move-right-two.mp3"),
+                      (2.2, "red.mp3")]

@@ -76,6 +76,26 @@ class TrafficVoiceTests(unittest.TestCase):
         self.assertEqual([name for _, name in voice.events],
                          ["red.mp3", "missing.mp3", "red.mp3"])
 
+    # 같은 색상 주기 재안내
+    def test_same_color_repeats_every_interval_with_same_wording(self):
+        """초록 대기 안내는 5초마다 같은 문구로 낮은 우선순위 재안내를 기록한다."""
+        voice = TrafficVoice()
+        self.observe(voice, "green", [.1 + .25 * index for index in range(45)])
+        self.assertEqual([event[1] for event in voice.events], ["green-initial-wait.mp3"] * 3)
+        self.assertEqual([event[2:] for event in voice.events], [(), ("repeat",), ("repeat",)])
+        self.assertAlmostEqual(voice.events[1][0] - voice.events[0][0], 5)
+        self.assertAlmostEqual(voice.events[2][0] - voice.events[1][0], 5)
+
+    # 전환 후 재안내 문구
+    def test_repeat_after_change_reads_current_color_only(self):
+        """전환 안내 뒤 같은 색상이 이어지면 전환 문구 대신 현재 색상만 다시 읽는다."""
+        voice = TrafficVoice()
+        self.observe(voice, "red", [.1, .3, .5])
+        self.observe(voice, "green", [.7 + .2 * index for index in range(30)], first_frame=4)
+        self.assertEqual(voice.events[1][1], "green-changed.mp3")
+        self.assertEqual(voice.events[2][1:], ("green.mp3", "repeat"))
+        self.assertGreaterEqual(voice.events[2][0] - voice.events[1][0], 5 - 1e-9)
+
     # 실제 파일의 영상 음성 저장
     def test_traffic_only_video_without_mask_has_no_audio(self):
         """횡단보도 마스크와 파란 ROI가 없는 단독 신호 추론은 음성을 만들지 않는다."""
