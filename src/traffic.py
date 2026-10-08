@@ -18,7 +18,7 @@ from src.traffic_tracker import RECOVERY_CONFIDENCE, SignalTracker
 CLASS_NAMES = {0: "pedestrian_signal", 1: "crosswalk"}
 DEFAULTS = {
     "conf": 0.25,
-    "imgsz": 960,
+    "imgsz": 640,
     "crosswalk_min_confidence": 0.50,
     "classifier_min_confidence": 0.60,
     "association_stable_frames": 3,
