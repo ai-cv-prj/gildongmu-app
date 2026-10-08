@@ -30,9 +30,9 @@ audio:
     walking_two_step_enter_ratio: 0.55
     walking_two_step_exit_ratio: 0.45
     # 음성 행동 전환과 동일 안내 재생 기준
-    walking_lateral_confirm_ms: 200
+    walking_lateral_confirm_ms: 600
     walking_from_stop_confirm_ms: 500
-    walking_same_direction_repeat_ms: 1500
+    walking_same_direction_repeat_ms: 4000
     walking_crowded_redirect_ms: 3000
     walking_repeat_none_ms: 1500
     walking_stop_repeat_none_ms: 1500

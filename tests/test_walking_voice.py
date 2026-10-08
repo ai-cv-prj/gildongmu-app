@@ -96,7 +96,7 @@ class WalkingVoiceTests(unittest.TestCase):
     # 모든 직접 행동 전환의 안정화 시간 확인
     def test_all_direct_action_transition_timings(self):
         """
-        이전·다음 행동 조합에 즉시 확정 또는 200ms, 500ms 정책을 적용한다.
+        이전·다음 행동 조합에 즉시 확정 또는 600ms, 500ms 정책을 적용한다.
         """
         actions = (None, "left", "right", "crowded", "blocked", "stop")
         for previous in actions:
@@ -106,7 +106,7 @@ class WalkingVoiceTests(unittest.TestCase):
                 elif previous == "stop":
                     expected = 0.5
                 else:
-                    expected = 0.2
+                    expected = 0.6
                 with self.subTest(previous=previous, current=current):
                     self.assertEqual(transition_confirm_s(previous, current), expected)
 
@@ -187,9 +187,9 @@ class WalkingVoiceTests(unittest.TestCase):
                         messages[action],
                     )
 
-    # 같은 좌우 방향의 1.5초 간격 재안내 확인
-    def test_same_direction_repeats_after_one_point_five_seconds_regardless_of_none(self):
-        """중간 none과 관계없이 마지막 같은 방향 음성에서 1.5초 뒤 현재 방향을 재안내한다."""
+    # 같은 좌우 방향의 4초 간격 재안내 확인
+    def test_same_direction_repeats_after_four_seconds_regardless_of_none(self):
+        """짧은 none을 지나도 같은 방향은 마지막 안내로부터 4초 뒤 재안내한다."""
         for action, message in (
             ("left", ("왼쪽으로 한 걸음", "walking-move-left-one.mp3")),
             ("right", ("오른쪽으로 한 걸음", "walking-move-right-one.mp3")),
@@ -205,17 +205,19 @@ class WalkingVoiceTests(unittest.TestCase):
                 with patch("src.walking_voice.walking_action", return_value=action):
                     self.assertIsNone(
                         voice.observe(prediction(level="monitor"), 100, 0.6))
-                    self.assertEqual(
-                        voice.observe(prediction(level="monitor"), 100, 1.5), message)
+                    self.assertIsNone(
+                        voice.observe(prediction(level="monitor"), 100, 1.5))
                     self.assertIsNone(
                         voice.observe(prediction(level="monitor"), 100, 2.0))
+                    self.assertIsNone(
+                        voice.observe(prediction(level="monitor"), 100, 3.0))
                     self.assertEqual(
-                        voice.observe(prediction(level="monitor"), 100, 3.0), message)
+                        voice.observe(prediction(level="monitor"), 100, 4.0), message)
 
-    # none 후 일반적인 다른 행동의 즉시 재생 확인
-    def test_different_action_after_none_is_announced_immediately(self):
+    # 짧은 none이 행동 전환 확인 시간을 우회하지 않음
+    def test_different_action_after_short_none_still_requires_confirmation(self):
         """
-        none 뒤의 다른 행동은 첫 감지 시 바로 안내한다.
+        짧은 none 뒤 다른 방향도 안정화를 확인하며 긴급 정지만 즉시 안내한다.
         """
         messages = {
             "left": ("왼쪽으로 한 걸음", "walking-move-left-one.mp3"),
@@ -238,10 +240,14 @@ class WalkingVoiceTests(unittest.TestCase):
                             voice.observe(prediction(level="monitor"), 100, 1.0)
                         )
                     with patch("src.walking_voice.walking_action", return_value=current):
-                        self.assertEqual(
-                            voice.observe(prediction(level="monitor"), 100, 1.001),
-                            messages[current],
-                        )
+                        first = voice.observe(prediction(level="monitor"), 100, 1.001)
+                        delay = transition_confirm_s(previous, current)
+                        if delay == 0:
+                            self.assertEqual(first, messages[current])
+                        else:
+                            self.assertIsNone(first)
+                            self.assertEqual(voice.observe(
+                                prediction(level="monitor"), 100, 1.001 + delay), messages[current])
 
     # 하단 발자국의 35·30·35 구역 침범 확인
     def test_direction_uses_footprint_overlap_with_intrusion_thresholds(self):
@@ -499,11 +505,12 @@ class WalkingVoiceTests(unittest.TestCase):
         same = prediction(danger_item(2, [20, 0, 43, 20]))
         self.assertIsNone(voice.observe(same, 100, .3))
         self.assertEqual(same["last_action"], "right")
-        # 같은 객체들이 반대쪽으로 이동하면 새 방향을 200ms 확인한다.
+        # 같은 객체들이 반대쪽으로 이동하면 새 방향을 600ms 확인한다.
         opposite = [danger_item(i, [57, 0, 80, 20]) for i in (1, 2)]
         self.assertIsNone(voice.observe(prediction(*opposite), 100, .4))
         self.assertIsNone(voice.observe(prediction(*opposite), 100, .5))
-        self.assertEqual(voice.observe(prediction(*opposite), 100, .6),
+        self.assertIsNone(voice.observe(prediction(*opposite), 100, .6))
+        self.assertEqual(voice.observe(prediction(*opposite), 100, 1.0),
                          ("왼쪽으로 한 걸음", "walking-move-left-one.mp3"))
         for timestamp in (1.5, 2.5, 3.5, 4.5):
             cleared = prediction(level="monitor")
@@ -515,7 +522,7 @@ class WalkingVoiceTests(unittest.TestCase):
 
     # 혼잡 안내 직후 방향 음성을 혼잡 경고로 치환
     def test_crowded_redirects_new_directions_during_protection_window(self):
-        """혼잡 안내 후 3초 동안 새 좌우 행동은 방향 대신 혼잡 음성을 다시 낸다."""
+        """혼잡 안내 후 3초 동안 좌우 판단이 흔들려도 같은 문구를 다시 생성하지 않는다."""
         voice = WalkingVoice()
         result = prediction(level="monitor")
         crowded = ("전방 혼잡 주의하세요", "walking-crowded.mp3")
@@ -524,13 +531,14 @@ class WalkingVoiceTests(unittest.TestCase):
 
         with patch("src.walking_voice.walking_action", return_value="left"):
             left = prediction(level="monitor")
-            self.assertEqual(voice.observe(left, 100, 1.0), crowded)
+            self.assertIsNone(voice.observe(left, 100, 1.0))
+            self.assertEqual(left["voice_event"]["event_id"], 1)
             self.assertEqual(left["last_action"], "left")
             self.assertEqual(left["voice_action"], "crowded")
             self.assertIsNone(voice.observe(prediction(level="monitor"), 100, 1.1))
 
         with patch("src.walking_voice.walking_action", return_value="right"):
-            self.assertEqual(voice.observe(prediction(level="monitor"), 100, 1.2), crowded)
+            self.assertIsNone(voice.observe(prediction(level="monitor"), 100, 1.2))
 
         with patch("src.walking_voice.walking_action", return_value=None):
             silent = prediction(level="monitor")
@@ -538,10 +546,10 @@ class WalkingVoiceTests(unittest.TestCase):
             self.assertIsNone(silent["voice_action"])
 
         with patch("src.walking_voice.walking_action", return_value="left"):
-            self.assertEqual(voice.observe(prediction(level="monitor"), 100, 1.4), crowded)
+            self.assertIsNone(voice.observe(prediction(level="monitor"), 100, 1.4))
             self.assertIsNone(voice.observe(prediction(level="monitor"), 100, 3.1))
             self.assertEqual(
-                voice.observe(prediction(level="monitor"), 100, 3.3),
+                voice.observe(prediction(level="monitor"), 100, 3.7),
                 ("왼쪽으로 한 걸음", "walking-move-left-one.mp3"),
             )
 
@@ -580,9 +588,9 @@ class WalkingVoiceTests(unittest.TestCase):
                                         for item in result["detections"]))
                 self.assertEqual(voice.events, [])
 
-    # 같은 방향의 걸음 수 변경과 1.5초 재안내 확인
+    # 같은 방향의 걸음 수 변경과 4초 재안내 확인
     def test_step_count_change_waits_for_same_direction_repeat(self):
-        """걸음 수 변화로 즉시 안내하지 않고 1.5초 후 기존 방향·걸음 수를 반복한다."""
+        """걸음 수 변화로 즉시 안내하지 않고 4초 후 기존 방향·걸음 수를 반복한다."""
         voice = WalkingVoice()
         one_step = prediction(danger_item(1, [20, 0, 48, 20]))
         two_steps = prediction(danger_item(1, [20, 0, 55, 20]))
@@ -594,7 +602,11 @@ class WalkingVoiceTests(unittest.TestCase):
         self.assertEqual(two_steps["voice_steps"], 1)
         confirmed = prediction(danger_item(1, [20, 0, 55, 20]))
         self.assertEqual(
-            voice.observe(confirmed, 100, 1.6),
+            voice.observe(confirmed, 100, 1.6), None,
+        )
+        self.assertIsNone(voice.observe(prediction(danger_item(1, [20, 0, 55, 20])), 100, 3.0))
+        self.assertEqual(
+            voice.observe(confirmed, 100, 4.1),
             ("오른쪽으로 한 걸음", "walking-move-right-one.mp3"),
         )
         self.assertEqual(confirmed["voice_action"], "right")
