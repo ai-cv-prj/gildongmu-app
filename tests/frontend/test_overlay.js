@@ -131,6 +131,8 @@ function busFrame(capturedAt) {
 }
 busFrame(1700);
 assert.ok(labels.includes("143"));
+assert.ok(strokeColors.includes("#7cbdff"), "walking-mode bus boxes use the reading color");
+assert.ok(!strokeColors.includes("#ffd21c"), "walking-mode bus boxes must not use yellow");
 busFrame(1500);
 assert.ok(!labels.includes("143"));
 busFrame(2100);
@@ -210,6 +212,10 @@ assert.ok(labels.includes("604"));
 assert.ok(!labels.includes("다른 버스 번호"));
 assert.ok(labels.includes("604 다른 버스 확인"));
 assert.ok(!labels.includes("다른 노선 · 목표 7011번"));
+assert.ok(strokeColors.includes("#ff6172"), "other-route vehicle boxes and cards are red");
+assert.ok(filledRects.some(rect => rect.color === "#ff6172"), "other-route vehicle label is red");
+assert.ok(textColors.some(item => item.text === "604 다른 버스 확인" && item.color === "#ff6172"));
+assert.ok(!strokeColors.some(color => ["#ffd166", "#ffd21c"].includes(color)));
 assert.ok(!strokeColors.includes("#21d7bb"));
 
 // OCR text stays readable within its 3s evidence window; moving boxes expire at 400ms.

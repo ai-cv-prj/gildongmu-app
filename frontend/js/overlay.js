@@ -7,6 +7,8 @@ window.GOverlay = (() => {
   const canvas = document.getElementById("overlay");
   const ctx = canvas.getContext("2d");
   let version = 0;
+  const BUS_COLORS = Object.freeze({ mint: "#21d7bb", checkingBlue: "#7cbdff",
+    otherRed: "#ff6172", muted: "#b9c5d5" });
 
   // 프레임 크기에 맞는 캔버스 준비
   /** 카메라와 같은 비율로 오버레이 좌표를 맞춘다. */
@@ -61,7 +63,7 @@ window.GOverlay = (() => {
       if (![x1, y1, x2, y2].every(Number.isFinite)) continue;
       const selected = item.selection_status === "selected";
       const level = item.alert_level || item.risk_level;
-      const color = kind === "bus" ? "#ffd21c" : kind === "crosswalk" ? "#d965cc" : kind === "traffic"
+      const color = kind === "bus" ? BUS_COLORS.checkingBlue : kind === "crosswalk" ? "#d965cc" : kind === "traffic"
         ? selected ? item.signal_state === "green" ? "#38db77" : item.signal_state === "red" ? "#ff6172" : "#f5d66d" : "#69b0ff"
         : level === "danger" ? "#ff6571" : level === "caution" ? "#ffb766" : "#b4b4b4";
       ctx.strokeStyle = color;
@@ -115,9 +117,9 @@ window.GOverlay = (() => {
           state: guidance.confirmed ? "matched_candidate" : "recognized_single" }
       : evidence[0];
     const scale = canvas.width / 360;
-    // sample.mp4: gray while searching, blue while reading, mint for a read target number.
-    const mint = "#21d7bb", checkingBlue = "#7cbdff", amber = "#ffd166", muted = "#b9c5d5";
-    const colorFor = item => isTarget(item) ? mint : amber;
+    // Search is gray, reading is blue, target evidence is mint, and other routes are red.
+    const { mint, checkingBlue, otherRed, muted } = BUS_COLORS;
+    const colorFor = item => isTarget(item) ? mint : otherRed;
     const checking = !failed && !preparing && fresh &&
       ((bus.detections || []).some(item => item.class_name === "bus" || item.class_id === 0)
         || event.buses?.length > 0);
