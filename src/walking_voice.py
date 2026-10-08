@@ -175,6 +175,11 @@ def apply_obstacle_voice_suppression(prediction, signal, class_map, label_ids, s
     """바깥 띠와 비초록 횡단보도 근거에 따라 위험 객체를 음성에서 제외한다."""
     prediction["walkable_sides"] = walkable_side_fractions(
         class_map, label_ids, shape)
+    prediction["direction_walkability"] = direction_edge_walkability(
+        class_map, label_ids, shape, prediction.get("roi"),
+        config.get("walking_direction_edge_width_ratio", .20),
+        config.get("walking_direction_min_walkable_ratio", .30),
+    )
     for item in prediction.get("detections", []):
         item.pop("voice_suppressed_reason", None)
         item.pop("crosswalk_contact_fraction", None)
@@ -237,6 +242,67 @@ def walkable_side_fractions(class_map, label_ids, shape):
         "left": float(np.mean(left == walkable_id)),
         "right": float(np.mean(right == walkable_id)),
     }
+
+
+# 핑크 ROI 양쪽 끝의 보행 가능 비율 계산
+def direction_edge_walkability(class_map, label_ids, shape, roi, edge_ratio, minimum):
+    """핑크 ROI 좌우 끝 영역에서 초록 보행 마스크가 차지하는 비율을 반환한다."""
+    unavailable = {
+        "status": "unavailable", "left": None, "right": None,
+        "edge_width_ratio": edge_ratio, "minimum": minimum,
+    }
+    if (class_map is None or not label_ids or "walkable" not in label_ids
+            or class_map.shape != tuple(shape[:2])):
+        return unavailable
+    polygon = (roi or {}).get("immediate_polygon")
+    if not isinstance(polygon, list) or len(polygon) < 4:
+        return unavailable
+    try:
+        xs = [float(point[0]) for point in polygon]
+        ys = [float(point[1]) for point in polygon]
+    except (TypeError, ValueError, IndexError):
+        return unavailable
+    if not all(isfinite(value) for value in xs + ys):
+        return unavailable
+    height, width = class_map.shape
+    left = max(0, min(width, int(np.floor(min(xs) * width))))
+    right = max(0, min(width, int(np.ceil(max(xs) * width))))
+    top = max(0, min(height, int(np.floor(min(ys) * height))))
+    bottom = max(0, min(height, int(np.ceil(max(ys) * height))))
+    edge_width = max(1, int(round((right - left) * edge_ratio)))
+    if right <= left or bottom <= top or edge_width > right - left:
+        return unavailable
+    patches = {
+        "left": class_map[top:bottom, left:left + edge_width],
+        "right": class_map[top:bottom, right - edge_width:right],
+    }
+    if any(patch.size == 0 for patch in patches.values()):
+        return unavailable
+    walkable_id = label_ids["walkable"]
+    return {
+        "status": "available",
+        "left": float(np.mean(patches["left"] == walkable_id)),
+        "right": float(np.mean(patches["right"] == walkable_id)),
+        "edge_width_ratio": edge_ratio,
+        "minimum": minimum,
+    }
+
+
+# 이동 후보 방향의 보행 마스크가 부족할 때 장애물 주의 음성으로 대체
+def direction_voice_action(action, prediction):
+    """판독 가능한 목표 방향의 보행 마스크가 기준 미만이면 blocked를 반환한다."""
+    if action not in ("left", "right"):
+        return action
+    walkability = prediction.get("direction_walkability") or {}
+    if walkability.get("status") != "available":
+        return action
+    fraction = walkability.get(action)
+    minimum = walkability.get("minimum")
+    if (isinstance(fraction, (int, float)) and not isinstance(fraction, bool)
+            and isinstance(minimum, (int, float)) and not isinstance(minimum, bool)
+            and isfinite(fraction) and isfinite(minimum) and fraction < minimum):
+        return "blocked"
+    return action
 
 
 # 객체 하단 발자국의 화면 방향 판정
@@ -489,6 +555,7 @@ class WalkingVoice:
         display_action = walking_action(evidence, image_width)
         vehicle_only = crossing_active or crosswalk_status == "approach"
         raw_action = walking_action(evidence, image_width, vehicle_only, True)
+        raw_action = direction_voice_action(raw_action, evidence)
         eligible = guidance_items(evidence, "danger", vehicle_only, True)
         if (prediction.get("boarding") or {}).get("assumed_stationary") and eligible:
             # 입력 중에는 측면 위험만 남아도 기존 정지 안내를 유지한다.

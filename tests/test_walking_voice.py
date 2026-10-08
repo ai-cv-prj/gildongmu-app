@@ -26,6 +26,7 @@ from src.walking_voice import (
     WalkingVoice,
     center_occupancy_ratio,
     apply_obstacle_voice_suppression,
+    direction_edge_walkability,
     movement_steps,
     repeat_none_s,
     transition_confirm_s,
@@ -434,6 +435,59 @@ class WalkingVoiceTests(unittest.TestCase):
         result["walkable_sides"] = walkable_side_fractions(
             class_map, {"walkable": 1}, class_map.shape)
         self.assertEqual(walking_action(result, 100), "blocked")
+
+    # 핑크 ROI 양쪽 끝 20%의 보행 마스크 비율 확인
+    def test_direction_edge_walkability_uses_pink_roi_outer_regions(self):
+        """화면 전체가 아니라 핑크 ROI 좌우 끝 영역에서만 초록 마스크를 계산한다."""
+        class_map = np.zeros((100, 100), np.uint8)
+        class_map[65:75, 2:21] = 1
+        class_map[65:76, 79:98] = 1
+        result = direction_edge_walkability(
+            class_map, {"walkable": 1}, class_map.shape,
+            {"immediate_polygon": [[.02, .65], [.98, .65], [.98, 1], [.02, 1]]},
+            .20, .30)
+        self.assertEqual(result["status"], "available")
+        self.assertAlmostEqual(result["left"], 10 / 35)
+        self.assertAlmostEqual(result["right"], 11 / 35)
+
+    # 목표 방향의 보행 마스크 부족 시 장애물 주의 음성 대체 확인
+    def test_direction_voice_uses_blocked_clip_below_walkable_threshold(self):
+        """좌우 이동 후보 영역이 30% 미만이면 기존 장애물 주의 음성을 사용한다."""
+        center = danger_item(1, [45, 0, 55, 20])
+        cases = [
+            (danger_item(2, [80, 0, 90, 20]), "left"),
+            (danger_item(2, [10, 0, 20, 20]), "right"),
+        ]
+        for side, action in cases:
+            with self.subTest(action=action):
+                result = prediction(center, side)
+                result["direction_walkability"] = {
+                    "status": "available", "left": .29, "right": .29,
+                    "minimum": .30,
+                }
+                self.assertEqual(
+                    WalkingVoice().observe(result, 100, 0),
+                    ("전방 장애물 주의하세요", "walking-obstacle.mp3"),
+                )
+                self.assertEqual(result["last_action"], action)
+                self.assertEqual(result["voice_action"], "blocked")
+
+    # 목표 방향 보행 마스크 경계와 미제공 시 기존 음성 유지 확인
+    def test_direction_voice_keeps_move_at_threshold_or_when_unavailable(self):
+        """30% 이상이거나 마스크를 판독할 수 없으면 기존 이동 음성을 유지한다."""
+        center = danger_item(1, [45, 0, 55, 20])
+        right = danger_item(2, [80, 0, 90, 20])
+        for walkability in (
+            {"status": "available", "left": .30, "right": 0, "minimum": .30},
+            {"status": "unavailable", "left": None, "right": None, "minimum": .30},
+        ):
+            with self.subTest(status=walkability["status"]):
+                result = prediction(center, right)
+                result["direction_walkability"] = walkability
+                self.assertEqual(
+                    WalkingVoice().observe(result, 100, 0),
+                    ("왼쪽으로 한 걸음", "walking-move-left-one.mp3"),
+                )
 
     # 최종 행동 변경에만 음성 생성
     def test_only_changed_action_is_announced(self):

@@ -64,6 +64,8 @@ DEFAULT_CROSSWALK_SAFETY = {
     "obstacle_surrounding_max_side_width_ratio": 0.02,
     "obstacle_surrounding_max_bottom_height_ratio": 0.02,
     "obstacle_surrounding_min_region_pixels": 4,
+    "walking_direction_edge_width_ratio": 0.20,
+    "walking_direction_min_walkable_ratio": 0.30,
 }
 
 
@@ -104,6 +106,8 @@ def crosswalk_safety_config(value=None):
         "obstacle_surrounding_bottom_height_ratio",
         "obstacle_surrounding_max_side_width_ratio",
         "obstacle_surrounding_max_bottom_height_ratio",
+        "walking_direction_edge_width_ratio",
+        "walking_direction_min_walkable_ratio",
     )
     for key in unit_keys:
         item = cfg[key]
