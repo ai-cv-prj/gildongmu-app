@@ -16,6 +16,8 @@ audio:
     stable_frames: 3
     max_age_ms: 1500
     missing_ms: 2000
+    # 파란 ROI 면적 중 횡단보도 마스크가 이 비율 이상일 때만 신호 음성을 허용한다.
+    traffic_crosswalk_roi_min_fraction: 0.05
     walking_left_max_ratio: 0.35
     walking_right_min_ratio: 0.65
     walking_center_intrusion_ratio: 0.05

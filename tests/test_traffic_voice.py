@@ -22,12 +22,13 @@ import subprocess
 
 
 # 선택된 신호등 결과 구성
-def signal(color="red", target=1):
+def signal(color="red", target=1, allowed=True):
     """선택된 추적 ID와 색상을 가진 결과를 반환한다."""
     if target is None:
-        return {"selected_detection_index": None, "detections": [], "signal_state": "unknown"}
+        return {"selected_detection_index": None, "detections": [], "signal_state": "unknown",
+                "voice_gate": {"allowed": allowed}}
     return {"selected_detection_index": 0, "detections": [{"track_id": target}],
-            "signal_state": color}
+            "signal_state": color, "voice_gate": {"allowed": allowed}}
 
 
 class TrafficVoiceTests(unittest.TestCase):
@@ -76,8 +77,8 @@ class TrafficVoiceTests(unittest.TestCase):
                          ["red.mp3", "missing.mp3", "red.mp3"])
 
     # 실제 파일의 영상 음성 저장
-    def test_traffic_video_contains_audio(self):
-        """신호등 단독 추론 결과 MP4에 안내 음성 트랙을 넣는다."""
+    def test_traffic_only_video_without_mask_has_no_audio(self):
+        """횡단보도 마스크와 파란 ROI가 없는 단독 신호 추론은 음성을 만들지 않는다."""
         with tempfile.TemporaryDirectory() as folder:
             source = Path(folder) / "source.mp4"
             output = Path(folder) / "result.mp4"
@@ -91,8 +92,8 @@ class TrafficVoiceTests(unittest.TestCase):
             probe = subprocess.run([ffmpeg_executable(), "-v", "error", "-i", str(output),
                                     "-map", "0:a:0", "-f", "s16le", "-ac", "1", "pipe:1"],
                                    capture_output=True)
-            self.assertEqual(probe.returncode, 0, probe.stderr.decode(errors="replace"))
-            self.assertTrue(np.any(np.frombuffer(probe.stdout, dtype="<i2")))
+            self.assertNotEqual(probe.returncode, 0)
+            self.assertIn("matches no streams", probe.stderr.decode(errors="replace"))
 
     # 장애물과 신호 음성이 같은 시점에 존재하는 영상
     def test_all_mode_mixes_walking_and_traffic_audio(self):
@@ -104,19 +105,28 @@ class TrafficVoiceTests(unittest.TestCase):
             for _ in range(20):
                 writer.write(np.full((48, 64, 3), 100, dtype=np.uint8))
             writer.release()
-            item = {"event_id": 1, "detection_index": 0, "xyxy": [5, 0, 15, 40],
+            item = {"event_id": 1, "detection_index": 0, "xyxy": [5, 0, 28, 40],
                     "alert_level": "danger", "label_status": "reliable",
-                    "display_label": "person", "warning_primary": True}
+                    "display_label": "person", "class_name": "person", "warning_primary": True,
+                    "geometry": {"immediate_overlap": 1.0}}
             prediction = {"warning": {"level": "danger", "source": "object", "detection_index": 0},
-                          "detections": [item], "state_epoch": 0}
+                          "detections": [item], "state_epoch": 0,
+                          "roi": {"corridor_polygon": [[0, 0], [1, 0], [1, 1], [0, 1]]}}
             engine = SimpleNamespace(update=Mock(side_effect=lambda *args: dict(prediction)),
                                      add_sidewalk_context=Mock())
             detector = SimpleNamespace(predict=Mock(return_value=[]))
             traffic = SimpleNamespace(reset=Mock(), predict=Mock(return_value=signal()), device="cpu")
+            segmenter = SimpleNamespace(
+                predict=Mock(return_value=np.full((48, 64), 2, dtype=np.uint8)),
+                label_ids={"walkable": 1, "crosswalk": 2, "non_walkable": 0})
             with patch("src.pipeline.RiskEngine", return_value=engine), patch(
                 "src.pipeline.draw_risk", side_effect=lambda frame, *_: frame
             ), patch("src.pipeline.draw_traffic", side_effect=lambda frame, *_: frame), redirect_stdout(io.StringIO()):
                 self.assertEqual(process_video(source, output, detector=detector, traffic=traffic,
+                                               segmenter=segmenter,
+                                               crosswalk_config={"enabled": False,
+                                                   "non_green_obstacle_voice_suppression": False},
+                                               walking_surface_config_value={"enabled": False},
                                                risk_config={"enabled": True, "log_jsonl": False}), 20)
             probe = subprocess.run([ffmpeg_executable(), "-v", "error", "-i", str(output),
                                     "-map", "0:a:0", "-f", "s16le", "-ac", "1", "pipe:1"],

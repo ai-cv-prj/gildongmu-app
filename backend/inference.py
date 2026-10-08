@@ -18,6 +18,7 @@ from src.risk import RiskEngine
 from src.risk_config import risk_config, tracking_config
 from src.sidewalk import SidewalkSegmenter
 from src.traffic import TrafficSignalPipeline, validate_traffic_config
+from src.traffic_voice_gate import traffic_voice_gate
 from src.walking_voice import WalkingVoice, suppress_non_green_crosswalk_voice
 from src.walking_surface import WalkingSurfaceEngine, walking_surface_config
 
@@ -124,6 +125,8 @@ class RealtimeInference:
         # 영상 출력과 마찬가지로 일반 장애물 모델의 신호등 박스는 중복 표시하지 않는다.
         risk["detections"] = [item for item in risk["detections"]
                               if item.get("class_name") != "traffic_light"]
+        signal["voice_gate"] = traffic_voice_gate(
+            class_map, self.segmenter.label_ids, frame.shape, risk.get("roi"))
         return (risk, signal, crosswalk, walking_surface, class_map, self.segmenter.label_ids,
                 round((perf_counter() - started) * 1000))
 

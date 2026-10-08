@@ -11,6 +11,7 @@
     let startedAt = 0, lastFrame = null, lastCapture = null, lastValid = null;
     let target = null, color = null, candidate = null, missingAnnounced = false;
     let hasConfirmedSignal = false;
+    let trafficAllowed = false;
     let mode = "traffic";
     // 대상 추적 이력과 분리한다. 소실 안내 후 재확인한 경우에만 같은 색을 다시 읽는다.
     let lastAnnouncedColor = null, lastAnnouncedTarget = null;
@@ -19,6 +20,15 @@
 
     function update(text) { onChange({ active, text }); }
     function resetEvidence() { target = null; color = null; candidate = null; }
+    // 횡단보도 근거가 없으면 신호 음성과 이전 색상 기억을 해제한다.
+    /** 다시 허용될 때 새 신호처럼 안정화하며 다른 출처의 음성은 유지한다. */
+    function suspendTraffic() {
+      trafficAllowed = false;
+      hasConfirmedSignal = missingAnnounced = false;
+      lastAnnouncedColor = lastAnnouncedTarget = lastValid = null;
+      resetEvidence();
+      coordinator.clear("traffic");
+    }
     function announce(text, validUntil, metadata = {}) {
       const message = mock && mode === "traffic" ? `모의 신호. ${text}` : text;
       update(message);
@@ -33,6 +43,7 @@
     function stop(text = "음성 안내가 꺼져 있습니다.") {
       active = false;
       hasConfirmedSignal = false;
+      trafficAllowed = false;
       lastAnnouncedColor = null;
       lastAnnouncedTarget = null;
       resetEvidence();
@@ -63,6 +74,11 @@
     function tick() {
       if (!active) return;
       if (mode === "walking") {
+        return;
+      }
+      if (!trafficAllowed) return;
+      if (lastCapture === null || now() - lastCapture >= limits.max_age_ms) {
+        suspendTraffic();
         return;
       }
       const age = now() - (lastValid ?? startedAt);
@@ -110,6 +126,12 @@
         });
         return;
       }
+      if (event.voice_gate?.allowed !== true) {
+        suspendTraffic();
+        update("횡단보도 접근을 확인하고 있습니다.");
+        return;
+      }
+      trafficAllowed = true;
       const index = event.selected_detection_index;
       const selected = Number.isInteger(index) && index >= 0 ? res.detections?.[index] : null;
       if (event.type !== "traffic_signal" || !selected || !Number.isInteger(selected.track_id) ||

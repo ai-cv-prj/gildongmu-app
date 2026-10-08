@@ -133,6 +133,8 @@ def load_audio_settings(config_path=DEFAULT_AUDIO_CONFIG):
                 "video_max_gap_ms", "realtime_max_gap_ms"):
         number(audio, key, 1, 300000, integer=True)
     guidance = section(audio, "guidance")
+    if number(guidance, "traffic_crosswalk_roi_min_fraction", 0, 1) <= 0:
+        raise ValueError("traffic_crosswalk_roi_min_fraction은 0보다 커야 합니다.")
     number(guidance, "stable_frames", 1, 1000, integer=True)
     for key in ("stable_ms", "max_age_ms", "missing_ms"):
         number(guidance, key, 1, 300000, integer=True)

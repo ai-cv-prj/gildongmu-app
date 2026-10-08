@@ -78,6 +78,7 @@ def make_response(session_id, frame_id, captured_at_ms, frame, risk, signal, cro
                 "type": "traffic_signal", "signal_state": signal["signal_state"],
                 "selected_detection_index": signal["selected_detection_index"],
                 "candidate_detection_index": signal["candidate_detection_index"],
+                "voice_gate": signal.get("voice_gate"),
             },
         },
         "crosswalk": {"event": crosswalk},
