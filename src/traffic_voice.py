@@ -12,6 +12,9 @@ STABLE_FRAMES = AUDIO_SETTINGS["guidance"]["stable_frames"]
 STABLE_SECONDS = AUDIO_SETTINGS["guidance"]["stable_ms"] / 1000
 MAX_GAP_SECONDS = AUDIO_SETTINGS["video_max_gap_ms"] / 1000
 MISSING_SECONDS = AUDIO_SETTINGS["guidance"]["missing_ms"] / 1000
+REPEAT_SECONDS = AUDIO_SETTINGS["guidance"]["traffic_repeat_ms"] / 1000
+# 전환 안내 후 같은 색상을 다시 읽을 때는 현재 색상만 안내한다.
+REPEAT_CLIPS = {"green-changed.mp3": "green.mp3", "red-changed.mp3": "red.mp3"}
 
 
 class TrafficVoice:
@@ -31,6 +34,8 @@ class TrafficVoice:
         self.missing_announced = False
         self.last_announced_target = None
         self.last_announced_color = None
+        self.last_announced_time = None
+        self.repeat_clip = None
         self.voice_allowed = False
 
     # 횡단보도 근거 소실 시 신호 음성과 관측 이력 해제
@@ -43,6 +48,7 @@ class TrafficVoice:
         self.last_valid = self.last_frame = self.last_capture = None
         self.confirmed = self.missing_announced = False
         self.last_announced_target = self.last_announced_color = None
+        self.last_announced_time = self.repeat_clip = None
 
     # 현재 대상의 색상 증거 폐기
     def _reset_evidence(self):
@@ -55,6 +61,16 @@ class TrafficVoice:
     def _announce(self, time_s, filename):
         """관측 시각에 이벤트를 기록해 전역 관리자가 중단과 폐기를 결정하게 한다."""
         self.events.append((time_s, filename))
+
+    # 같은 대상·색상의 주기 재안내
+    def _repeat(self, time_s):
+        """마지막 신호 안내 후 설정 시간이 지나면 같은 문구를 낮은 우선순위로 기록한다."""
+        if (self.repeat_clip is None or self.last_announced_target != self.target
+                or self.last_announced_color != self.color
+                or time_s - self.last_announced_time < REPEAT_SECONDS - 1e-9):
+            return
+        self.last_announced_time = time_s
+        self.events.append((time_s, self.repeat_clip, "repeat"))
 
     # 한 프레임의 신호 상태 관측
     def observe(self, result, frame_id, time_s):
@@ -95,7 +111,10 @@ class TrafficVoice:
         else:
             self.candidate["count"] += 1
         if (self.candidate["count"] < STABLE_FRAMES or
-                time_s - self.candidate["since"] < STABLE_SECONDS - 1e-9 or self.color == next_color):
+                time_s - self.candidate["since"] < STABLE_SECONDS - 1e-9):
+            return
+        if self.color == next_color:
+            self._repeat(time_s)
             return
 
         previous = self.color
@@ -114,4 +133,6 @@ class TrafficVoice:
             return
         self.last_announced_target = target
         self.last_announced_color = next_color
+        self.last_announced_time = time_s
+        self.repeat_clip = REPEAT_CLIPS.get(clip, clip)
         self._announce(time_s, clip)

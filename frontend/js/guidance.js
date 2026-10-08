@@ -15,6 +15,8 @@
     let mode = "traffic";
     // 대상 추적 이력과 분리한다. 소실 안내 후 재확인한 경우에만 같은 색을 다시 읽는다.
     let lastAnnouncedColor = null, lastAnnouncedTarget = null;
+    // 같은 대상·색상이 계속 확인되면 마지막 신호 안내 후 일정 시간마다 다시 읽는다.
+    let lastAnnouncedAt = null, repeatText = null;
     let lastWalkingAction = null;
     let lastWalkingEvent = null;
 
@@ -26,14 +28,17 @@
       trafficAllowed = false;
       hasConfirmedSignal = missingAnnounced = false;
       lastAnnouncedColor = lastAnnouncedTarget = lastValid = null;
+      lastAnnouncedAt = repeatText = null;
       resetEvidence();
       coordinator.clear("traffic");
     }
     function announce(text, validUntil, metadata = {}) {
       const message = mock && mode === "traffic" ? `모의 신호. ${text}` : text;
       update(message);
-      const changed = mode === "traffic" && text.includes("바뀜");
-      const red = mode === "traffic" && text.startsWith("빨간불");
+      // 같은 색상 재안내는 보행 안내를 끊지 않도록 가장 낮은 신호 우선순위를 쓴다.
+      const repeat = metadata.repeat === true;
+      const changed = mode === "traffic" && !repeat && text.includes("바뀜");
+      const red = mode === "traffic" && !repeat && text.startsWith("빨간불");
       return coordinator.request({ source: mode, priority: red
         ? coordinator.PRIORITY.trafficRed
         : changed ? coordinator.PRIORITY.trafficChange
@@ -46,6 +51,7 @@
       trafficAllowed = false;
       lastAnnouncedColor = null;
       lastAnnouncedTarget = null;
+      lastAnnouncedAt = repeatText = null;
       resetEvidence();
       lastWalkingAction = null;
       lastWalkingEvent = null;
@@ -152,7 +158,14 @@
         candidate = { color: next, since: capturedAt, count: 1 };
       } else candidate.count++;
       if (candidate.count < limits.stable_frames || capturedAt - candidate.since < limits.stable_ms) return;
-      if (color === next) return;
+      if (color === next) {
+        if (repeatText !== null && lastAnnouncedTarget === target && lastAnnouncedColor === next
+            && capturedAt - lastAnnouncedAt >= limits.traffic_repeat_ms) {
+          lastAnnouncedAt = capturedAt;
+          announce(repeatText, capturedAt + limits.max_age_ms, { repeat: true });
+        }
+        return;
+      }
       const previous = color;
       color = next;
       const firstConfirmed = !hasConfirmedSignal;
@@ -174,6 +187,9 @@
       }
       lastAnnouncedColor = next;
       lastAnnouncedTarget = target;
+      lastAnnouncedAt = capturedAt;
+      // 전환 안내 뒤에는 현재 색상만, 첫 초록 대기 안내는 같은 문구로 다시 읽는다.
+      repeatText = text.includes("바뀜") ? (next === "green" ? "초록불." : "빨간불.") : text;
       announce(text, capturedAt + limits.max_age_ms);
     }
     // 서버 세션 생성 후 결과를 연결한다.
