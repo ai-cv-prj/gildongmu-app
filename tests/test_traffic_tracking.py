@@ -281,6 +281,44 @@ class TrackingTests(unittest.TestCase):
         self.assertEqual(returned['selected_detection_index'], 1)
         self.assertEqual(returned['detections'][1]['track_id'], old_id)
 
+    def confirm_near_target(self):
+        pipe = self.start_challenge()
+        with patch('src.traffic_association.estimate_vanishing_point', return_value=[620, 280]):
+            for fid in (2, 3, 4):
+                confirmed = pipe.predict(FRAME, frame_id=fid, captured_at_ms=fid * 200)
+        self.assertEqual(confirmed['association']['selection_origin'], 'crosswalk_matched')
+        return pipe, confirmed['detections'][0]['track_id']
+
+    def test_lost_target_reselects_verified_signal_before_three_seconds(self):
+        pipe, old_id = self.confirm_near_target()
+        pipe.detector = fake_pipeline([(FAR, .9, 0), (CROSSWALK, .9, 1)]).detector
+        with patch('src.traffic_association.estimate_vanishing_point', return_value=[1020, 280]):
+            for fid in (5, 6):
+                waiting = pipe.predict(FRAME, frame_id=fid, captured_at_ms=fid * 200)
+                self.assertIsNone(waiting['selected_detection_index'])
+                self.assertEqual(waiting['candidate_detection_index'], 0)
+                self.assertEqual(waiting['association']['reason'], 'waiting_for_temporal_consistency')
+                self.assertEqual(pipe.selector.target_id, old_id)
+            result = pipe.predict(FRAME, frame_id=7, captured_at_ms=1400)
+        self.assertEqual(result['selected_detection_index'], 0)
+        self.assertNotEqual(result['detections'][0]['track_id'], old_id)
+        self.assertEqual(result['association']['selection_origin'], 'crosswalk_matched')
+        self.assertEqual(result['association']['tracking']['reselected_from_track_id'], old_id)
+        self.assertEqual(pipe.selector.target_id, result['detections'][0]['track_id'])
+
+    def test_original_target_return_cancels_reselection(self):
+        pipe, old_id = self.confirm_near_target()
+        pipe.detector = fake_pipeline([(FAR, .9, 0), (CROSSWALK, .9, 1)]).detector
+        with patch('src.traffic_association.estimate_vanishing_point', return_value=[1020, 280]):
+            for fid in (5, 6):
+                pipe.predict(FRAME, frame_id=fid, captured_at_ms=fid * 200)
+            pipe.detector = fake_pipeline([(NEAR, .8, 0), (FAR, .9, 0), (CROSSWALK, .9, 1)]).detector
+            result = pipe.predict(FRAME, frame_id=7, captured_at_ms=1400)
+        self.assertEqual(result['selected_detection_index'], 0)
+        self.assertEqual(result['detections'][0]['track_id'], old_id)
+        self.assertEqual(result['association']['status'], 'tracked')
+        self.assertEqual(pipe.selector.streak, 0)
+
     def test_provisional_confirmation_respects_configured_frame_count(self):
         pipe = fake_pipeline([(NEAR, .8, 0)], stable=2)
         pipe.predict(FRAME)
