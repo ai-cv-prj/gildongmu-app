@@ -471,7 +471,7 @@
     view.setObstacleDetection(obstaclesEnabled(next));
     if (!running || !next) return controls();
     if (obstaclesEnabled(previous) !== obstaclesEnabled(next)) {
-      if (!obstaclesEnabled(next)) { walking.stop(); GOverlay.clear(); }
+      if (!obstaclesEnabled(next)) { walking.stop(); coordinator.clear("walkingSurface"); GOverlay.clear(); }
       else if (!paused && !connectionLost && !document.hidden) walking.start(sessionId, false, "walking");
     }
     if (next.status === "submitted") {
@@ -535,7 +535,8 @@
     // restore obstacle warnings after the user manually confirms arrival.
     boarding.accept(result, capturedAt);
     if (!obstaclesEnabled(boardingState)) result = { ...result,
-      walking: { ...result.walking, detections: [], event: { enabled: false } } };
+      walking: { ...result.walking, detections: [], event: { enabled: false } },
+      walking_surface: { event: { enabled: false, status: "disabled" } } };
     lastResult = result;
     $("metrics").textContent = `${result.frame_id} 프레임 · 추론 ${result.inference_ms}ms`;
     $("stop-proximity-status").textContent = result.stop_proximity?.nearby ? "카메라에서 정류장 근접 추정" : "정류장 근접 관측 없음";

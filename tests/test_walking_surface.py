@@ -84,6 +84,23 @@ def test_crosswalk_activity_pauses_surface_judgment():
     assert resumed["status"] == "uncertain"
 
 
+def test_bus_stop_suspends_surface_and_clears_previous_exit():
+    engine = WalkingSurfaceEngine(CONFIG)
+    inside = walkway(.35, .65)
+    outside = walkway(.55, .80)
+    engine.update(inside, LABELS, SHAPE, 0.0)
+    engine.update(outside, LABELS, SHAPE, .1)
+    assert engine.update(outside, LABELS, SHAPE, .4)["status"] == "outside_left"
+    stopped = engine.update(outside, LABELS, SHAPE, .5, suspended=True)
+    assert stopped["enabled"] is False
+    assert stopped["status"] == "disabled"
+    assert stopped["voice_text"] is None
+    assert stopped["repeat"] is False
+    assert stopped["roi"] is None
+    assert engine.update(outside, LABELS, SHAPE, .6)["status"] == "uncertain"
+    assert engine.update(inside, LABELS, SHAPE, .7)["status"] == "inside"
+
+
 # 설정 오류 확인
 def test_surface_threshold_order_is_validated():
     """이탈 임계값이 내부 임계값보다 낮지 않으면 설정 오류를 낸다."""

@@ -63,7 +63,7 @@
       if (!Number.isFinite(age) || age < -1000 || age >= 1500) return null;
       const walking = obstacleDetection && result.walking?.event?.enabled !== false ? result.walking?.event || {} : {};
       const crosswalk = result.crosswalk?.event || {};
-      const surface = result.walking_surface?.event || {};
+      const surface = obstacleDetection ? result.walking_surface?.event || {} : {};
       const signal = result.traffic?.event || {};
       const walkingText = walking.voice_event?.text || walking.voice_text;
       const action = walking.voice_event?.action || walking.voice_action || walking.last_action;
