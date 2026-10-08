@@ -17,7 +17,6 @@
     ["왼쪽으로 이동!", "crosswalk-align-left"],
     ["왼쪽으로 한 걸음", "walking-move-left-one"],
     ["왼쪽으로 두 걸음", "walking-move-left-two"],
-    ["천천히 가세요.", "walking-straight"],
     ["오른쪽으로 한 걸음", "walking-move-right-one"],
     ["오른쪽으로 두 걸음", "walking-move-right-two"],
     ["멈추세요", "walking-stop"],
@@ -26,7 +25,7 @@
     ["보행로 이탈 왼쪽 이동!", "walkway-exit-left"],
   ]);
   for (const [text, name] of [...CLIPS]) CLIPS.set(`모의 신호. ${text}`, `mock-${name}`);
-  const SPEECH_TEXT = "정류장 근처입니다. 탑승할 버스 번호를 입력해 주세요. 보행 안내를 계속하려면 이전 화면으로 버튼을 누르세요.";
+  const SPEECH_TEXT = "정류장입니다. 버스를 선택하세요.";
   const source = name => `/audio/${name}.mp3${name.startsWith("walkway-")
     ? "?v=walkway-exit-v3" : name.startsWith("walking-")
     ? "?v=walking-action-v9" : name.startsWith("crosswalk-")

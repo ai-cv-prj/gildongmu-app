@@ -73,11 +73,11 @@ def test_red_traffic_preempts_walking_without_queue():
     """장애물 음성 도중 빨간불은 즉시 시작하고 하위 안내를 다시 쌓지 않는다."""
     with patch("src.voice_priority.clip_duration", return_value=1.0):
         events = prioritize_voice_events(
-            [(0.0, "walking-straight.mp3"), (0.3, "walking-move-left-one.mp3")],
+            [(0.0, "walking-move-right-two.mp3"), (0.3, "walking-move-left-one.mp3")],
             [(0.2, "red.mp3")],
             [],
         )
-    assert events == [(0.0, "walking-straight.mp3"), (0.2, "red.mp3")]
+    assert events == [(0.0, "walking-move-right-two.mp3"), (0.2, "red.mp3")]
 
 
 # 긴급 장애물 정지 음성의 최상위 우선순위 확인
@@ -114,9 +114,9 @@ def test_walking_surface_sits_between_red_and_obstacle_guidance():
     surface = [(0.1, "walkway-exit-right.mp3", 3, "walking_surface")]
     with patch("src.voice_priority.clip_duration", return_value=1.0):
         events = prioritize_voice_events(
-            [(0.0, "walking-straight.mp3")], [(0.2, "red.mp3")], [], surface)
+            [(0.0, "walking-move-right-two.mp3")], [(0.2, "red.mp3")], [], surface)
     assert events == [
-        (0.0, "walking-straight.mp3"),
+        (0.0, "walking-move-right-two.mp3"),
         (0.1, "walkway-exit-right.mp3"),
         (0.2, "red.mp3"),
     ]
@@ -144,7 +144,7 @@ def test_same_source_replacement_matches_realtime_priority_boundary():
         urgent_red = prioritize_voice_events(
             [], [(0.0, "red.mp3"), (0.2, "red-changed.mp3")], [])
         same_walking = prioritize_voice_events(
-            [(0.0, "walking-straight.mp3"), (0.2, "walking-straight.mp3")],
+            [(0.0, "walking-move-right-two.mp3"), (0.2, "walking-move-right-two.mp3")],
             [],
             [],
         )
@@ -154,7 +154,7 @@ def test_same_source_replacement_matches_realtime_priority_boundary():
             [], [], [(0.0, "change-a.mp3", 5, "traffic"),
                      (0.2, "change-b.mp3", 5, "traffic")])
     assert urgent_red == [(0.0, "red.mp3"), (0.2, "red-changed.mp3")]
-    assert same_walking == [(0.0, "walking-straight.mp3")]
+    assert same_walking == [(0.0, "walking-move-right-two.mp3")]
     assert regular_signal == [(0.0, "green.mp3")]
     assert priority_five == [(0.0, "change-a.mp3")]
 
@@ -164,14 +164,14 @@ def test_changed_walking_action_interrupts_previous_walking_clip():
     """새 장애물 행동은 재생 중인 이전 행동과 겹쳐도 폐기하지 않는다."""
     with patch("src.voice_priority.clip_duration", return_value=1.0):
         events = prioritize_voice_events(
-            [(0.0, "walking-straight.mp3"),
+            [(0.0, "walking-move-right-two.mp3"),
              (0.3, "walking-move-left-one.mp3"),
              (0.6, "walking-move-right-one.mp3")],
             [],
             [],
         )
     assert events == [
-        (0.0, "walking-straight.mp3"),
+        (0.0, "walking-move-right-two.mp3"),
         (0.3, "walking-move-left-one.mp3"),
         (0.6, "walking-move-right-one.mp3"),
     ]
@@ -181,5 +181,5 @@ def test_crossing_suppression_stops_active_walking_clip():
     """횡단 진입의 보행 중단 이벤트는 재생 중인 장애물 음성만 자른다."""
     with patch("src.voice_priority.clip_duration", return_value=1.0):
         events = prioritize_voice_events(
-            [(0.0, "walking-straight.mp3"), (0.2, None)], [], [])
-    assert events == [(0.0, "walking-straight.mp3"), (0.2, None)]
+            [(0.0, "walking-move-right-two.mp3"), (0.2, None)], [], [])
+    assert events == [(0.0, "walking-move-right-two.mp3"), (0.2, None)]

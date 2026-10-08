@@ -137,6 +137,9 @@ h1:focus:not(:focus-visible) {outline:none;}
 .app-status:not(.sr-only) {padding:16px 24px;font-size:24px;color:#94261F;background:#fff;}
 .app-status:empty {display:none;}
 .retry-upload {display:block;width:calc(100% - 48px);min-height:68px;margin:16px 24px;padding:12px;border-radius:18px;background:var(--charcoal);color:white;}
+.recovery-controls {display:grid;gap:12px;margin:16px 24px;padding:16px;border:1px solid var(--line);border-radius:18px;}
+.recovery-controls[hidden] {display:none;}
+.recovery-controls button,.recovery-controls select {min-height:56px;padding:12px;border:1px solid var(--line);border-radius:14px;background:#fff;color:var(--ink);font:inherit;}
 .diagnostics,.bus-details {margin:0 24px;border-top:1px solid var(--line);font-size:20px;}
 summary {padding:18px 0;min-height:56px;cursor:pointer;}
 .diagnostics-content,.target-card {display:grid;gap:12px;padding-bottom:24px;}

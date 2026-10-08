@@ -110,7 +110,7 @@
     function updateControls() {
       all("[data-action], [data-mic], [data-rate], [data-size], #route-form button").forEach(element => {
         const action = element.dataset.action;
-        const canCancel = ["end", "back", "cancel-end", "confirm-end", "save-error-log"].includes(action);
+        const canCancel = ["end", "back", "cancel-end", "confirm-end", "save-error-log", "save-local-clip"].includes(action);
         element.disabled = (busy && !canCancel) || (paused && ["manual-arrival", "locate", "open-keypad"].includes(action)) ||
           (paused && (element.dataset.mic || element.type === "submit"));
       });
@@ -119,6 +119,24 @@
       $("app").setAttribute("aria-busy", String(busy));
     }
     function setBusy(value) { busy = Boolean(value); updateControls(); }
+    function setLocalClips(records = []) {
+      const panel = $("local-clips-panel"), select = $("local-clip-choice"), label = $("local-clips-status");
+      if (!panel || !select || !label) return;
+      const previous = select.value, fragment = document.createDocumentFragment();
+      for (const record of records) {
+        const option = document.createElement("option");
+        option.value = record.key;
+        const when = new Date(record.clip.started_at_ms).toLocaleString("ko-KR");
+        option.textContent = `${when} · 구간 ${record.clip.index}`;
+        fragment.appendChild(option);
+      }
+      select.replaceChildren(fragment);
+      if (records.some(record => record.key === previous)) select.value = previous;
+      panel.hidden = records.length === 0;
+      label.textContent = records.some(record => !record.durable)
+        ? "기기 보관 실패 · 페이지를 닫기 전에 영상을 저장해 주세요."
+        : "새로고침 후에도 저장할 수 있습니다. 서버 영상 저장이 완료되면 보관함에서 삭제됩니다.";
+    }
     function setClipState(value) {
       clipState = { ...clipState, ...value };
       const button = $("record-button");
@@ -321,7 +339,8 @@
     }
     show("welcome", { focus: false });
     return { show, render, setObstacleDetection, setBus, setStations, setPaused, setBusy, setClipState, setStatus, setRoute, readRoute, setRouteError: routeError,
-      setSettings, announce, getScreen: () => screen, getGuidance, destroy };
+      setSettings, setLocalClips, readLocalClipKey: () => $("local-clip-choice")?.value,
+      announce, getScreen: () => screen, getGuidance, destroy };
   }
   window.GView = { create };
 })();

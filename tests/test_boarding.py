@@ -12,6 +12,35 @@ from test_realtime_app import FakeModels
 ARRIVAL = {"nearby": True, "arrival_event_id": 1}
 
 
+def test_input_ready_opens_input_without_stop_playback_and_ignores_late_ack():
+    state = Boarding()
+    state.observe(ARRIVAL)
+    pending = state.act("input_ready", 1)
+    assert pending["status"] == "pending"
+    submitted = state.act("submit", 1, "143")
+    assert state.act("input_ready", 1) == submitted
+    state.act("reopen", 1)
+    cancelled = state.act("cancel", 1)
+    assert state.act("input_ready", 1) == cancelled
+
+
+def test_api_accepts_input_ready_without_stop_announcement(tmp_path):
+    manager = SessionManager(tmp_path, model_factory=FakeModels)
+    client = TestClient(create_app(manager))
+    session = client.post("/api/sessions", json={"device_name": "Phone"}).json()
+    url = f"/api/sessions/{session['session_id']}/boarding"
+    manager.models.boarding.observe(ARRIVAL)
+    ready = client.put(url, json={"action": "input_ready", "arrival_event_id": 1})
+    assert ready.status_code == 200
+    assert ready.json()["status"] == "pending"
+    assert client.put(url, json={"action": "submit", "arrival_event_id": 1,
+                                 "bus_number": "143"}).json()["status"] == "submitted"
+    folder = tmp_path / session["date"] / session["folder_name"]
+    records = [json.loads(line) for line in (folder / "events.jsonl").read_text().splitlines()]
+    assert [record["action"] for record in records] == ["input_ready", "submit"]
+    client.post("/api/sessions/stop", json={"session_id": session["session_id"]})
+
+
 def test_only_completed_stop_arms_stationary_input_and_loss_does_not_clear_it():
     state = Boarding()
     state.observe(ARRIVAL)

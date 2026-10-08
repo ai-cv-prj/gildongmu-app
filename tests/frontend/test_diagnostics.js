@@ -114,3 +114,30 @@ test("pagehide uses keepalive and unavailable storage does not interrupt diagnos
   assert.equal(h.requests[0].options.keepalive, true);
   assert.deepEqual(JSON.parse(h.requests[0].options.body).events.map(event => event.type), ["session_stop", "page_hidden"]);
 });
+
+test("오류 버튼 구독과 내보내기 기록은 서버 전달 및 새로고침 후에도 유지된다", async () => {
+  const storage = new Map(), h = harness({ storage, online: false });
+  const updates = [];
+  h.diagnostics.subscribe(summary => updates.push(summary));
+  h.diagnostics.record("session_started");
+  assert.equal(updates.at(-1).count, 0);
+  h.diagnostics.record("request_error", { operation: "frame", error_message: "Failed to fetch" });
+  assert.equal(updates.at(-1).count, 1);
+  assert.equal(updates.at(-1).pending, 1);
+  h.context.navigator.onLine = true;
+  await h.diagnostics.flush();
+  assert.equal(updates.at(-1).count, 1);
+  assert.equal(updates.at(-1).pending, 0);
+  assert.equal(h.diagnostics.exportData().events.find(e => e.type === "request_error").delivered, true);
+  const reloaded = harness({ storage, online: false });
+  assert.equal(reloaded.diagnostics.summary().count, 1);
+  assert.equal(reloaded.diagnostics.exportData().events.find(e => e.type === "request_error").error_message, "Failed to fetch");
+});
+
+test("기기 기록이 불가능해도 오류 알림과 내보내기는 메모리에서 동작한다", () => {
+  const h = harness({ storageFails: true, online: false });
+  h.diagnostics.record("clip_preserve_failed", { error_message: "QuotaExceededError" });
+  assert.equal(h.diagnostics.summary().count, 1);
+  assert.equal(h.diagnostics.summary().storageAvailable, false);
+  assert.equal(h.diagnostics.exportData().events[0].type, "clip_preserve_failed");
+});

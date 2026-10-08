@@ -145,7 +145,7 @@ def load_audio_settings(config_path=DEFAULT_AUDIO_CONFIG):
     two_step_enter = number(guidance, "walking_two_step_enter_ratio", 0, 1)
     two_step_exit = number(guidance, "walking_two_step_exit_ratio", 0, 1)
     for key in (
-        "walking_lateral_confirm_ms", "walking_straight_confirm_ms",
+        "walking_lateral_confirm_ms",
         "walking_from_stop_confirm_ms", "walking_repeat_none_ms",
         "walking_stop_repeat_none_ms", "walking_missing_hold_ms",
     ):

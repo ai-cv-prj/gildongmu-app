@@ -4,7 +4,8 @@ const vm = require("node:vm");
 const test = require("node:test");
 const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
 
-async function harness({ stopFailsOnce = false, clipState = "ready", uploadResponseLostOnce = false, deferRouteSubmit = false, storedPreferences = null } = {}) {
+async function harness({ stopFailsOnce = false, clipState = "ready", uploadResponseLostOnce = false, deferRouteSubmit = false,
+  storedPreferences = null, clipStore = null, realDiagnostics = false } = {}) {
   let now = 100, nextTimer = 0, screen = "home", cameraActive = false, cameraEnded;
   let cameraExposureChanged, busCameraMode = false;
   let handlers, voice = null, busState = { status: "idle", revision: 0, arrival_event_id: null }, routeInput = "";
@@ -16,6 +17,9 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
   let recordStarts = 0, recordStops = 0;
   const timeline = [], uploads = [], diagnostics = [], audioLifecycle = [];
   let diagnosticContext = () => ({});
+  let localClips = [];
+  const storage = new Map();
+  if (storedPreferences) storage.set("gildongmu-accessibility-v1", JSON.stringify(storedPreferences));
   const timers = new Map(), intervals = new Map(), frames = [], guides = [], journeyStarts = [], renders = [], statuses = [];
   const captures = [], startModes = [], cameraModeCalls = [], overlayRenders = [];
   const startSettings = [], metadataUpdates = [];
@@ -37,6 +41,7 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
   const view = { setSettings(value) { configuredPreferences = value; }, show(value) { screen = value; shownScreens.push(value); }, getScreen: () => screen,
     setObstacleDetection() {}, setBusy() {}, setStatus(text) { statuses.push(text); }, announce() {}, setRoute(value) { routeInput = value; }, setBus() {},
     readRoute: () => routeInput, setRouteError(message) { routeErrors.push(message); },
+    setLocalClips(records) { localClips = records; }, readLocalClipKey: () => localClips[0]?.key,
     setStations() {}, setPaused() {}, render(value) { renders.push(value); }, getGuidance: () => "안내" };
   const player = { setRate: value => value, recordingStream: () => null, cancel() { voice = null; },
     unlock() { audioLifecycle.push("unlock"); },
@@ -81,7 +86,7 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
       if (action === "arrive") busState = { status: "awaiting_stop", arrival_event_id: (busState.arrival_event_id ?? 0) + 1,
         revision: busState.revision + 1, arrival_source: "user_confirmed", bus_number: null };
       else {
-        const state = { stop_announced: "pending", submit: "submitted", reopen: "awaiting_stop", cancel: "cancelled" }[action];
+        const state = { input_ready: "pending", submit: "submitted", reopen: "awaiting_stop", cancel: "cancelled" }[action];
         busState = { ...busState, revision: busState.revision + 1, status: state,
           bus_number: action === "submit" ? number : null };
       }
@@ -98,8 +103,9 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
   const context = {
     console, AbortController, Date: { now: () => 100000 + now },
     performance: { now: () => now, timeOrigin: 100000 },
-    localStorage: { getItem: () => storedPreferences && JSON.stringify(storedPreferences),
-      setItem(_key, value) { savedPreferences = JSON.parse(value); } },
+    localStorage: { getItem: key => storage.get(key) || null,
+      setItem(key, value) { storage.set(key, value); if (key === "gildongmu-accessibility-v1") savedPreferences = JSON.parse(value); } },
+    navigator: { onLine: true, userAgent: "test-browser" }, Blob,
     document: { hidden: false, getElementById: node, addEventListener() {} },
     setTimeout(callback, delay) { const id = ++nextTimer; timers.set(id, { callback, delay }); return id; },
     clearTimeout(id) { timers.delete(id); },
@@ -109,6 +115,7 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
     GDiagnostics: { record(type, fields = {}) { diagnostics.push({ ...diagnosticContext(), type, ...fields }); },
       setContext(provider) { diagnosticContext = provider; }, flush: async () => {} },
     GTts: { create: () => player }, GApi: api, GConfig: { get: () => settings, load: async () => settings },
+    GClipStore: clipStore ? { create: () => clipStore } : undefined,
     GGuidance: { create() { const guide = { accepted: [], starts: 0, stops: 0, start() { this.starts++; }, stop() { this.stops++; }, tick() {},
       accept(value) { this.accepted.push(value); } }; guides.push(guide); return guide; } },
     GBusJourney: { create(options) { journeyCallbacks = options; return journey; } },
@@ -135,6 +142,7 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
   };
   context.window = context;
   vm.createContext(context);
+  if (realDiagnostics) vm.runInContext(fs.readFileSync("frontend/js/diagnostics.js", "utf8"), context);
   for (const name of ["audio_coordinator", "boarding"]) {
     vm.runInContext(fs.readFileSync(`frontend/js/${name}.js`, "utf8"), context);
   }
@@ -145,6 +153,7 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
     walking: { detections: [], event: {} }, traffic: { detections: [], event: {} },
     boarding: { ...busState }, stop_proximity: { nearby: false } });
   return { api, node, startSettings, metadataUpdates,
+    localClips: () => localClips, errorHistory: () => context.GDiagnostics.exportData?.(),
     async event(id, type, value) {
       if (value !== undefined) node(id).value = value;
       node(id).dispatchEvent({ type, target: node(id) }); await flush();
@@ -184,7 +193,8 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
       timers.delete(id); now += 29750; timer.callback(); await flush();
     },
     async respond(index, overrides = {}) { frames[index].resolve({ ...frameResult(frames[index]), ...overrides }); await flush(); },
-    async finishVoice() { const done = voice; voice = null; done.onEnd(); await flush(); },
+    async finishVoice() { const done = voice; voice = null; done?.onEnd(); await flush(); },
+    async tick() { for (const callback of intervals.values()) callback(); await flush(); },
     async draftRoute(value) { await handlers.onSubmitRoute(value); await flush(); },
     async confirmRoute(value) { await handlers.onSubmitRoute(value); await flush(); },
     async cameraEnd() { cameraActive = false; cameraEnded(); await flush(); },
@@ -192,24 +202,17 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
   };
 }
 
-test("수동 도착은 멈춤 안내 중 번호 입력을 허용하고 완료 후에만 버스 찾기와 노출 설정을 시작한다", async () => {
+test("수동 도착은 정지 음성 없이 입력을 열고 도착 안내가 끝나기 전에도 버스 찾기를 시작한다", async () => {
   const app = await harness();
   await app.action("start");
   await app.action("manual-arrival");
-  assert.equal(app.screen(), "input", "멈춤 안내와 동시에 번호 입력 화면을 연다");
+  assert.equal(app.screen(), "input");
+  assert.equal(app.voice().text, "정류장입니다. 버스를 선택하세요.");
+  const shownBeforePromptEnd = app.shownScreens.length;
   app.typeRoute("143");
-  await app.confirmRoute("143");
-  assert.equal(app.screen(), "input");
-  assert.match(app.routeErrors.at(-1), /멈춤 안내가 끝나면/);
-  assert.deepEqual(app.routeSubmissions, []);
   assert.deepEqual(app.cameraModeCalls, []);
-  assert.deepEqual(app.journeyStarts, [], "멈춤 안내 중에는 버스 찾기를 시작하지 않는다");
-  const shownBeforeStop = app.shownScreens.length;
-  await app.finishVoice();
-  assert.equal(app.screen(), "input");
-  assert.equal(app.routeInput(), "143", "멈춤 안내 전에 입력한 번호를 보존한다");
-  assert.equal(app.shownScreens.length, shownBeforeStop, "음성 완료로 화면을 다시 열거나 키패드를 닫지 않는다");
-  assert.equal(app.routeErrors.at(-1), "");
+  assert.deepEqual(app.journeyStarts, []);
+  assert.equal(app.shownScreens.length, shownBeforePromptEnd);
   await app.action("confirm-route");
   assert.equal(app.screen(), "search");
   assert.deepEqual(app.journeyStarts, ["143"]);
@@ -217,7 +220,7 @@ test("수동 도착은 멈춤 안내 중 번호 입력을 허용하고 완료 �
   await app.end();
 });
 
-test("멈춤 안내 중 제출하지 않은 번호도 설정이나 종료 확인을 다녀와서 이어 입력한다", async () => {
+test("도착 안내 중 제출하지 않은 번호도 설정이나 종료 확인을 다녀와서 이어 입력한다", async () => {
   for (const destination of ["settings-type", "end"]) {
     const app = await harness();
     await app.action("start"); await app.action("manual-arrival");
@@ -236,7 +239,7 @@ test("멈춤 안내 중 제출하지 않은 번호도 설정이나 종료 확인
   }
 });
 
-test("멈춤 안내가 아직 끝나지 않아도 설정과 종료 확인에서 번호 입력으로 돌아간다", async () => {
+test("도착 안내가 아직 끝나지 않아도 설정과 종료 확인에서 돌아와 번호를 제출한다", async () => {
   for (const destination of ["settings-type", "end"]) {
     const app = await harness();
     await app.action("start"); await app.action("manual-arrival");
@@ -246,9 +249,7 @@ test("멈춤 안내가 아직 끝나지 않아도 설정과 종료 확인에서 
     assert.equal(app.screen(), "input");
     assert.equal(app.routeInput(), "606");
     await app.confirmRoute("606");
-    assert.deepEqual(app.routeSubmissions, []);
-    await app.finishVoice();
-    await app.confirmRoute("606");
+    assert.deepEqual(app.routeSubmissions, ["606"]);
     assert.deepEqual(app.journeyStarts, ["606"]);
     await app.end();
   }
@@ -396,6 +397,7 @@ test("새 정류장 도착에서는 이전 도착 때 입력한 버스 번호를
   await app.draftRoute("143");
   assert.equal(app.screen(), "search");
   await app.action("back");
+  assert.equal(app.voice(), null, "같은 도착에서 번호만 수정하면 도착 안내를 반복하지 않는다");
   await app.finishVoice();
   assert.equal(app.screen(), "input");
   assert.equal(app.routeInput(), "143", "번호를 다시 고르면 입력한 번호를 유지한다");
@@ -405,6 +407,23 @@ test("새 정류장 도착에서는 이전 도착 때 입력한 버스 번호를
   await app.finishVoice();
   assert.equal(app.screen(), "input");
   assert.equal(app.routeInput(), "", "새 도착에서는 입력란을 비운다");
+  await app.end();
+});
+
+test("번호 음성 입력 종료와 같은 정류장의 번호 수정은 도착 안내를 재시작하지 않는다", async () => {
+  const app = await harness();
+  await app.action("start"); await app.action("manual-arrival");
+  assert.equal(app.voice().text, "정류장입니다. 버스를 선택하세요.");
+  await app.action("speech-start");
+  assert.equal(app.voice(), null);
+  await app.action("speech-end"); await app.tick();
+  assert.equal(app.voice(), null);
+  await app.confirmRoute("143");
+  await app.action("back"); await app.tick();
+  assert.equal(app.screen(), "input");
+  assert.equal(app.voice(), null);
+  await app.confirmRoute("271");
+  assert.deepEqual(app.journeyStarts, ["143", "271"]);
   await app.end();
 });
 
@@ -546,6 +565,64 @@ test("complete 응답 손실 뒤 재시도는 저장 상태를 조회하고 같�
   assert.deepEqual(app.timeline, ["stop", "upload:1"]);
   assert.equal(app.uploads.length, 1);
   assert.match(app.statuses.at(-1), /원본·추론 영상 저장이 완료/);
+});
+
+function deviceClips() {
+  const records = new Map(), downloads = [];
+  return { records, downloads,
+    async save(sessionId, clip) {
+      const key = `${sessionId}:${clip.index}`;
+      records.set(key, { key, session_id: sessionId, durable: true,
+        clip: { ...clip, frames: clip.frames.map(frame => ({ ...frame })) } });
+      return { stored: true, key };
+    },
+    async list() { return [...records.values()]; },
+    async remove(sessionId, clipId) { records.delete(`${sessionId}:${clipId}`); },
+    async download(key) { downloads.push(records.get(key)); },
+  };
+}
+
+test("실패한 영상은 기기에 남고 새 앱에서 선택해 다운로드할 수 있다", async () => {
+  const clipStore = deviceClips();
+  const app = await harness({ clipStore, uploadResponseLostOnce: true });
+  await app.action("start"); await app.action("record");
+  const frame = await app.capture(); await app.respond(0); await frame.pending;
+  app.setNow(1200); await app.action("record");
+  assert.equal(clipStore.records.size, 1, "업로드 전에 기기에 원본을 보관한다");
+  await app.end();
+  assert.equal(clipStore.records.size, 1, "업로드 응답을 잃으면 보관본을 삭제하지 않는다");
+  assert.equal(app.localClips()[0].clip.frames[0].overlay_png, "cG5n");
+  const reloaded = await harness({ clipStore });
+  assert.equal(reloaded.localClips().length, 1);
+  await reloaded.action("save-local-clip");
+  assert.equal(clipStore.downloads[0].clip.blob.size, 12);
+  await app.action("retry-upload");
+  assert.equal(clipStore.records.size, 0, "서버의 ready 상태를 확인한 뒤에만 보관본을 삭제한다");
+});
+
+test("서버 변환 실패와 추론 프레임 없는 영상도 원본 보관본을 유지한다", async () => {
+  for (const noFrames of [false, true]) {
+    const clipStore = deviceClips(), app = await harness({ clipStore, clipState: "failed" });
+    await app.action("start"); await app.action("record");
+    if (!noFrames) {
+      const frame = await app.capture(); await app.respond(0); await frame.pending;
+    }
+    app.setNow(1200); await app.action("record"); await app.end();
+    assert.equal(clipStore.records.size, 1);
+    await app.action("save-local-clip");
+    assert.equal(clipStore.downloads[0].clip.blob.size, 12);
+  }
+});
+
+test("일반 API 오류와 영상 변환 오류가 로그 저장 버튼을 표시한다", async () => {
+  const app = await harness({ realDiagnostics: true, stopFailsOnce: true });
+  assert.equal(app.node("save-error-log").hidden, true);
+  await app.action("start"); await app.end();
+  assert.equal(app.node("save-error-log").hidden, false);
+  assert.equal(app.node("error-log-controls").hidden, false);
+  assert.ok(app.errorHistory().events.some(event => event.type === "session_stop_failed"));
+  await app.action("retry-upload");
+  assert.equal(app.node("save-error-log").hidden, false, "복구 뒤에도 저장 버튼을 유지한다");
 });
 
 test("브라우저 녹화기가 자체 종료되면 현재 구간을 즉시 버리고 새 구간을 시작할 수 있다", async () => {

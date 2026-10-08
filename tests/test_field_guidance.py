@@ -1,7 +1,9 @@
 """Regressions for the field failures: early warning, blind routing and stop input."""
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import numpy as np
+import pytest
 import yaml
 
 from backend.boarding import Boarding
@@ -43,14 +45,16 @@ def test_surface_uncertainty_without_any_object_is_silent():
     assert "voice_event" not in result
 
 
-def test_repeated_boundary_jitter_does_not_announce_straight_during_avoidance():
+# 측면과 중앙 경계에서 좌우 안내 중복 방지 확인
+def test_repeated_boundary_jitter_does_not_repeat_avoidance():
+    """측면만 남으면 안내하지 않고 짧은 none 뒤 같은 방향도 반복하지 않는다."""
     voice = WalkingVoice()
     assert voice.observe(prediction(danger_item(1, [20, 20, 43, 80])), 100, 0)[0] == "오른쪽으로 한 걸음"
     for time, box in ((.2, [0, 20, 30, 90]), (.4, [20, 20, 43, 80]),
                       (.6, [0, 20, 30, 90]), (.8, [20, 20, 43, 80])):
         result = prediction(danger_item(1, box))
         assert voice.observe(result, 100, time) is None
-        assert result["voice_action"] == "right"
+        assert result["voice_action"] == ("right" if box[2] == 43 else None)
 
 
 def test_one_missing_frame_does_not_release_center_obstacle():
@@ -101,6 +105,30 @@ def stop_model():
     model.traffic = SimpleNamespace(predict=lambda *args, **kwargs: {
         "detections": [], "signal_state": "unknown", "selected_detection_index": None})
     return model, objects, calls
+
+
+# 실시간 측면 위험의 신호 상태별 무안내 확인
+@pytest.mark.parametrize("state", ["red", "unknown", "green"])
+def test_realtime_side_hazard_has_no_action_or_voice_in_any_signal(state):
+    """실시간 추론도 신호색이나 전방 횡단보도와 관계없이 측면 위험 음성을 만들지 않는다."""
+    model, _, _ = stop_model()
+    item = danger_item(1, [5, 20, 15, 90])
+    model.risk = SimpleNamespace(update=Mock(side_effect=lambda *args: prediction(item)),
+                                 add_sidewalk_context=Mock())
+    model.traffic = SimpleNamespace(predict=lambda *args, **kwargs: {
+        "detections": [{"track_id": 1}], "signal_state": state,
+        "selected_detection_index": 0,
+        "crosswalks": [{"crosswalk_status": "used"}],
+        "crosswalk_diagnostics": {"eligible_count": 1},
+    })
+    for index in range(5):
+        risk, *_ = model.predict(FRAME, index + 1, 1000 + index * 1000)
+        assert risk["last_action"] is None
+        assert risk["voice_action"] is None
+        assert "voice_event" not in risk
+        assert "voice_text" not in risk
+        assert risk["detections"][0]["alert_level"] == "danger"
+    assert model.voice.events == []
 
 
 def assert_stopped(risk):

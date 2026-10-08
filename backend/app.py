@@ -66,7 +66,7 @@ class StopRequest(BaseModel):
 
 
 class BoardingRequest(BaseModel):
-    action: Literal["arrive", "stop_announced", "submit", "cancel", "reopen"]
+    action: Literal["arrive", "input_ready", "stop_announced", "submit", "cancel", "reopen"]
     arrival_event_id: int | None = Field(default=None, ge=1)
     bus_number: str | None = Field(default=None, max_length=30)
 
@@ -99,7 +99,7 @@ class ClientTimingRecord(BaseModel):
     audio_delay_ms: float | None = Field(default=None, ge=0)
     status: str | None = Field(default=None, max_length=40)
     source: str | None = Field(default=None, max_length=20)
-    action: Literal["left", "straight", "right", "stop"] | None = None
+    action: Literal["left", "right", "stop"] | None = None
     event_ids: list[int] = Field(default_factory=list, max_length=20)
     recording_active: bool = False
 
