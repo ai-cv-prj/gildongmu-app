@@ -18,8 +18,8 @@ audio:
     missing_ms: 2000
     # 파란 ROI 면적 중 횡단보도 마스크가 이 비율 이상일 때만 신호 음성을 허용한다.
     traffic_crosswalk_roi_min_fraction: 0.05
-    walking_left_max_ratio: 0.35
-    walking_right_min_ratio: 0.65
+    walking_left_max_ratio: 0.30
+    walking_right_min_ratio: 0.70
     walking_center_intrusion_ratio: 0.05
     walking_side_intrusion_ratio: 0.10
     walking_voice_immediate_overlap_ratio: 0.10
@@ -32,6 +32,8 @@ audio:
     # 음성 행동 전환과 동일 안내 재생 기준
     walking_lateral_confirm_ms: 200
     walking_from_stop_confirm_ms: 500
+    walking_same_direction_repeat_ms: 1500
+    walking_crowded_redirect_ms: 3000
     walking_repeat_none_ms: 1500
     walking_stop_repeat_none_ms: 1500
     walking_missing_hold_ms: 800
