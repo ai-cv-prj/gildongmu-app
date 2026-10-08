@@ -76,7 +76,7 @@ class BOTSORTTests(unittest.TestCase):
                 self.assertEqual(returned[0]['track_id'] == first[0]['track_id'], restored)
 
     def test_ambiguous_or_weak_lost_match_gets_new_id(self):
-        for initial, returned in [((100,), (94, 106)), ((94, 106), (100,)), ((100,), (110,))]:
+        for initial, returned in [((100,), (94, 106)), ((94, 106), (100,)), ((100,), (120,))]:
             with self.subTest(initial=initial, returned=returned):
                 tracker = SignalTracker()
                 original = detections(initial)
@@ -86,6 +86,22 @@ class BOTSORTTests(unittest.TestCase):
                 current = detections(returned)
                 tracker.update(FRAME, current, FrameContext(3, 400))
                 self.assertTrue(all(item['track_id'] not in old_ids for item in current))
+
+    def test_small_box_shift_after_gap_restores_id_with_scaled_iou(self):
+        # 20px 폭 박스가 절반 이동하면 원래 IoU는 0.33이지만 2배 박스 IoU는 0.6이다.
+        tracker = SignalTracker()
+        original = detections((100,))
+        tracker.update(FRAME, original, FrameContext(1, 0))
+        tracker.update(FRAME, [], FrameContext(2, 200))
+        current = detections((110,))
+        tracker.update(FRAME, current, FrameContext(3, 400))
+        self.assertEqual(current[0]['track_id'], original[0]['track_id'])
+
+    def test_scaled_iou_applies_only_inside_signal_tracking(self):
+        from ultralytics.trackers.utils import matching
+        SignalTracker()
+        a, b = np.array([100, 100, 120, 140.]), np.array([110, 100, 130, 140.])
+        self.assertAlmostEqual(float(1 - matching.iou_distance([a], [b])[0, 0]), 1 / 3, places=4)
 
     def test_short_occlusion_restores_ids_after_camera_motion_and_order_change(self):
         tracker = SignalTracker()
