@@ -38,7 +38,8 @@ window.GRecorder = (() => {
     const scale = Math.min(width / video.videoWidth, height / video.videoHeight);
     const imageWidth = video.videoWidth * scale, imageHeight = video.videoHeight * scale;
     ctx.drawImage(video, (width - imageWidth) / 2, (height - imageHeight) / 2, imageWidth, imageHeight);
-    ctx.drawImage(overlay, 0, 0, overlay.width, overlay.height, 0, 0, width, height);
+    // The overlay canvas stays 0x0 until the first inference result is drawn.
+    if (overlay.width && overlay.height) ctx.drawImage(overlay, 0, 0, overlay.width, overlay.height, 0, 0, width, height);
   }
 
   function startPreview() {

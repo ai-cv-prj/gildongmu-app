@@ -20,7 +20,7 @@
     let obstacleDetection = true;
     let bus = {}, lastResult = null, currentCue = DEFAULT_CUES.walk;
     let micMode = null, destroyed = false, stationCount = 0, speechSession = false;
-    let clipState = { active: false, count: 0, max: 5, available: false };
+    let clipState = { active: false, count: 0, max: 3, available: false };
     let keypad = null, lastActionAt = -Infinity;
     const listeners = [];
     const cameraPanel = document.querySelector('[data-panel="camera"]');
@@ -135,7 +135,7 @@
       panel.hidden = records.length === 0;
       label.textContent = records.some(record => !record.durable)
         ? "기기 보관 실패 · 페이지를 닫기 전에 영상을 저장해 주세요."
-        : "새로고침 후에도 저장할 수 있습니다. 서버 영상 저장이 완료되면 보관함에서 삭제됩니다.";
+        : "서버 업로드 전 원본입니다. 서버 저장이 완료되면 자동으로 지워집니다.";
     }
     function setClipState(value) {
       clipState = { ...clipState, ...value };
@@ -143,13 +143,19 @@
       button.setAttribute("aria-pressed", String(clipState.active));
       updateText($("record-label"), clipState.active ? "영상 구간 기록 끝내기" : "30초 영상 구간 기록");
       const message = clipState.active
-        ? `${clipState.count}/${clipState.max}번째 구간 기록 중 · 최대 30초 후 자동 종료`
+        ? `${clipState.count}/${clipState.max}번째 구간 기록 중 · 최대 30초`
         : clipState.count >= clipState.max
-          ? `최대 ${clipState.max}개를 선택했습니다. 테스트 종료 후 저장합니다.`
+          ? `${clipState.max}개 기록 완료 · 테스트를 종료하고 저장합니다`
           : clipState.count
-            ? `${clipState.count}/${clipState.max}개 선택됨 · 필요하면 이어서 새 구간을 기록할 수 있습니다.`
-            : "영상 기록은 꺼져 있습니다. 필요할 때만 최대 30초씩 5개까지 기록합니다.";
+            ? `${clipState.count}/${clipState.max}개 기록됨 · 이어서 기록할 수 있습니다`
+            : `최대 30초씩 ${clipState.max}개 · ${clipState.max}개를 채우면 자동 종료 후 저장`;
       updateText($("clip-status"), message);
+      const badge = $("test-panel-badge");
+      if (badge) {
+        badge.dataset.state = clipState.active ? "recording" : "idle";
+        updateText(badge, clipState.active ? `● 녹화 중 ${clipState.count}/${clipState.max}`
+          : `영상 ${clipState.count}/${clipState.max}`);
+      }
       updateControls();
     }
     function setPaused(value) {

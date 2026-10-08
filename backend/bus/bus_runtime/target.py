@@ -47,7 +47,7 @@ def competing_route(text, target, alternatives=()):
 
 class TargetMatcher:
     """실험용 일치 후보. 실제 탑승 확정기/보정된 확률이 아니다."""
-    def __init__(self, target, alternatives=(), window_s=1.2, min_samples=3, min_span_s=.4, single_score=None):
+    def __init__(self, target, alternatives=(), window_s=2.0, min_samples=3, min_span_s=.4, single_score=None):
         route_aliases(target)
         for route in alternatives: route_aliases(route)
         if any(route != target and route_aliases(target) & route_aliases(route) for route in alternatives):

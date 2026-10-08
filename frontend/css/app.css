@@ -136,10 +136,6 @@ h1:focus:not(:focus-visible) {outline:none;}
 .camera-screen.is-paused .camera > :not(.pause-card) {visibility:hidden;}
 .app-status:not(.sr-only) {padding:16px 24px;font-size:24px;color:#94261F;background:#fff;}
 .app-status:empty {display:none;}
-.retry-upload {display:block;width:calc(100% - 48px);min-height:68px;margin:16px 24px;padding:12px;border-radius:18px;background:var(--charcoal);color:white;}
-.recovery-controls {display:grid;gap:12px;margin:16px 24px;padding:16px;border:1px solid var(--line);border-radius:18px;}
-.recovery-controls[hidden] {display:none;}
-.recovery-controls button,.recovery-controls select {min-height:56px;padding:12px;border:1px solid var(--line);border-radius:14px;background:#fff;color:var(--ink);font:inherit;}
 .diagnostics,.bus-details {margin:0 24px;border-top:1px solid var(--line);font-size:20px;}
 summary {padding:18px 0;min-height:56px;cursor:pointer;}
 .diagnostics-content,.target-card {display:grid;gap:12px;padding-bottom:24px;}
@@ -148,7 +144,32 @@ select,input[type=text] {width:100%;min-width:0;min-height:56px;padding:12px;bor
 .target-card h2 {font-size:26px;}
 .target-number {font-size:32px;font-weight:800;}
 .record-dot {width:15px;height:15px;border-radius:50%;background:#a82929;flex:none;}
-.record-button[aria-pressed=true] {background:#fff0ed;}
-.record-button[aria-pressed=true] .record-dot {border-radius:3px;}
+/* Field-test recovery: one stack, shown only while a card needs attention. */
+.recovery-stack {display:grid;gap:12px;margin:16px 24px 0;font-size:20px;}
+.recovery-stack:not(:has(> :not([hidden]))) {display:none;}
+.retry-upload {display:block;width:100%;min-height:68px;padding:12px;border-radius:18px;background:var(--charcoal);color:white;}
+.recovery-card {display:grid;gap:12px;padding:16px;border:1.5px solid var(--line);border-radius:18px;background:#fff;}
+.recovery-text {display:grid;gap:4px;}
+.recovery-text p,.test-note,.test-facts dt,.diagnostics label {font-size:18px;color:#5C5446;}
+.recovery-card button,.recovery-card select {min-height:56px;padding:12px;border:1px solid var(--line);border-radius:14px;background:var(--soft);color:var(--ink);}
+#error-log-controls {border-color:#E8B4AB;background:#FFF6F4;}
+/* Field-test tools: grouped cards inside one collapsible panel. */
+.diagnostics summary {display:flex;align-items:center;justify-content:space-between;gap:12px;font-weight:750;}
+.diagnostics summary::-webkit-details-marker {display:none;}
+.panel-title::before {content:"▸";display:inline-block;width:1.2em;}
+.diagnostics[open] .panel-title::before {content:"▾";}
+.panel-badge {padding:4px 12px;border:1px solid var(--line);border-radius:999px;background:#fff;font-size:18px;white-space:nowrap;}
+.panel-badge[data-state=recording] {border-color:#E8B4AB;background:#FFF0ED;color:#94261F;}
+.diagnostics-content {gap:12px;}
+.test-group {display:grid;gap:10px;padding:16px;border:1px solid var(--line);border-radius:18px;background:#fff;}
+.test-group-title {font-size:16px;font-weight:800;color:#6B5A1E;}
+.test-facts {display:grid;gap:8px;margin:0;}
+.test-facts div {display:grid;grid-template-columns:6.5em minmax(0,1fr);gap:8px;font-size:18px;}
+.test-facts dd {margin:0;}
+.diagnostics .record-button {background:var(--charcoal);color:var(--action-text);border-color:var(--charcoal);}
+.diagnostics .record-button[aria-pressed=true] {background:#FFF0ED;color:#94261F;border-color:#E8B4AB;}
+.diagnostics .record-button .record-dot {background:#FF6B5E;}
+.record-button[aria-pressed=true] .record-dot {border-radius:3px;background:#A82929;}
+.diagnostics .secondary-button {background:var(--soft);}
 @media(max-width:360px) {.option {padding-left:56px;padding-right:56px;} .option[data-rate]::before {left:14px;width:34px;} .option[data-size]::before {left:18px;} .option[aria-pressed=true]::after {right:14px;width:32px;height:32px;margin-top:-16px;background-size:22px;} .route-trigger {gap:8px;} .route-trigger[data-empty=true]:not([aria-invalid=true]) {font-size:clamp(28px,calc(28px * var(--text-scale)),32px);} .route-trigger[data-empty=true]:not([aria-invalid=true])::before {width:28px;height:28px;} .top-controls {padding-left:16px;padding-right:16px;} .content,.settings-content {padding-left:16px;padding-right:16px;} .camera-screen .main-title {padding:0 16px;} .primary-controls {gap:10px;}}
 @media(prefers-reduced-motion:reduce) {button:active {transform:none;}}

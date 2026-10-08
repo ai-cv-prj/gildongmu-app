@@ -15,7 +15,8 @@
   const SETTINGS_SCREENS = new Set(["home", "type"]);
   const temporaryScreen = () => SETTINGS_SCREENS.has(view.getScreen()) || view.getScreen() === "end";
   let timingQueue = [], eventQueue = [], flushTask = null, logTimer;
-  const MAX_CLIPS = 5, MAX_CLIP_MS = 30000, MAX_CLIP_FRAMES = 300;
+  // Galaxy WebM clips are ~32MB each, so a fourth 30s clip can exceed MAX_PENDING_BYTES.
+  const MAX_CLIPS = 3, MAX_CLIP_MS = 30000, MAX_CLIP_FRAMES = 300;
   const MAX_CLIP_FRAME_BYTES = 32 * 1024 * 1024, MAX_PENDING_BYTES = 120 * 1024 * 1024;
   const MAX_FRAME_GAP_MS = 5000;
   let clips = [], activeClip = null, clipStopTask = null, clipTimer = null, clipWatchdog = null;
@@ -136,9 +137,9 @@
     const message = testSettingsSaveTask ? "기종·메모를 저장하고 있습니다."
       : testSettingsError || (starting ? "테스트를 시작하고 있습니다. 잠시 후 수정할 수 있습니다."
         : stopping ? "테스트 기록을 저장하고 있습니다."
-        : running ? testSettingsChanged() ? "변경한 기종·메모를 현재 테스트에 반영하려면 저장을 눌러 주세요."
-          : "현재 테스트에 저장된 기종·메모입니다. 안내 중에도 수정하고 저장할 수 있습니다."
-        : "기종·메모는 안내 시작 시 저장됩니다. 안내 중에도 수정하고 저장할 수 있습니다.");
+        : running ? testSettingsChanged() ? "바뀐 내용을 반영하려면 저장을 눌러 주세요."
+          : "현재 테스트에 저장된 기종·메모입니다."
+        : "안내를 시작하면 함께 저장됩니다.");
     if (label.textContent !== message) label.textContent = message;
     label.classList.toggle("error", Boolean(testSettingsError));
   }
@@ -245,6 +246,7 @@
     diagnostic("clip_stop", { clip_id: clip.index, reason });
     activeClip = null;
     clearClipTimers();
+    let limitReached = false;
     clipStopTask = (async () => {
       try {
         const recorded = await GRecorder.stopRaw();
@@ -260,7 +262,9 @@
         bufferedBytes += recorded.blob.size;
         clips.push(clip);
         diagnostic("clip_buffered", { clip_id: clip.index });
-        status(`${reason} ${clips.length}/${MAX_CLIPS}개를 선택했습니다. 테스트 종료 후 저장합니다.`);
+        limitReached = clips.length >= MAX_CLIPS;
+        status(limitReached ? `영상 구간 ${MAX_CLIPS}개를 모두 기록했습니다. 테스트를 종료하고 저장합니다.`
+          : `${reason} ${clips.length}/${MAX_CLIPS}개를 선택했습니다. 테스트 종료 후 저장합니다.`);
         await preserveClip(sessionId, clip);
         return clip;
       } catch (error) {
@@ -270,7 +274,11 @@
         clip.frames = [];
         status(`영상 구간 저장 준비 실패: ${error.message}`);
         return null;
-      } finally { clipStopTask = null; controls(); }
+      } finally {
+        clipStopTask = null; controls();
+        // stopTest awaits clipStopTask, so start it only after this task has cleared.
+        if (limitReached && running && !stopping) void stopTest({ finish: true, reason: "clip_limit" });
+      }
     })();
     controls();
     return clipStopTask;
@@ -575,6 +583,12 @@
       }, 2000);
     });
   }
+  async function payloadReadable(...blobs) {
+    try {
+      await Promise.all(blobs.map(blob => typeof blob?.arrayBuffer === "function" ? blob.arrayBuffer() : null));
+      return true;
+    } catch (_) { return false; }
+  }
   // Retry the exact in-flight payload: advancing or recapturing here could corrupt the server sequence.
   async function sendFrame(id, nextId, capturedAtMs, blob, signal, busBlob, busCapturedAtMs, version) {
     let attempt = 0;
@@ -595,6 +609,12 @@
         return result;
       } catch (error) {
         if (signal.aborted || !running || version !== generation || !GApi.isRetryable(error)) throw error;
+        // Chrome fails fetch instantly when a JPEG Blob became unreadable (seen under clip memory
+        // pressure). That body never reached the server, so the caller may recapture with nextId.
+        if (!error.status && error.stage !== "timeout" && !(await payloadReadable(blob, busBlob))) {
+          throw Object.assign(new Error("프레임 이미지를 읽을 수 없어 새로 촬영합니다."),
+            { name: "FramePayloadUnreadable", payloadUnreadable: true, stage: error.stage, cause: error });
+        }
         if (!connectionLost) {
           connectionLost = true; presentation++; lastResult = null;
           view.render(null); GOverlay.clear(); walking.stop(); traffic.stop(); boarding.pause();
@@ -692,6 +712,12 @@
           recording_active: Boolean(selectedClip && capturedAtMs >= selectedClip.started_at_ms &&
             (selectedClip.ended_at_ms === null || capturedAtMs < selectedClip.ended_at_ms)) });
       } catch (error) {
+        if (error.payloadUnreadable) {
+          // Skip the lost payload; the next capture reuses the same frame id after a short back-off.
+          diagnostic("frame_payload_unreadable", { frame_id: frameId + 1, ...errorDetails(error.cause) });
+          if (request && running && version === generation) await waitForReconnect(request.signal).catch(() => {});
+          return;
+        }
         if (error.name !== "AbortError" && running && version === generation) failure = error;
       } finally { if (version === generation) request = null; }
     })();

@@ -25,7 +25,7 @@ yolo:
 # 신호등·횡단보도 추론
 traffic:
   conf: 0.25
-  imgsz: 960
+  imgsz: 640
   crosswalk_min_confidence: 0.50
   classifier_min_confidence: 0.60
   association_stable_frames: 3

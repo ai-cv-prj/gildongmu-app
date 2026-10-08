@@ -495,21 +495,39 @@ test("녹화는 기본 꺼짐이며 선택한 두 구간을 세션 종료 후 �
   assert.match(app.statuses.at(-1), /원본·추론 영상 저장이 완료/);
 });
 
-test("30초 자동 종료 뒤에도 새 구간을 기록할 수 있고 한 세션은 다섯 구간으로 제한된다", async () => {
+test("30초 자동 종료 뒤에도 새 구간을 기록할 수 있고 세 번째 구간을 마치면 테스트를 종료해 저장한다", async () => {
   const app = await harness();
   await app.action("start");
   await app.action("record");
   await app.autoStopClip();
   assert.deepEqual(app.recordCounts(), { starts: 1, stops: 1, recording: false });
-  for (let index = 1; index < 5; index++) {
+  for (let index = 1; index < 3; index++) {
     await app.action("record");
     app.setNow(30000 + index * 1000);
     await app.action("record");
   }
+  assert.deepEqual(app.recordCounts(), { starts: 3, stops: 3, recording: false });
+  assert.equal(app.resources().sessionsStopped, 1, "세 번째 구간 뒤 세션을 자동으로 종료한다");
+  assert.equal(app.screen(), "welcome");
+  assert.deepEqual(app.diagnostics.filter(event => event.type === "clip_buffered").map(event => event.clip_id), [1, 2, 3]);
+  assert.ok(app.diagnostics.some(event => event.type === "session_stop" && event.reason === "clip_limit"));
+});
+
+test("세 번째 구간 기록 중 직접 종료해도 종료가 한 번만 실행된다", async () => {
+  const app = await harness();
+  await app.action("start");
+  for (let index = 0; index < 2; index++) {
+    await app.action("record");
+    app.setNow(1000 + index * 1000);
+    await app.action("record");
+  }
   await app.action("record");
-  assert.deepEqual(app.recordCounts(), { starts: 5, stops: 5, recording: false });
-  assert.match(app.statuses.at(-1), /최대 5개/);
+  app.setNow(5000);
   await app.end();
+  assert.deepEqual(app.recordCounts(), { starts: 3, stops: 3, recording: false });
+  assert.equal(app.resources().sessionsStopped, 1);
+  assert.deepEqual(app.diagnostics.filter(event => event.type === "session_stop").map(event => event.reason),
+    ["user_confirmed"]);
 });
 
 test("일시중지와 카메라 종료는 현재 영상 구간을 끝내며 재개 시 새 구간을 쓴다", async () => {
@@ -840,6 +858,26 @@ test("번호 입력 중 일시적 프레임 연결 실패는 입력과 세션을
   assert.equal(app.overlayRenders.length, 1);
   assert.equal(app.resources().sessionsStarted, 1);
   app.setNow(3100);
+  await app.end();
+});
+
+test("읽을 수 없게 된 프레임 이미지는 무한 재시도하지 않고 같은 순번으로 새로 촬영한다", async () => {
+  const app = await harness();
+  await app.action("start");
+  const first = await app.capture();
+  app.frames[0].blob.arrayBuffer = async () => { throw new Error("NotReadableError"); };
+  app.frames[0].reject(new TypeError("Failed to fetch")); await flush();
+  assert.ok(app.diagnostics.some(event => event.type === "frame_payload_unreadable" && event.frame_id === 1));
+  assert.equal(app.resources().sessionsStopped, 0, "읽기 실패는 세션 실패로 처리하지 않는다");
+  assert.equal(app.frames.length, 1, "읽을 수 없는 본문으로 다시 요청하지 않는다");
+  assert.ok(await app.runTimer(2000), "짧게 기다린 뒤 새 촬영을 예약한다");
+  await first.pending;
+  const next = await app.capture();
+  assert.equal(app.captures.length, 2);
+  assert.equal(app.frames[1].frameId, 1, "서버가 받지 못한 순번을 그대로 사용한다");
+  assert.notStrictEqual(app.frames[1].blob, app.frames[0].blob);
+  await app.respond(1); await next.pending;
+  assert.equal(app.overlayRenders.length, 1);
   await app.end();
 });
 

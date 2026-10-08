@@ -21,6 +21,7 @@ from .bus_runtime.evidence import (select_candidates, recover_duplicate_bus_cand
 from .bus_runtime.route_evidence import context_boxes, context_rejection, text_rejection
 from .bus_runtime.target import TargetMatcher, exact_route, token_quality
 from .bus_runtime.observed import ObservedRouteMatcher
+from .bus_runtime.continuity import BusTrackContinuity
 from .bus_runtime.led_diagnostics import led_row_diagnostics
 
 log = logging.getLogger(__name__)
@@ -44,6 +45,7 @@ class BusPipeline:
         self.session_id: str | None = None
         self.last_capture_ms: int | None = None
         self.observed_matcher = ObservedRouteMatcher()
+        self.track_continuity = BusTrackContinuity()
 
     def load(self) -> None:
         if self.weights is None or not self.weights.is_file():
@@ -75,6 +77,7 @@ class BusPipeline:
         self.session_id = session_id
         self.last_capture_ms = None
         self.observed_matcher = ObservedRouteMatcher()
+        self.track_continuity.reset()
         self.matcher = (TargetMatcher(self.target_route, single_score=.98)
                         if self.target_route else None)
         if self.detector is not None:
@@ -90,6 +93,7 @@ class BusPipeline:
         self.matcher = None
         self.last_capture_ms = None
         self.observed_matcher = ObservedRouteMatcher()
+        self.track_continuity.reset()
 
     @staticmethod
     def _led_diagnostics(rgb: np.ndarray, box) -> dict | None:
@@ -180,6 +184,8 @@ class BusPipeline:
         if ordered:
             self.last_capture_ms = captured_at_ms
         timestamp_s = captured_at_ms / 1000.0
+        if ordered:
+            self.track_continuity.update(buses, timestamp_s)
         detections: list[dict] = []
         event_buses: list[dict] = []
         matches: list[dict] = []
@@ -187,7 +193,8 @@ class BusPipeline:
         for bus_index, bus in enumerate(buses):
             track_id = bus['track_id']
             bus_box = bus['bus_box']
-            observations = [p for p in current if p['bus_index'] == bus_index]
+            observations = [{**p, 'detector_track_id': p['track_id'], 'track_id': track_id}
+                            for p in current if p['bus_index'] == bus_index]
             complete = bool(ordered and not bus['candidate_truncated'])
             if self.matcher is None:
                 decision = {'state': 'not_configured', 'reason': 'target_route_missing',
@@ -199,6 +206,8 @@ class BusPipeline:
                 decision = self.matcher.update(track_id, timestamp_s, observations,
                                                bus_box, complete=complete)
             bus_record = {'track_id': track_id,
+                          'detector_track_id': bus.get('detector_track_id', track_id),
+                          'track_source': bus.get('track_source', 'detector'),
                           'box': normalize_box(*bus_box, width, height),
                           'confidence': float(bus['bus_score']),
                           'candidate_count': bus['candidate_count'],

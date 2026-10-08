@@ -13,24 +13,24 @@ def stripe_candidates(frame, box, cv2):
     x1, y1, x2, y2 = [int(round(v)) for v in box]
     x1, y1 = max(0, x1), max(0, y1)
     x2, y2 = min(width, x2), min(height, y2)
-    if x2 - x1 < 80 or y2 - y1 < 80:
+    if x2 - x1 < 53 or y2 - y1 < 53:
         return None, {}
     roi = frame[y1:y2, x1:x2]
     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (5, 5), 0)
     mask = cv2.adaptiveThreshold(
-        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 81, -8,
+        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 55, -8,
     )
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     bars = []
     for contour in contours:
         area = cv2.contourArea(contour)
-        if area < max(100, roi.shape[0] * roi.shape[1] * 0.001):
+        if area < max(45, roi.shape[0] * roi.shape[1] * 0.001):
             continue
         rectangle = cv2.minAreaRect(contour)
         rw, rh = rectangle[1]
-        if (min(rw, rh) < 5 or max(rw, rh) / min(rw, rh) < 2.5
+        if (min(rw, rh) < 3 or max(rw, rh) / min(rw, rh) < 2.5
                 or area / max(1, rw * rh) < 0.55):
             continue
         corners = cv2.boxPoints(rectangle)
@@ -67,16 +67,16 @@ def fit_rails(bars, width, roi_height):
             best = None
             for i, a in enumerate(points):
                 for b in points[i + 1:]:
-                    if abs(b[1] - a[1]) < max(40, 0.1 * roi_height):
+                    if abs(b[1] - a[1]) < max(27, 0.1 * roi_height):
                         continue
                     slope = (b[0] - a[0]) / (b[1] - a[1])
                     intercept = a[0] - slope * a[1]
                     if abs(slope) > 2:
                         continue
-                    mask = abs(points[:, 0] - slope * points[:, 1] - intercept) <= max(3, 0.012 * width)
+                    mask = abs(points[:, 0] - slope * points[:, 1] - intercept) <= max(2, 0.012 * width)
                     count = int(mask.sum())
                     span = float(np.ptp(points[mask, 1]))
-                    if count < 3 or span < max(40, 0.1 * roi_height):
+                    if count < 3 or span < max(27, 0.1 * roi_height):
                         continue
                     score = count + span / roi_height
                     if best is None or score > best[0]:
@@ -103,11 +103,11 @@ def direction(bars, width, height, roi):
             y = (b['intercept'] - a['intercept']) / delta
             x = a['slope'] * y + a['intercept']
             farthest_support = min(p[1] for rail in (a, b) for p in rail['points'])
-            if not (roi[1] - 0.5 * height <= y <= min(roi[1] + 0.4 * (roi[3] - roi[1]), farthest_support - 15)
+            if not (roi[1] - 0.5 * height <= y <= min(roi[1] + 0.4 * (roi[3] - roi[1]), farthest_support - 10)
                     and roi[0] - 0.25 * width <= x <= roi[2] + 0.25 * width):
                 continue
             # 거의 평행하거나 잡음이 많아 교점이 불안정한 경계선 조합은 제외한다.
-            uncertainty = (a['error'] + b['error'] + 2) / abs(delta)
+            uncertainty = (a['error'] + b['error'] + 1.3) / abs(delta)
             if uncertainty > 0.10 * height:
                 continue
             pairs.append((min(a['score'], b['score']), [float(x), float(y)], i, j))
