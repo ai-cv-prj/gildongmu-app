@@ -95,7 +95,7 @@ test("확정된 다른 버스 이벤트가 전체 안내 경로를 거쳐 스피
     matches: [], recognized_routes: [{ track_id: 2, route_number: "604", state: "matched_candidate",
       token_score: .99, is_target: false }] } });
   const message = "604번 버스, 다른 노선.";
-  const text = `${message} ${message}`;
+  const text = "다른 버스. 목표 버스를 계속 찾는 중.";
   assert.equal(app.audio().src, `/api/bus-arrival-speech?text=${encodeURIComponent(text)}`);
   assert.equal(journey.snapshot().ocr.message, message);
   assert.equal(app.playbackSources.length, 1);

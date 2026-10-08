@@ -136,9 +136,9 @@
         `${item.track_id ?? "unknown"}:${item.route_number}:confirmed`);
       if (!replay && (alreadyConfirmed || !item.isTarget && otherRecentlyAnnounced(item.route_number))) return false;
       const token = generation;
-      // Keep both repetitions in one cancellable playback; coordinator.repeat
-      // would keep replaying until the recognition expires.
-      const speechText = `${item.message} ${item.message}`;
+      // Keep target repetitions in one cancellable playback; other routes need one brief cue.
+      const speechText = item.isTarget ? `${item.message} ${item.message}`
+        : "다른 버스. 목표 버스를 계속 찾는 중.";
       speakingOcr = item;
       item.started = false;
       const accepted = coordinator.request({ source: "bus-ocr", priority: coordinator.PRIORITY.busOcr,

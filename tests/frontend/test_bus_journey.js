@@ -136,12 +136,12 @@ test("같은 목표 버스 확정은 두 번 읽던 후보 안내를 즉시 교�
   app.journey.stop();
 });
 
-test("다른 버스의 확정 번호도 읽고 목표 번호와 구분하며 반복·추적 ID 변경을 제한한다", () => {
+test("다른 버스는 짧게 한 번 안내하고 반복·추적 ID 변경을 제한한다", () => {
   const app = harness();
   app.journey.start("143");
   app.deny();
   app.detectOther();
-  assert.equal(app.spoken.at(-1).text, "7011번 버스, 다른 노선. 7011번 버스, 다른 노선.");
+  assert.equal(app.spoken.at(-1).text, "다른 버스. 목표 버스를 계속 찾는 중.");
   assert.equal(app.spoken.at(-1).dynamic, true);
   assert.equal(app.journey.snapshot().ocr.status, "other");
   assert.equal(app.journey.snapshot().ocr.routeNumber, "7011");
@@ -153,7 +153,7 @@ test("다른 버스의 확정 번호도 읽고 목표 번호와 구분하며 반
   assert.equal(app.spoken.length, 1, "같은 번호의 추적 ID가 바뀌어도 곧바로 반복하지 않는다");
   assert.equal(app.journey.repeat(), true, "사용자가 요청한 다시 듣기는 허용한다");
   assert.equal(app.spoken.length, 2);
-  assert.equal(app.spoken.at(-1).text, "7011번 버스, 다른 노선. 7011번 버스, 다른 노선.");
+  assert.equal(app.spoken.at(-1).text, "다른 버스. 목표 버스를 계속 찾는 중.");
   app.finish();
   app.step(10000);
   app.detectOther({ id: 11 });
