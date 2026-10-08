@@ -84,6 +84,9 @@ def geometry(detection, shape, cfg, roi=None):
         "edge_contact": edges,
         "horizontal_path_gap": min([gap(poly) for poly in corridors]+[gap(immediate)]),
         "bottom_clipped": y2 >= 1-1/height,
+        # A cropped top censors scale, but leaves ground motion measurable.
+        "ground_contact_visible": (x1 > 1/width and x2 < 1-1/width
+                                   and y2 < 1-1/height),
         # One original-image pixel at the frame edge makes scale censored.
         "clipped": x1 <= 1/width or y1 <= 1/height or x2 >= 1-1/width or y2 >= 1-1/height,
     }

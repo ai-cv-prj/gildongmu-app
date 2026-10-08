@@ -301,7 +301,13 @@ def guidance_items(prediction, level, crossing_active=False, stationary_voice=Fa
 def rapid_approach_hazard(item):
     """안정적으로 확인된 빠른 접근·짧은 TTC 위험인지 반환한다."""
     reasons = item.get("reasons", [])
-    return ((item.get("motion") or {}).get("quality") == "valid"
+    motion = item.get("motion") or {}
+    ground = motion.get("ground_approach") or {}
+    if ("ground_approaching_near_path" in reasons
+            and ground.get("quality") == "valid"
+            and ground.get("time_to_near_s") is not None):
+        return True
+    return (motion.get("quality") == "valid"
             and bool({"approaching_near_path", "short_ttc",
                       "predicted_moving_conflict"}.intersection(reasons)))
 
