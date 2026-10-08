@@ -58,7 +58,9 @@ def prediction(*items, level="danger", source="object", epoch=0):
     """첫 번째 객체가 화면의 대표 경고인 프레임 결과를 반환한다."""
     index = items[0]["detection_index"] if items else None
     return {"warning": {"level": level, "source": source, "detection_index": index},
-            "detections": list(items), "state_epoch": epoch}
+            "detections": list(items), "state_epoch": epoch,
+            "direction_ground": {"status": "available", "left": True, "right": True,
+                                 "image_height": 100, "image_width": 100, "max_steps": 1}}
 
 
 # 음성 제외 테스트용 U자 띠 마스크 만들기
@@ -786,9 +788,9 @@ class WalkingVoiceTests(unittest.TestCase):
                     self.assertNotIn("voice_suppressed_reason", item)
                     self.assertEqual(walking_action(result, 100), "blocked")
 
-    # 보행가능 비율 계산 불가 시 음성 제외 확인
-    def test_surrounding_voice_unavailable_context_is_silent(self):
-        """마스크가 없거나 보이는 띠가 하나도 없으면 위험 음성을 제외한다."""
+    # 보행가능 비율 계산 불가 시 방향 지시만 제한
+    def test_surrounding_voice_unavailable_context_keeps_nondirectional_warning(self):
+        """마스크가 없거나 보이는 띠가 없어도 확인된 위험을 무음으로 만들지 않는다."""
         config = {
             "non_green_obstacle_voice_suppression": True,
             "non_green_obstacle_crosswalk_threshold": .20,
@@ -810,9 +812,9 @@ class WalkingVoiceTests(unittest.TestCase):
                     class_map, {"walkable": 1, "crosswalk": 2},
                     (100, 100, 3), config,
                 )
-                self.assertEqual(
-                    item["voice_suppressed_reason"], "walkable_surroundings_unavailable")
-                self.assertIsNone(walking_action(result, 100))
+                self.assertNotIn("voice_suppressed_reason", item)
+                self.assertIsNotNone(WalkingVoice().observe(result, 100, 0))
+                self.assertIn(result["voice_action"], ("blocked", "crowded", "stop"))
 
     # 크기가 다른 bbox 바깥 띠의 픽셀 가중 통합 확인
     def test_surrounding_voice_fraction_uses_all_strip_pixels(self):
@@ -871,7 +873,10 @@ class WalkingVoiceTests(unittest.TestCase):
             ("ACTION: left", "VOICE: right", "MOTION: unavailable"))
         self.assertEqual(action_status_text(
             {"last_action": "stop", "voice_action": None}),
-            ("ACTION: stop", "VOICE: none", "MOTION: unavailable"))
+            ("ACTION: none", "VOICE: none", "MOTION: unavailable"))
+        self.assertEqual(action_status_text(
+            {"last_action": "right", "voice_action": "blocked", "voice_playback_action": "blocked"}),
+            ("ACTION: blocked", "VOICE: blocked", "MOTION: unavailable"))
         self.assertEqual(action_status_text(
             {"stationarity": {"status": "stationary"}}),
             ("ACTION: none", "VOICE: none", "MOTION: stationary"))

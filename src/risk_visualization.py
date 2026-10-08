@@ -43,8 +43,8 @@ def draw_direction_boundaries(frame):
 
 # 장애물 행동과 음성·움직임 상태 문구 생성
 def action_status_text(prediction):
-    """화면 행동과 음성 선택, 카메라 움직임 상태를 짧은 문구로 반환한다."""
-    action = prediction.get("last_action") or "none"
+    """안전성·전환 확인을 마친 행동과 실제 음성 재생 상태를 표시한다."""
+    action = prediction.get("voice_action", prediction.get("last_action")) or "none"
     voice = prediction.get("voice_playback_action") or "none"
     motion = (prediction.get("stationarity") or {}).get("status") or "unavailable"
     return f"ACTION: {action}", f"VOICE: {voice}", f"MOTION: {motion}"

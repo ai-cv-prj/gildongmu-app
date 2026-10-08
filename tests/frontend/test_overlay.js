@@ -57,7 +57,8 @@ context.window.GOverlay.render({
 }, state => { drawState = state; });
 
 assert.ok(labels.includes("person | T12 · E34"));
-assert.ok(labels.includes("ACTION: left"));
+assert.ok(labels.includes("ACTION: right"));
+assert.ok(!labels.includes("ACTION: left"));
 assert.ok(labels.includes("VOICE: right"));
 assert.ok(labels.includes("MOTION: stationary"));
 assert.ok(labels.includes("CROSSWALK: crossing"));
@@ -82,6 +83,7 @@ context.window.GOverlay.render({
   walking: { event: { roi: {}, last_action: "stop", voice_action: null } },
 });
 assert.ok(labels.includes("VOICE: none"));
+assert.ok(labels.includes("ACTION: none"));
 
 labels.length = rectangles.length = 0;
 context.window.GOverlay.render({
