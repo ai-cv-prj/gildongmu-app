@@ -284,7 +284,6 @@ class TemporalSelector:
                         "crosswalk_index": None,
                         "selection_origin": self.target_origin, "track_id": self.target_id,
                         "tracking": tracking}
-            self._clear_pending()
             missing_ms = context.captured_at_ms - self.target_last_seen
             # 횡단보도 연결 없이 신호등 하나만 보고 임시 선택한 대상은 ID 자체가
             # 선택 근거가 아니다. 현재도 추적 가능한 신호가 정확히 하나라면 끊긴
@@ -299,9 +298,23 @@ class TemporalSelector:
             if (tracking["reason"] == "target_missing"
                     and missing_ms <= LOST_MAX_AGE_MS and not reselect_single):
                 tracking["missing_ms"] = missing_ms
-                return {"status": "unknown", "reason": "waiting_for_target_reacquisition",
-                        "signal_index": None, "crosswalk_index": None,
-                        "selection_origin": self.target_origin, "tracking": tracking}
+                # 기존 대상의 ID를 다른 ID로 교체하지 않는다. 기다리는 동안에도 새 후보를
+                # 횡단보도 연결과 연속 확인으로 검증하고, 모두 통과한 경우에만 새 대상으로 선택한다.
+                decision = self.update(
+                    associate(frame, signals, crosswalks, cv2, require_geometry=True),
+                    signals, crosswalks,
+                )
+                decision["tracking"] = tracking
+                if decision["signal_index"] is not None:
+                    tracking["reselected_from_track_id"] = self.target_id
+                    self._acquire_target(decision, signals, "crosswalk_matched")
+                    self._clear_pending()
+                    return decision
+                if decision["reason"] != "waiting_for_temporal_consistency":
+                    decision["reason"] = "waiting_for_target_reacquisition"
+                decision.update(status="unknown", selection_origin=self.target_origin)
+                return decision
+            self._clear_pending()
             self._clear_target()
 
         decision = associate(frame, signals, crosswalks, cv2)

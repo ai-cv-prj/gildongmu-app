@@ -2,7 +2,10 @@
 
 검증 환경: ultralytics 8.4.150, lap 0.5.13. ReID 모델은 사용하지 않는다.
 현재 검출만 반환하고 짧은 가림의 추적 정보는 최대 3초 보관한다.
+신호등 박스는 작아서 몇 픽셀만 움직여도 IoU가 0이 되므로, 매칭할 때만
+중심을 유지한 채 박스를 IOU_BOX_SCALE배로 키워 IoU를 계산한다.
 """
+import threading
 from types import SimpleNamespace
 
 import numpy as np
@@ -11,6 +14,40 @@ RECOVERY_CONFIDENCE = 0.1
 LOST_MAX_AGE_MS = 3000
 RECOVERY_MIN_IOU = 0.5
 RECOVERY_MATCH_MARGIN = 0.1
+IOU_BOX_SCALE = 2.0
+
+_matching_scale = threading.local()
+
+
+def _expanded_boxes(tracks, scale):
+    if isinstance(tracks[0], np.ndarray):
+        boxes = np.asarray(tracks, dtype=np.float32)
+    else:
+        boxes = np.asarray([track.xyxy for track in tracks], dtype=np.float32)
+    centers = (boxes[:, :2] + boxes[:, 2:]) / 2
+    halves = (boxes[:, 2:] - boxes[:, :2]) / 2 * scale
+    return list(np.concatenate([centers - halves, centers + halves], axis=1))
+
+
+def _install_scaled_iou():
+    """신호등 추적 중인 스레드에서만 확대 박스 IoU를 쓰도록 매칭 함수를 한 번 감싼다.
+
+    버스·장애물 추적도 같은 Ultralytics 함수를 쓰므로 다른 호출은 원래 동작을 유지한다.
+    """
+    from ultralytics.trackers.utils import matching
+
+    if getattr(matching.iou_distance, "signal_scaled", False):
+        return
+    original = matching.iou_distance
+
+    def iou_distance(atracks, btracks):
+        scale = getattr(_matching_scale, "value", None)
+        if scale is None or not len(atracks) or not len(btracks):
+            return original(atracks, btracks)
+        return original(_expanded_boxes(atracks, scale), _expanded_boxes(btracks, scale))
+
+    iou_distance.signal_scaled = True
+    matching.iou_distance = iou_distance
 
 
 class SignalTracker:
@@ -20,6 +57,7 @@ class SignalTracker:
         from ultralytics.trackers.bot_sort import BOTSORT
         from ultralytics.trackers.basetrack import TrackState
 
+        _install_scaled_iou()
         self.next_id = 1
         self.previous_context = None
         self.previous_shape = None
@@ -105,7 +143,11 @@ class SignalTracker:
         data = np.asarray([
             [*signal["xyxy"], signal["confidence"], signal["class_id"]] for signal in signals
         ], dtype=np.float32).reshape(-1, 6)
-        self.tracker.update(Boxes(data, frame.shape[:2]), frame)
+        _matching_scale.value = IOU_BOX_SCALE
+        try:
+            self.tracker.update(Boxes(data, frame.shape[:2]), frame)
+        finally:
+            _matching_scale.value = None
         for signal in signals:
             signal["track_id"] = None
         # 아직 연속 확인되지 않은 추적도 현재 실제 검출에 연결된 ID는 사용한다.
