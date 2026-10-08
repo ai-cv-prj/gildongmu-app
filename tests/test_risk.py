@@ -97,6 +97,19 @@ class RiskTests(unittest.TestCase):
             self.assertEqual(item["risk_level"], "danger" if stable else "caution")
             self.assertEqual(item["motion"]["time_to_near_s"] is not None, stable)
 
+    # 정적 장애물의 핑크 ROI 즉시 위험 승격 확인
+    def test_static_obstacle_inside_immediate_roi_is_immediately_danger(self):
+        """볼라드도 일반 객체처럼 핑크 ROI와 중앙 조건을 만족하면 즉시 위험이다."""
+        result = engine().update(
+            FRAME, [detection((45, 50, 55, 77), name="bollard", cid=1)], 0)
+        item = result["detections"][0]
+        self.assertLess(item["geometry"]["point"][1], .78)
+        self.assertGreaterEqual(item["geometry"]["immediate_overlap"], .2)
+        self.assertGreaterEqual(item["geometry"]["central_immediate_overlap"], .2)
+        self.assertEqual(item["risk_level"], "danger")
+        self.assertIn("near_path_occupied", item["reasons"])
+        self.assertNotIn("static_near_contact", item["reasons"])
+
     def test_lateral_departure_does_not_promote_short_ttc(self):
         e = engine(config={"ttc_alerts": True, "wide_roi_priority_enabled": True,
                            "corridor_polygon": [[.01,.3],[.99,.3],[.99,1],[.01,1]],
