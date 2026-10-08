@@ -5,16 +5,69 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>버스 영상 · 인식 기록 검토</title>
 <style>
-:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#101722;color:#e8eef7;font-size:14px}
-*{box-sizing:border-box}body{margin:0}header{padding:22px 26px;border-bottom:1px solid #354254}h1{font-size:23px;margin:0 0 8px}h2{font-size:19px;margin:0 0 10px}p{line-height:1.65;margin:8px 0}a{color:#8bd9f5}button,select,input{font:inherit;color:inherit;background:#1e2b3c;border:1px solid #52647d;border-radius:6px;padding:8px}button{cursor:pointer}button:hover{background:#304660}button:disabled{opacity:.5;cursor:default}label{display:flex;gap:8px;align-items:center}select{max-width:100%}.muted{color:#acb9ca}.warning{color:#ffd58f}#layout{display:grid;grid-template-columns:285px minmax(0,1fr)}aside{padding:16px;border-right:1px solid #354254;max-height:calc(100vh - 155px);overflow:auto}aside label{display:block;margin:0 0 12px}aside select,aside input{display:block;width:100%;margin-top:5px}.clip{display:block;text-align:left;width:100%;margin:8px 0;padding:12px;line-height:1.6}.clip.active{border-color:#57dac3;background:#183d40}.clip small{display:block;color:#b7c9db}main{padding:20px;min-width:0}.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:14px 0}.stat{border:1px solid #3b4b61;border-radius:8px;padding:12px}.stat strong{display:block;font-size:24px;margin-top:4px}.videos{display:grid;grid-template-columns:1fr 1fr;gap:14px}video{width:100%;max-height:380px;background:#070b10;margin-top:8px}figure{margin:0}figcaption{display:flex;justify-content:space-between;align-items:center}.controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0}.table-wrap{overflow:auto;max-height:470px;border:1px solid #354254}table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;vertical-align:top;padding:10px;border-bottom:1px solid #354254}th{position:sticky;top:0;background:#192538;white-space:nowrap}td button{white-space:nowrap;padding:5px}tr.recognized{background:#143a35}tr.active{outline:2px solid #80dac7;outline-offset:-2px}td.raw{min-width:190px;max-width:320px}td.state{min-width:175px;max-width:310px}.rejected{color:#ffb1a2}.accepted{color:#80e5cf}details{margin:12px 0}summary{cursor:pointer;line-height:1.6}.small{font-size:12px}#seek-status{min-height:22px}#empty{padding:50px 0}#clip-warnings p{margin:4px 0}#sample-note{margin:16px 0 10px}
-@media(max-width:950px){#layout{grid-template-columns:1fr}aside{max-height:300px;border-right:0;border-bottom:1px solid #354254}.stats{grid-template-columns:1fr 1fr}.videos{grid-template-columns:1fr}header,main{padding:16px}}
+:root{color-scheme:light;font-family:system-ui,sans-serif;background:#f4f7fc;color:#1f2937;font-size:14px}
+*{box-sizing:border-box}
+body{margin:0}
+header{padding:22px 26px;background:#fff;border-bottom:1px solid #d7e0ec}
+h1{font-size:23px;margin:0 0 8px}
+h2{font-size:19px;margin:0 0 10px}
+p{line-height:1.65;margin:8px 0}
+a{color:#0369a1}
+a:hover{color:#075985}
+button,select,input{font:inherit;color:inherit;background:#fff;border:1px solid #cbd5e1;border-radius:6px;padding:8px}
+button{cursor:pointer}
+button:hover{background:#eff6ff;border-color:#93b4dd}
+button:disabled{color:#64748b;background:#f1f5f9;opacity:.7;cursor:default}
+button:focus-visible,select:focus-visible,input:focus-visible,a:focus-visible,summary:focus-visible{outline:3px solid #2563eb;outline-offset:2px}
+input::placeholder{color:#64748b}
+label{display:flex;gap:8px;align-items:center}
+select{max-width:100%}
+.muted{color:#526276}
+.warning{color:#92400e}
+#layout{display:grid;grid-template-columns:285px minmax(0,1fr)}
+aside{padding:16px;background:#f8fafc;border-right:1px solid #d7e0ec;max-height:calc(100vh - 155px);overflow:auto}
+aside label{display:block;margin:0 0 12px}
+aside select,aside input{display:block;width:100%;margin-top:5px}
+.clip{display:block;text-align:left;width:100%;margin:8px 0;padding:12px;line-height:1.6}
+.clip.active{border-color:#0d9488;background:#e7f8f4;box-shadow:inset 3px 0 #0d9488}
+.clip small{display:block;color:#526276}
+main{padding:20px;min-width:0;background:#fff}
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:14px 0}
+.stat{background:#f8fafc;border:1px solid #d7e0ec;border-radius:8px;padding:12px}
+.stat strong{display:block;font-size:24px;margin-top:4px;color:#0f172a}
+.videos{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+video{width:100%;max-height:380px;background:#e8eef6;margin-top:8px}
+figure{margin:0}
+figcaption{display:flex;justify-content:space-between;align-items:center}
+.controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:12px 0}
+.table-wrap{overflow:auto;max-height:470px;border:1px solid #d7e0ec;border-radius:8px}
+table{border-collapse:collapse;width:100%;font-size:13px;background:#fff}
+th,td{text-align:left;vertical-align:top;padding:10px;border-bottom:1px solid #d7e0ec}
+th{position:sticky;top:0;background:#eef3f9;white-space:nowrap;color:#334155}
+td button{white-space:nowrap;padding:5px}
+tbody tr:nth-child(even):not(.recognized){background:#f8fafc}
+tr.recognized{background:#ecfdf5}
+tr.active{outline:2px solid #0d9488;outline-offset:-2px}
+td.raw{min-width:190px;max-width:320px}
+td.state{min-width:175px;max-width:310px}
+.rejected{color:#b91c1c}
+.accepted{color:#047857}
+details{margin:12px 0}
+summary{cursor:pointer;line-height:1.6}
+.small{font-size:12px}
+#seek-status{min-height:22px}
+#empty{padding:50px 0}
+#clip-warnings:not(:empty){padding:10px 12px;margin-bottom:14px;background:#fffbeb;border:1px solid #f3d28a;border-radius:8px}
+#clip-warnings p{margin:4px 0}
+#sample-note{margin:16px 0 10px}
+@media(max-width:950px){#layout{grid-template-columns:1fr}aside{max-height:300px;border-right:0;border-bottom:1px solid #d7e0ec}.stats{grid-template-columns:1fr 1fr}.videos{grid-template-columns:1fr}header,main{padding:16px}}
 </style>
 </head>
 <body>
 <header>
   <h1>버스 영상 · 인식 기록 검토</h1>
   <p class="muted">허브에서 버스로 분류한 클립의 원본, OCR 관측, 화면 표시 기록을 함께 확인합니다. 저장 당시 기록이며 재추론 결과가 아닙니다.</p>
-  <div><a href="samples.csv" download>관측 CSV</a> · <a href="review.json" download>검토 JSON</a> · <span id="generated" class="muted"></span></div>
+  <div><a href="samples.csv" download>관측 CSV</a> · <a href="review.json" download>검토 JSON</a> · <span id="scope" class="muted"></span> · <span id="generated" class="muted"></span></div>
   <details><summary>수치를 해석하는 방법</summary>
     <p>관측 수는 OCR 원본 프레임별로 중복을 제거합니다. 같은 인식 결과를 여러 응답에서 재사용한 횟수는 성공 횟수에 더하지 않습니다. ‘번호 채택’은 프로그램이 후보 또는 반복 확인 번호로 채택했다는 뜻이며, 실제 버스 번호와 맞았다는 정답 판정은 아닙니다.</p>
     <p>‘결과 나이’는 버스 촬영부터 브라우저 응답 수신까지의 시간입니다. OCR 처리 시간, 대기 시간, 통신 시간이 섞여 있습니다. ‘표시’의 drawn은 캔버스 그리기 완료이며 해당 번호가 실제로 표시됐다는 증거는 아닙니다. stale은 오래된 프레임으로 표시가 생략된 기록입니다. 로그가 없으면 ‘기록 없음’으로 표시합니다.</p>
@@ -55,6 +108,7 @@
   const report = JSON.parse(document.getElementById("review-data").textContent);
   const $ = id => document.getElementById(id);
   const clips = report.clips || [];
+  const clipNumbers = new Map(clips.map((clip, index) => [clip, index + 1]));
   let selected = null, linked = false, selectionVersion = 0;
   const original = $("original"), inference = $("inference");
   const numeric = value => typeof value === "number" && Number.isFinite(value);
@@ -68,6 +122,7 @@
   const recognized = sample => Array.isArray(sample.recognized_routes) && sample.recognized_routes.length > 0;
   const displayWarnings = (container, values) => container.replaceChildren(...values.map(value => make("p", String(value))));
   $("generated").textContent = `생성 ${report.generated_at ? new Date(report.generated_at).toLocaleString("ko-KR") : "시각 없음"}`;
+  $("scope").textContent = `분석 대상: ${(report.source_ids || [...new Set(clips.map(clip => clip.source_id))]).join(", ")}`;
   if (report.warnings?.length) { $("global-warnings").hidden = false; displayWarnings($("global-warnings").querySelector("div"), report.warnings); }
   for (const source of [...new Set(clips.map(clip => clip.source_id))].sort()) { const option = make("option", source); option.value = source; $("source").append(option); }
 
@@ -165,7 +220,7 @@
     pause(); selectionVersion++; selected = clip;
     $("review").hidden = !clip; $("empty").hidden = Boolean(clip);
     if (!clip) { for (const video of [original, inference]) { video.removeAttribute("src"); video.load(); } return; }
-    $("title").textContent = `${clip.device_name || "기기 정보 없음"} · ${clip.clip_key}`;
+    $("title").textContent = `${clipNumbers.get(clip)}번 영상 · ${clip.device_name || "기기 정보 없음"} · ${clip.clip_key}`;
     $("meta").textContent = `${clip.source_id} / ${clip.session_id} · ${clip.started_at || "촬영 시각 없음"} · ${clip.note || "메모 없음"}`;
     const stats = summary(clip);
     $("stats").replaceChildren(...[["고유 OCR 관측", stats.unique_ocr_frames], ["버스 검출 관측", stats.frames_with_bus], ["문자열 있는 관측", stats.frames_with_text], ["번호 채택 관측", stats.frames_with_recognition]].map(([label,value]) => { const node = make("div", label, "stat"); node.append(make("strong", count(value))); return node; }));
@@ -195,7 +250,7 @@
     });
     if (!visible.includes(selected)) select(visible[0] || null);
     $("clips").replaceChildren(...visible.map(clip => {
-      const button = make("button", `${clip.source_id} · ${clip.clip_key}`, `clip${clip === selected ? " active" : ""}`);
+      const button = make("button", `${clipNumbers.get(clip)}번 · ${clip.source_id} · ${clip.clip_key}`, `clip${clip === selected ? " active" : ""}`);
       button.setAttribute("aria-pressed", String(clip === selected));
       button.append(make("small", `${clip.device_name || "기기 정보 없음"} · ${clip.started_at || clip.session_id}`), make("small", `${clip.note || "메모 없음"} · 채택 ${summary(clip).frames_with_recognition || 0} / 관측 ${summary(clip).unique_ocr_frames || 0}`));
       button.addEventListener("click", () => { select(clip); renderList(); });

@@ -65,3 +65,20 @@ def test_cannot_write_report_into_archive_or_through_existing_symlink(hub, tmp_p
 def test_missing_hub_is_an_actionable_error(tmp_path):
     with pytest.raises(ValueError, match="index.sqlite3"):
         write_review(tmp_path / "missing", tmp_path / "review")
+
+
+def test_source_selection_excludes_other_members_from_all_exported_evidence(hub, tmp_path):
+    for source in ("member1", "member2", "member3"):
+        seed(hub, source=source)
+        artifact(hub, BASE + "results.jsonl", [result(1, 1100)], source=source)
+        artifact(hub, CLIP + "original.webm", source.encode(), source=source)
+    destination = tmp_path / "review"
+    report = write_review(hub, destination, source_ids=["member1", "member3", "member1"], copy_videos=True)
+    assert report["source_ids"] == ["member1", "member3"]
+    assert {clip["source_id"] for clip in report["clips"]} == {"member1", "member3"}
+    saved = json.loads((destination / "review.json").read_text(encoding="utf-8"))
+    assert {clip["source_id"] for clip in saved["clips"]} == {"member1", "member3"}
+    rows = list(csv.DictReader(io.StringIO((destination / "samples.csv").read_text(encoding="utf-8-sig"))))
+    assert {row["source_id"] for row in rows} == {"member1", "member3"}
+    assert not (destination / "media" / "member2").exists()
+    assert (hub / "sources" / "member2" / CLIP / "original.webm").read_bytes() == b"member2"

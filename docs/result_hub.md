@@ -269,8 +269,13 @@ docker compose --env-file .env.hub -f compose.hub.yaml up -d --build result-hub
 만듭니다. Python 표준 라이브러리만 사용하며 GPU·모델 실행이나 Docker 재빌드가 필요 없습니다.
 허브 DB와 원본은 읽기만 하며 휴지통 자료는 제외합니다.
 
+현재 기본 분석 대상은 **member1·member3**입니다. member2는 버스 가중치를 설치하지 않아
+기능이 실행되지 않았던 기록이므로 이 분석 대상에서 제외합니다. 서버를 직접 지정하려면
+`--source-id`를 여러 번 사용합니다.
+
 ```bash
 python -m scripts.review_bus_results
+python -m scripts.review_bus_results --source-id member1 --source-id member3
 ```
 
 생성된 `test-result/bus-review/index.html`을 브라우저에서 직접 엽니다. 서버·기기·메모·번호로
