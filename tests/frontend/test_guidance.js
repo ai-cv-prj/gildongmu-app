@@ -53,9 +53,19 @@ assert.equal(requests.at(-1).metadata.action, "right");
 assert.equal(requests.at(-1).metadata.frame_id, 1);
 assert.equal(requests.at(-1).metadata.captured_at_ms, 2400);
 
+// 혼잡과 방향 판단 불가 행동도 서버가 확정한 문구 그대로 재생
+now = 2450;
+walking.accept({ session_id: "test", frame_id: 2, captured_at_ms: now,
+  event: { voice_event: { action: "crowded", text: "전방 혼잡 주의하세요", event_id: 1 } } }, now);
+assert.equal(spoken.at(-1), "전방 혼잡 주의하세요");
+now = 2475;
+walking.accept({ session_id: "test", frame_id: 3, captured_at_ms: now,
+  event: { voice_event: { action: "blocked", text: "전방 장애물 주의하세요", event_id: 2 } } }, now);
+assert.equal(spoken.at(-1), "전방 장애물 주의하세요");
+
 // 횡단 중 차량 행동이 없으면 진입 전에 재생하던 일반 장애물 음성을 중단
 now = 2500;
-walking.accept({ session_id: "test", frame_id: 2, crossing_active: true,
+walking.accept({ session_id: "test", frame_id: 4, crossing_active: true,
   event: { type: "walking_warning", level: "danger", last_action: "stop",
     voice_action: null } }, now);
 assert.equal(cleared.at(-1), "walking");
@@ -63,7 +73,7 @@ assert.equal(cleared.at(-1), "walking");
 // 횡단 접근 중 차량 행동이 없으면 기존 일반 장애물 음성을 중단
 now = 2600;
 const clearedBeforeApproach = cleared.length;
-walking.accept({ session_id: "test", frame_id: 3, crossing_active: false,
+walking.accept({ session_id: "test", frame_id: 5, crossing_active: false,
   crosswalk_status: "approach",
   event: { type: "walking_warning", level: "danger", last_action: "stop",
     voice_action: null } }, now);
@@ -73,7 +83,7 @@ console.log("guidance: pass");
 
 // A server-authorized surface stop is independent of the summary's caution level.
 now = 2700;
-walking.accept({ session_id: "test", frame_id: 4, captured_at_ms: 2700,
+walking.accept({ session_id: "test", frame_id: 6, captured_at_ms: 2700,
   event: { type: "walking_warning", level: "caution", voice_action: "stop",
     voice_event: { action: "stop", text: "멈추세요.", source: "surface", urgency: "emergency" } } }, now);
 assert.equal(spoken.at(-1), "멈추세요.");
@@ -81,37 +91,37 @@ assert.equal(requests.at(-1).priority, 0);
 
 // A new stop event must interrupt bus input even when the action stays stop.
 now = 2800;
-walking.accept({ session_id: "test", frame_id: 5, captured_at_ms: 2800,
+walking.accept({ session_id: "test", frame_id: 7, captured_at_ms: 2800,
   event: { voice_event: { action: "stop", text: "멈추세요.", event_id: 1 } } }, now);
 const stops = spoken.filter(text => text === "멈추세요.").length;
 now = 2900;
-walking.accept({ session_id: "test", frame_id: 6, captured_at_ms: 2900,
+walking.accept({ session_id: "test", frame_id: 8, captured_at_ms: 2900,
   event: { voice_event: { action: "stop", text: "멈추세요.", event_id: 1 } } }, now);
 assert.equal(spoken.filter(text => text === "멈추세요.").length, stops);
 now = 3000;
-walking.accept({ session_id: "test", frame_id: 7, captured_at_ms: 3000,
+walking.accept({ session_id: "test", frame_id: 9, captured_at_ms: 3000,
   event: { voice_event: { action: "stop", text: "멈추세요.", event_id: 2 } } }, now);
 assert.equal(spoken.filter(text => text === "멈추세요.").length, stops + 1);
 
 // 안내 없음 응답은 새 음성을 만들지 않고 명시적인 해제 요청만 전달한다.
 const beforeNone = spoken.length;
 now = 3100;
-walking.accept({ session_id: "test", frame_id: 8, captured_at_ms: now,
+walking.accept({ session_id: "test", frame_id: 10, captured_at_ms: now,
   event: { type: "walking_warning", level: "danger", last_action: null,
     voice_action: null, voice_clear: true } }, now);
 assert.equal(spoken.length, beforeNone);
 assert.equal(cleared.at(-1), "walking");
 now = 3200;
-walking.accept({ session_id: "test", frame_id: 9, captured_at_ms: now,
+walking.accept({ session_id: "test", frame_id: 11, captured_at_ms: now,
   event: { type: "walking_warning", level: "danger", last_action: "unsupported",
     voice_text: "지원하지 않는 행동", voice_event: { action: "unsupported", text: "지원하지 않는 행동" } } }, now);
 assert.equal(spoken.length, beforeNone);
 now = 3300;
-walking.accept({ session_id: "test", frame_id: 10, captured_at_ms: now,
+walking.accept({ session_id: "test", frame_id: 12, captured_at_ms: now,
   event: { voice_event: { action: "stop", text: "멈추세요.", event_id: 4 } } }, now);
 assert.equal(spoken.at(-1), "멈추세요.");
 now = 3400;
-walking.accept({ session_id: "test", frame_id: 11, captured_at_ms: now,
+walking.accept({ session_id: "test", frame_id: 13, captured_at_ms: now,
   event: { voice_event: { action: "left", text: "왼쪽으로 두 걸음", event_id: 5 } } }, now);
 assert.equal(spoken.at(-1), "왼쪽으로 두 걸음");
 assert.equal(requests.at(-1).priority, 4);

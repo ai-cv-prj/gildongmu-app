@@ -29,6 +29,7 @@ from src.walking_voice import (
     movement_steps,
     repeat_none_s,
     transition_confirm_s,
+    walkable_side_fractions,
     walking_action,
     warning_directions,
 )
@@ -96,9 +97,9 @@ class WalkingVoiceTests(unittest.TestCase):
         """
         이전·다음 행동 조합에 즉시 확정 또는 200ms, 500ms 정책을 적용한다.
         """
-        actions = (None, "left", "right", "stop")
+        actions = (None, "left", "right", "crowded", "blocked", "stop")
         for previous in actions:
-            for current in ("left", "right", "stop"):
+            for current in ("left", "right", "crowded", "blocked", "stop"):
                 if previous is None or current == "stop":
                     expected = 0.0
                 elif previous == "stop":
@@ -116,9 +117,11 @@ class WalkingVoiceTests(unittest.TestCase):
         messages = {
             "left": ("왼쪽으로 한 걸음", "walking-move-left-one.mp3"),
             "right": ("오른쪽으로 한 걸음", "walking-move-right-one.mp3"),
+            "crowded": ("전방 혼잡 주의하세요", "walking-crowded.mp3"),
+            "blocked": ("전방 장애물 주의하세요", "walking-obstacle.mp3"),
             "stop": ("멈추세요", "walking-stop.mp3"),
         }
-        actions = ("left", "right", "stop")
+        actions = ("left", "right", "crowded", "blocked", "stop")
         for previous in actions:
             for current in actions:
                 with self.subTest(previous=previous, current=current):
@@ -149,9 +152,11 @@ class WalkingVoiceTests(unittest.TestCase):
         messages = {
             "left": ("왼쪽으로 한 걸음", "walking-move-left-one.mp3"),
             "right": ("오른쪽으로 한 걸음", "walking-move-right-one.mp3"),
+            "crowded": ("전방 혼잡 주의하세요", "walking-crowded.mp3"),
+            "blocked": ("전방 장애물 주의하세요", "walking-obstacle.mp3"),
             "stop": ("멈추세요", "walking-stop.mp3"),
         }
-        for action in ("left", "right", "stop"):
+        for action in ("left", "right", "crowded", "blocked", "stop"):
             threshold = repeat_none_s(action)
             steps = 1 if action in ("left", "right") else None
             with self.subTest(action=action, interval="short"):
@@ -189,9 +194,11 @@ class WalkingVoiceTests(unittest.TestCase):
         messages = {
             "left": ("왼쪽으로 한 걸음", "walking-move-left-one.mp3"),
             "right": ("오른쪽으로 한 걸음", "walking-move-right-one.mp3"),
+            "crowded": ("전방 혼잡 주의하세요", "walking-crowded.mp3"),
+            "blocked": ("전방 장애물 주의하세요", "walking-obstacle.mp3"),
             "stop": ("멈추세요", "walking-stop.mp3"),
         }
-        actions = ("left", "right", "stop")
+        actions = ("left", "right", "crowded", "blocked", "stop")
         for previous in actions:
             for current in actions:
                 if current == previous:
@@ -255,7 +262,7 @@ class WalkingVoiceTests(unittest.TestCase):
         outside = danger_item(1, [45, 0, 55, 20], geometry={"immediate_overlap": .09})
         inside = danger_item(2, [45, 0, 55, 20], geometry={"immediate_overlap": .10})
         self.assertIsNone(walking_action(prediction(outside), 100))
-        self.assertEqual(walking_action(prediction(inside), 100), "stop")
+        self.assertEqual(walking_action(prediction(inside), 100), "blocked")
 
     # 정지 중 분홍색 ROI 장애물 음소거 확인
     def test_stationary_guidance_mutes_all_pink_roi_obstacles(self):
@@ -285,7 +292,7 @@ class WalkingVoiceTests(unittest.TestCase):
                     1, [45, 0, 55, 20], geometry={"immediate_overlap": 1.0})
                 result = prediction(item)
                 result["stationarity"] = {"status": status}
-                self.assertEqual(walking_action(result, 100, stationary_voice=True), "stop")
+                self.assertEqual(walking_action(result, 100, stationary_voice=True), "blocked")
 
     # 정지 중 화면 행동과 횡단 차량 음성 분리 확인
     def test_stationary_filter_keeps_action_but_mutes_crossing_vehicle_voice(self):
@@ -295,7 +302,7 @@ class WalkingVoiceTests(unittest.TestCase):
             geometry={"immediate_overlap": 1.0})
         result = prediction(vehicle)
         result["stationarity"] = {"status": "stationary"}
-        self.assertEqual(walking_action(result, 100), "stop")
+        self.assertEqual(walking_action(result, 100), "blocked")
         self.assertIsNone(walking_action(result, 100, True, True))
 
     # 정지 중 화면 상태와 실제 음성 분리 확인
@@ -308,9 +315,10 @@ class WalkingVoiceTests(unittest.TestCase):
         result["stationarity"] = {"status": "stationary"}
         voice = WalkingVoice()
         active = prediction(danger_item(2, [45, 0, 55, 20]))
-        self.assertEqual(voice.observe(active, 100, 3.0), ("멈추세요", "walking-stop.mp3"))
+        self.assertEqual(voice.observe(active, 100, 3.0),
+                         ("전방 장애물 주의하세요", "walking-obstacle.mp3"))
         self.assertIsNone(voice.observe(result, 100, 3.1))
-        self.assertEqual(result["last_action"], "stop")
+        self.assertEqual(result["last_action"], "blocked")
         self.assertIsNone(result["voice_action"])
         self.assertTrue(result["voice_clear"])
         self.assertEqual(voice.events[-1], (3.1, None))
@@ -328,46 +336,79 @@ class WalkingVoiceTests(unittest.TestCase):
             (prediction(left, center), "right"),
             (prediction(center, right), "left"),
             (prediction(left, right), None),
-            (prediction(left, center, right), None),
-            (prediction(center), "stop"),
+            (prediction(left, center, right), "crowded"),
+            (prediction(center), "blocked"),
         ]
         for result, expected in cases:
             with self.subTest(expected=expected):
                 self.assertEqual(walking_action(result, 100), expected)
 
-    # 세 방향 위험의 사람·장애물 구분 확인
-    def test_all_direction_people_are_silent_but_other_obstacles_stop(self):
-        """세 방향이 모두 사람이면 안내하지 않고 다른 객체가 섞이면 기존처럼 정지한다."""
+    # 세 방향 위험의 객체 종류와 무관한 혼잡 안내 확인
+    def test_all_direction_dangers_are_crowded_regardless_of_class(self):
+        """세 방향이 모두 위험하면 객체 종류와 관계없이 전방 혼잡으로 판단한다."""
         left = danger_item(1, [5, 0, 15, 20])
         center = danger_item(2, [45, 0, 55, 20])
         right_person = danger_item(3, [85, 0, 95, 20])
         right_bollard = danger_item(4, [85, 0, 95, 20], "bollard")
-        self.assertIsNone(
-            walking_action(prediction(left, center, right_person), 100))
         self.assertEqual(
-            walking_action(prediction(left, center, right_bollard), 100), "stop")
+            walking_action(prediction(left, center, right_person), 100), "crowded")
+        self.assertEqual(
+            walking_action(prediction(left, center, right_bollard), 100), "crowded")
 
     # 가운데 위험의 거리 우선 비교
-    def test_center_danger_chooses_farther_side_after_five_percent_tie(self):
-        """가운데 위험이 치우치면 5% 동률 범위를 넘어서 먼 방향을 선택한다."""
+    def test_center_danger_chooses_farther_side_after_three_percent_tie(self):
+        """가운데 위험의 거리 차이가 3% 이하면 정지하고 초과하면 먼 방향을 선택한다."""
         self.assertEqual(walking_action(prediction(danger_item(1, [35, 0, 45, 20])), 100),
                          "right")
         self.assertEqual(walking_action(prediction(danger_item(1, [55, 0, 65, 20])), 100),
                          "left")
-        self.assertEqual(walking_action(prediction(danger_item(1, [47, 0, 53, 20])), 100),
-                         "stop")
+        self.assertEqual(walking_action(prediction(danger_item(1, [46, 0, 57, 20])), 100),
+                         "blocked")
+        self.assertEqual(walking_action(prediction(danger_item(1, [47, 0, 57, 20])), 100),
+                         "left")
 
-    # 동률에서 주의 객체로 좌우 비교
-    def test_center_danger_uses_caution_count_then_distance(self):
-        """위험 거리가 같으면 주의 개수와 가장 가까운 주의 거리를 차례로 비교한다."""
+    # 위험 거리 동률에서 주의 객체를 무시하고 정지
+    def test_center_danger_stops_on_distance_tie_regardless_of_cautions(self):
+        """위험 거리 차이가 3% 이하면 주의 객체의 분포와 관계없이 정지한다."""
         center = danger_item(1, [45, 0, 55, 20])
         left_caution = caution_item(2, [5, 0, 15, 20])
         right_near = caution_item(3, [70, 0, 80, 20])
         right_far = caution_item(4, [88, 0, 98, 20])
         self.assertEqual(walking_action(
-            prediction(center, left_caution, right_near, right_far), 100), "left")
+            prediction(center, left_caution, right_near, right_far), 100), "blocked")
         self.assertEqual(walking_action(
-            prediction(center, caution_item(5, [15, 0, 25, 20]), right_far), 100), "right")
+            prediction(center, caution_item(5, [15, 0, 25, 20]), right_far), 100), "blocked")
+
+    # 위험 거리 동률에서 전체 화면 보행 가능 비율 비교
+    def test_center_danger_uses_more_walkable_screen_half_after_distance_tie(self):
+        """위험 거리가 비슷하면 전체 화면에서 walkable 비율이 5% 넘게 큰 쪽을 택한다."""
+        center = danger_item(1, [45, 0, 55, 20])
+        class_map = np.zeros((100, 100), np.uint8)
+        class_map[:30, :50] = 1
+        class_map[:20, 50:] = 1
+        result = prediction(center)
+        result["walkable_sides"] = walkable_side_fractions(
+            class_map, {"walkable": 1, "crosswalk": 2}, class_map.shape)
+        self.assertEqual(result["walkable_sides"], {
+            "status": "available", "left": .30, "right": .20})
+        self.assertEqual(walking_action(result, 100), "left")
+
+        class_map[:30, :50] = 0
+        class_map[:10, :50] = 1
+        result["walkable_sides"] = walkable_side_fractions(
+            class_map, {"walkable": 1}, class_map.shape)
+        self.assertEqual(walking_action(result, 100), "right")
+
+    # 전체 화면 보행 가능 비율도 비슷하면 장애물 안내 유지
+    def test_center_danger_stays_blocked_when_walkable_side_difference_is_small(self):
+        """좌우 walkable 비율 차이가 5% 이하면 방향을 추정하지 않는다."""
+        class_map = np.zeros((100, 100), np.uint8)
+        class_map[:24, :50] = 1
+        class_map[:20, 50:] = 1
+        result = prediction(danger_item(1, [45, 0, 55, 20]))
+        result["walkable_sides"] = walkable_side_fractions(
+            class_map, {"walkable": 1}, class_map.shape)
+        self.assertEqual(walking_action(result, 100), "blocked")
 
     # 최종 행동 변경에만 음성 생성
     def test_only_changed_action_is_announced(self):
@@ -393,13 +434,12 @@ class WalkingVoiceTests(unittest.TestCase):
                          ("왼쪽으로 한 걸음", "walking-move-left-one.mp3"))
         self.assertEqual(len(voice.events), 3)
 
-    # 측면 위험과 전 방향 사람의 안내 없음 확인
+    # 측면 위험의 안내 없음 확인
     def test_non_avoidance_hazards_keep_risk_without_action_or_voice(self):
         """위험 표시를 보존하면서 과거 서행 상황의 행동과 음성 이벤트를 만들지 않는다."""
         left = danger_item(1, [5, 0, 15, 20])
         right = danger_item(2, [85, 0, 95, 20])
-        center = danger_item(3, [45, 0, 55, 20])
-        for items in ((left,), (right,), (left, right), (left, center, right)):
+        for items in ((left,), (right,), (left, right)):
             with self.subTest(objects=len(items)):
                 voice = WalkingVoice()
                 for timestamp in (0, 1, 2, 3, 4):
@@ -441,7 +481,7 @@ class WalkingVoiceTests(unittest.TestCase):
                 voice = WalkingVoice()
                 result = prediction(danger_item(1, [45, 0, 55, 20], name))
                 self.assertIsNone(voice.observe(result, 100, .1, crossing_active=True))
-                self.assertEqual(result["last_action"], "stop")
+                self.assertEqual(result["last_action"], "blocked")
                 self.assertIsNone(result["voice_action"])
                 self.assertNotIn("voice_text", result)
         for name in ("car", "bus", "truck", "motorcycle"):
@@ -450,10 +490,10 @@ class WalkingVoiceTests(unittest.TestCase):
                 result = prediction(danger_item(1, [45, 0, 55, 20], name))
                 self.assertEqual(
                     voice.observe(result, 100, .1, crossing_active=True),
-                    ("멈추세요", "walking-stop.mp3"),
+                    ("전방 장애물 주의하세요", "walking-obstacle.mp3"),
                 )
-                self.assertEqual(result["last_action"], "stop")
-                self.assertEqual(result["voice_action"], "stop")
+                self.assertEqual(result["last_action"], "blocked")
+                self.assertEqual(result["voice_action"], "blocked")
 
     # 횡단 접근 중 차량 외 장애물 음성 제외 확인
     def test_approach_announces_only_vehicle_obstacles(self):
@@ -464,7 +504,7 @@ class WalkingVoiceTests(unittest.TestCase):
                 result = prediction(danger_item(1, [45, 0, 55, 20], name))
                 self.assertIsNone(voice.observe(
                     result, 100, .1, crosswalk_status="approach"))
-                self.assertEqual(result["last_action"], "stop")
+                self.assertEqual(result["last_action"], "blocked")
                 self.assertIsNone(result["voice_action"])
                 self.assertNotIn("voice_text", result)
         for name in ("car", "bus", "truck", "motorcycle"):
@@ -473,7 +513,7 @@ class WalkingVoiceTests(unittest.TestCase):
                 result = prediction(danger_item(1, [45, 0, 55, 20], name))
                 self.assertEqual(
                     voice.observe(result, 100, .1, crosswalk_status="approach"),
-                    ("멈추세요", "walking-stop.mp3"),
+                    ("전방 장애물 주의하세요", "walking-obstacle.mp3"),
                 )
 
     # 횡단 접근 시 기존 비차량 음성 중단 확인
@@ -573,7 +613,7 @@ class WalkingVoiceTests(unittest.TestCase):
             (100, 100, 3), config,
         )
         self.assertNotIn("voice_suppressed_reason", item)
-        self.assertEqual(walking_action(result, 100), "stop")
+        self.assertEqual(walking_action(result, 100), "blocked")
 
     # 일부만 보이는 bbox 바깥 띠의 5% 경계 확인
     def test_surrounding_voice_partial_strip_threshold(self):
@@ -605,7 +645,7 @@ class WalkingVoiceTests(unittest.TestCase):
                     self.assertIsNone(walking_action(result, 100))
                 else:
                     self.assertNotIn("voice_suppressed_reason", item)
-                    self.assertEqual(walking_action(result, 100), "stop")
+                    self.assertEqual(walking_action(result, 100), "blocked")
 
     # 보행가능 비율 계산 불가 시 음성 제외 확인
     def test_surrounding_voice_unavailable_context_is_silent(self):
@@ -747,10 +787,10 @@ class WalkingVoiceTests(unittest.TestCase):
             capture.release()
             lines = risk_log_path(output).read_text(encoding="utf-8").splitlines()
             self.assertEqual(len(lines), 20)
-            self.assertEqual(json.loads(lines[0])["voice_text"], "멈추세요")
-            self.assertEqual(json.loads(lines[0])["voice_clip"], "walking-stop.mp3")
-            self.assertEqual(json.loads(lines[0])["last_action"], "stop")
-            self.assertEqual(json.loads(lines[0])["voice_playback_action"], "stop")
+            self.assertEqual(json.loads(lines[0])["voice_text"], "전방 장애물 주의하세요")
+            self.assertEqual(json.loads(lines[0])["voice_clip"], "walking-obstacle.mp3")
+            self.assertEqual(json.loads(lines[0])["last_action"], "blocked")
+            self.assertEqual(json.loads(lines[0])["voice_playback_action"], "blocked")
             self.assertNotIn("voice_clip", json.loads(lines[1]))
             self.assertIsNone(json.loads(lines[-1])["voice_playback_action"])
             self.assertEqual(list(Path(folder).glob("*.partial.*")), [])

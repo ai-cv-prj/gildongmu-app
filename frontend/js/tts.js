@@ -19,6 +19,8 @@
     ["왼쪽으로 두 걸음", "walking-move-left-two"],
     ["오른쪽으로 한 걸음", "walking-move-right-one"],
     ["오른쪽으로 두 걸음", "walking-move-right-two"],
+    ["전방 혼잡 주의하세요", "walking-crowded"],
+    ["전방 장애물 주의하세요", "walking-obstacle"],
     ["멈추세요", "walking-stop"],
     ["멈추세요.", "walking-stop"],
     ["보행로 이탈 오른쪽 이동!", "walkway-exit-right"],
@@ -28,7 +30,7 @@
   const SPEECH_TEXT = "정류장입니다. 버스를 선택하세요.";
   const source = name => `/audio/${name}.mp3${name.startsWith("walkway-")
     ? "?v=walkway-exit-v3" : name.startsWith("walking-")
-    ? "?v=walking-action-v9" : name.startsWith("crosswalk-")
+    ? "?v=walking-action-v10" : name.startsWith("crosswalk-")
       ? "?v=crosswalk-sunhi-v3" : "?v=signal-ava-v3"}`;
 
   function create({ onError = () => {}, onStatus = () => {}, now = () => performance.now() } = {}) {

@@ -19,6 +19,7 @@ CENTER_INTRUSION_RATIO = GUIDANCE["walking_center_intrusion_ratio"]
 SIDE_INTRUSION_RATIO = GUIDANCE["walking_side_intrusion_ratio"]
 VOICE_IMMEDIATE_OVERLAP_RATIO = GUIDANCE["walking_voice_immediate_overlap_ratio"]
 DISTANCE_TIE_RATIO = GUIDANCE["walking_distance_tie_ratio"]
+WALKABLE_SIDE_TIE_RATIO = GUIDANCE["walking_walkable_side_tie_ratio"]
 TWO_STEP_ENTER_RATIO = GUIDANCE["walking_two_step_enter_ratio"]
 TWO_STEP_EXIT_RATIO = GUIDANCE["walking_two_step_exit_ratio"]
 LATERAL_CONFIRM_S = GUIDANCE.get("walking_lateral_confirm_ms", 200) / 1000
@@ -30,6 +31,8 @@ ACTION_MESSAGES = {
     ("left", 2): ("왼쪽으로 두 걸음", "walking-move-left-two.mp3"),
     ("right", 1): ("오른쪽으로 한 걸음", "walking-move-right-one.mp3"),
     ("right", 2): ("오른쪽으로 두 걸음", "walking-move-right-two.mp3"),
+    "crowded": ("전방 혼잡 주의하세요", "walking-crowded.mp3"),
+    "blocked": ("전방 장애물 주의하세요", "walking-obstacle.mp3"),
     "stop": ("멈추세요", "walking-stop.mp3"),
 }
 VEHICLE_CLASSES = frozenset({"car", "bus", "truck", "motorcycle"})
@@ -168,6 +171,8 @@ def voice_surrounding_walkability(item, class_map, label_ids, shape, config):
 # 장애물 주변과 비초록 신호의 횡단보도 음성 제외 표시
 def apply_obstacle_voice_suppression(prediction, signal, class_map, label_ids, shape, config):
     """바깥 띠와 비초록 횡단보도 근거에 따라 위험 객체를 음성에서 제외한다."""
+    prediction["walkable_sides"] = walkable_side_fractions(
+        class_map, label_ids, shape)
     for item in prediction.get("detections", []):
         item.pop("voice_suppressed_reason", None)
         item.pop("crosswalk_contact_fraction", None)
@@ -207,6 +212,29 @@ def apply_obstacle_voice_suppression(prediction, signal, class_map, label_ids, s
         if crosswalk_fraction is not None and crosswalk_fraction >= crosswalk_threshold:
             item["voice_suppressed_reason"] = "non_green_signal_crosswalk_obstacle"
     return prediction
+
+
+# 전체 화면 좌우의 보행 가능 픽셀 비율 계산
+def walkable_side_fractions(class_map, label_ids, shape):
+    """화면 중앙을 기준으로 왼쪽과 오른쪽의 walkable 라벨 비율을 반환한다."""
+    unavailable = {"status": "unavailable", "left": None, "right": None}
+    if (class_map is None or not label_ids or "walkable" not in label_ids
+            or class_map.shape != tuple(shape[:2])):
+        return unavailable
+    width = class_map.shape[1]
+    middle = width // 2
+    if middle <= 0 or middle >= width:
+        return unavailable
+    walkable_id = label_ids["walkable"]
+    left = class_map[:, :middle]
+    right = class_map[:, middle:]
+    if left.size == 0 or right.size == 0:
+        return unavailable
+    return {
+        "status": "available",
+        "left": float(np.mean(left == walkable_id)),
+        "right": float(np.mean(right == walkable_id)),
+    }
 
 
 # 객체 하단 발자국의 화면 방향 판정
@@ -298,23 +326,23 @@ def nearest_distance(items, direction, image_width):
 
 
 # 가운데가 막혔을 때 좌우 후보 비교
-def safer_side(dangers, cautions, image_width):
-    """위험 거리, 주의 개수, 주의 거리 순서로 왼쪽과 오른쪽을 비교한다."""
+def safer_side(dangers, image_width, walkable_sides=None):
+    """위험 거리 동률이면 전체 화면의 보행 가능 비율이 높은 방향을 반환한다."""
     tie = image_width * DISTANCE_TIE_RATIO
     left_distance = nearest_distance(dangers, "left", image_width)
     right_distance = nearest_distance(dangers, "right", image_width)
     if abs(left_distance - right_distance) > tie:
         return "left" if left_distance > right_distance else "right"
-    by_direction = {direction: [item for item in cautions
-                                if direction in warning_directions(item, image_width)]
-                    for direction in ("left", "right")}
-    if len(by_direction["left"]) != len(by_direction["right"]):
-        return "left" if len(by_direction["left"]) < len(by_direction["right"]) else "right"
-    left_caution = nearest_distance(by_direction["left"], "left", image_width)
-    right_caution = nearest_distance(by_direction["right"], "right", image_width)
-    if left_caution == right_caution or abs(left_caution - right_caution) <= tie:
-        return None
-    return "left" if left_caution > right_caution else "right"
+    walkable_sides = walkable_sides or {}
+    if walkable_sides.get("status") == "available":
+        left_walkable = walkable_sides.get("left")
+        right_walkable = walkable_sides.get("right")
+        if (isinstance(left_walkable, (int, float))
+                and isinstance(right_walkable, (int, float))
+                and isfinite(left_walkable) and isfinite(right_walkable)
+                and abs(left_walkable - right_walkable) > WALKABLE_SIDE_TIE_RATIO):
+            return "left" if left_walkable > right_walkable else "right"
+    return None
 
 
 # 가운데 영역을 위험 객체가 차지한 가로 비율 계산
@@ -375,11 +403,10 @@ def walking_action(prediction, image_width, crossing_active=False, stationary_vo
     if directions == {"center", "right"}:
         return "left"
     if directions == {"left", "center", "right"}:
-        all_people = all(item.get("class_name") == "person" for item in dangers)
-        return None if all_people else "stop"
+        return "crowded"
     if directions == {"center"}:
-        cautions = guidance_items(prediction, "caution", crossing_active, stationary_voice)
-        return safer_side(dangers, cautions, image_width) or "stop"
+        return safer_side(
+            dangers, image_width, prediction.get("walkable_sides")) or "blocked"
     return "stop"
 
 

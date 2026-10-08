@@ -105,7 +105,8 @@
       if (mode === "walking") {
         const vehicleOnly = res.crossing_active || res.crosswalk_status === "approach";
         const voice = event.voice_event;
-        if (voice && typeof voice.text === "string" && ["left", "right", "stop"].includes(voice.action)) {
+        if (voice && typeof voice.text === "string"
+            && ["left", "right", "crowded", "blocked", "stop"].includes(voice.action)) {
           if ((voice.action !== lastWalkingAction || Number.isInteger(voice.event_id)
               && voice.event_id !== lastWalkingEvent) && announce(voice.text, capturedAt + limits.max_age_ms, {
             frame_id: res.frame_id, captured_at_ms: res.captured_at_ms, action: voice.action,
@@ -118,7 +119,8 @@
           coordinator.clear(mode);
         }
         const danger = event.type === "walking_warning" && event.level === "danger" &&
-          typeof event.voice_text === "string" && ["left", "right", "stop"].includes(event.last_action);
+          typeof event.voice_text === "string"
+          && ["left", "right", "crowded", "blocked", "stop"].includes(event.last_action);
         if (!danger) return;
         announce(event.voice_text, capturedAt + limits.max_age_ms, {
           frame_id: res.frame_id, captured_at_ms: res.captured_at_ms,
