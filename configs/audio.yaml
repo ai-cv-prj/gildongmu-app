@@ -35,7 +35,10 @@ audio:
     walking_lateral_confirm_ms: 600
     walking_from_stop_confirm_ms: 500
     walking_same_direction_repeat_ms: 4000
+    # 혼잡 진입 후 방향 전환 보호 시간. 재안내가 이 시간을 연장하지 않는다.
     walking_crowded_redirect_ms: 3000
+    # 위험이 지속되는 동안만 재안내하며 객체 ID 변경으로 주기를 초기화하지 않는다.
+    walking_crowded_repeat_ms: 3000
     walking_repeat_none_ms: 1500
     walking_stop_repeat_none_ms: 1500
     walking_missing_hold_ms: 800

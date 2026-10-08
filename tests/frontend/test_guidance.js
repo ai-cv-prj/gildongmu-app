@@ -125,3 +125,22 @@ walking.accept({ session_id: "test", frame_id: 13, captured_at_ms: now,
   event: { voice_event: { action: "left", text: "왼쪽으로 두 걸음", event_id: 5 } } }, now);
 assert.equal(spoken.at(-1), "왼쪽으로 두 걸음");
 assert.equal(requests.at(-1).priority, 4);
+
+// 혼잡은 서버가 3초마다 갱신한 이벤트만 재안내하고 동일 이벤트는 중복 재생하지 않는다.
+const beforeCrowd = spoken.filter(text => text === "전방 혼잡 주의하세요").length;
+for (const [frame, time, eventId] of [[14, 3500, 6], [15, 5000, 6], [16, 6500, 7]]) {
+  now = time;
+  walking.accept({ session_id: "test", frame_id: frame, captured_at_ms: now,
+    event: { voice_event: { action: "crowded", text: "전방 혼잡 주의하세요", event_id: eventId } } }, now);
+}
+assert.equal(spoken.filter(text => text === "전방 혼잡 주의하세요").length, beforeCrowd + 2);
+
+// 방향 철회는 재생 취소로 전달하며 이후 안전한 새 방향 이벤트를 다시 허용한다.
+now = 6600;
+walking.accept({ session_id: "test", frame_id: 17, captured_at_ms: now,
+  event: { voice_action: null, voice_clear: true } }, now);
+assert.equal(cleared.at(-1), "walking");
+now = 6700;
+walking.accept({ session_id: "test", frame_id: 18, captured_at_ms: now,
+  event: { voice_event: { action: "left", text: "왼쪽으로 한 걸음", event_id: 8 } } }, now);
+assert.equal(spoken.at(-1), "왼쪽으로 한 걸음");

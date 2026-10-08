@@ -247,6 +247,12 @@ class SessionManager:
                     "moving_conflict_basis": (item.get("motion") or {}).get("moving_conflict_basis"),
                     "ttc_scale_s": (item.get("motion") or {}).get("ttc_scale_s"),
                     "motion_quality": (item.get("motion") or {}).get("quality"),
+                    "approach_state": (item.get("motion") or {}).get("approach_state"),
+                    "receding_consistent": (item.get("motion") or {}).get("receding_consistent"),
+                    "velocity_norm_per_s": (item.get("motion") or {}).get("velocity_norm_per_s"),
+                    "release_evidence": item.get("release_evidence"),
+                    "hold_reason": item.get("hold_reason"),
+                    "release_reason": item.get("release_reason"),
                     "independent_velocity_norm_per_s": (item.get("motion") or {}).get(
                         "independent_velocity_norm_per_s"),
                     "risk_suppressed_reason": item.get("risk_suppressed_reason"),

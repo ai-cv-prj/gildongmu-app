@@ -292,9 +292,9 @@ window.GOverlay = (() => {
   }
 
   // 현재 장애물 이동 행동과 실제 음성 재생 상태 표시
-  /** 모바일 화면 왼쪽 위에 판단 행동과 실제 재생 중인 음성만 표시한다. */
+  /** 안전성·전환 확인을 마친 행동과 실제 재생 중인 음성을 표시한다. */
   function actionStatus(event) {
-    const action = event?.last_action ?? "none";
+    const action = (event && "voice_action" in event ? event.voice_action : event?.last_action) ?? "none";
     const voice = event?.voice_playback_action ?? "none";
     const motion = event?.stationarity?.status ?? "unavailable";
     const lines = [`ACTION: ${action}`, `VOICE: ${voice}`, `MOTION: ${motion}`];

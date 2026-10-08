@@ -78,7 +78,8 @@ def test_reidentified_tree_replaces_old_position_in_voice_evidence():
     new = danger_item(2, [25, 20, 60, 95], "tree_trunk", hazard_id="track:2")
     result = prediction(new)
     voice.observe(result, 100, .2)
-    assert result["voice_diagnostics"]["raw_action"] == "right"
+    # 중복 기억은 제거하지만 발 높이의 넓은 나무를 가로질러 이동시키지는 않는다.
+    assert result["voice_diagnostics"]["raw_action"] == "blocked"
     assert result["voice_diagnostics"]["retained_hazards"] == 0
     assert result["voice_event"]["hazard_ids"] == ["tree_trunk:track:2"]
 
@@ -87,7 +88,7 @@ def test_duplicate_tree_boxes_do_not_create_a_crowded_instruction():
     narrow = danger_item(1, [25, 20, 60, 95], "tree_trunk", confidence=.9)
     wide = danger_item(2, [20, 20, 80, 95], "tree_trunk", confidence=.4)
     result = prediction(narrow, wide)
-    assert WalkingVoice().observe(result, 100, 0)[0] == "오른쪽으로 두 걸음"
+    assert WalkingVoice().observe(result, 100, 0)[0] == "전방 장애물 주의하세요"
     assert result["voice_diagnostics"]["duplicate_hazards"] == 1
     assert len(result["detections"]) == 2
     assert all(item["alert_level"] == "danger" for item in result["detections"])
@@ -113,7 +114,7 @@ def test_observed_tree_release_does_not_keep_old_danger_track():
 def test_emergency_stop_interrupts_pending_direction_change_immediately():
     voice = WalkingVoice()
     voice.observe(prediction(danger_item(1, [20, 20, 43, 95])), 100, 0)
-    assert voice.observe(prediction(danger_item(1, [57, 20, 80, 95])), 100, .1) is None
+    assert voice.observe(prediction(danger_item(1, [57, 20, 80, 95])), 100, .1)[0] == "전방 장애물 주의하세요"
     result = prediction(danger_item(1, [57, 20, 80, 95], reasons=["predicted_moving_conflict"]))
     assert voice.observe(result, 100, .2)[0] == "멈추세요"
 
@@ -126,7 +127,7 @@ def test_repeat_timer_does_not_reannounce_opposite_pending_direction():
     for timestamp in (1.0, 2.0, 3.0):
         assert voice.observe(prediction(right), 100, timestamp) is None
     opposite = danger_item(1, [57, 20, 80, 95])
-    assert voice.observe(prediction(opposite), 100, 4.0) is None
+    assert voice.observe(prediction(opposite), 100, 4.0)[0] == "전방 장애물 주의하세요"
     assert voice.observe(prediction(opposite), 100, 4.2) is None
     assert voice.observe(prediction(opposite), 100, 4.6)[0] == "왼쪽으로 한 걸음"
 
