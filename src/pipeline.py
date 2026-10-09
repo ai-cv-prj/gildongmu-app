@@ -7,6 +7,7 @@ file_path: src/pipeline.py
 
 import math
 import os
+import statistics
 import tempfile
 import warnings
 from pathlib import Path
@@ -39,6 +40,7 @@ from src.voice_priority import CrosswalkVoice, clip_duration, prioritize_voice_e
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = PROJECT_DIR / "configs" / "inference.yaml"
+WEBM_OUTPUT_FPS = 10.0
 
 
 # 프로젝트 기준 경로 해석
@@ -128,6 +130,41 @@ def find_sample_videos(sample_dir):
     return videos
 
 
+# WebM 입력 영상 타이밍 검사
+def inspect_video_timing(video_path):
+    """모든 프레임의 PTS로 프레임 수, 시작·종료 시각, 실제 FPS를 계산한다."""
+    capture = cv2.VideoCapture(str(video_path))
+    timestamps = []
+    try:
+        if not capture.isOpened():
+            raise RuntimeError(f"영상을 열 수 없습니다: {video_path}")
+        while True:
+            success, _frame = capture.read()
+            if not success:
+                break
+            timestamp = capture.get(cv2.CAP_PROP_POS_MSEC)
+            if math.isfinite(timestamp) and timestamp >= 0:
+                timestamps.append(float(timestamp))
+            elif timestamps:
+                timestamps.append(timestamps[-1])
+            else:
+                timestamps.append(0.0)
+    finally:
+        capture.release()
+    if not timestamps:
+        raise ValueError(f"처리할 프레임이 없습니다: {video_path}")
+    positive_gaps = [right - left for left, right in zip(timestamps, timestamps[1:])
+                     if right > left]
+    if not positive_gaps:
+        raise ValueError(f"영상 프레임 타임스탬프가 올바르지 않습니다: {video_path}")
+    typical_gap_ms = statistics.median(positive_gaps)
+    duration_ms = timestamps[-1] - timestamps[0] + typical_gap_ms
+    if not math.isfinite(duration_ms) or duration_ms <= 0:
+        raise ValueError(f"영상 재생시간이 올바르지 않습니다: {video_path}")
+    return (len(timestamps), timestamps[0], timestamps[-1],
+            len(timestamps) * 1000.0 / duration_ms)
+
+
 # 완성된 결과 파일을 기존 결과와 교체
 def publish_video_result(video_source, output_path, risk_log=None):
     """MP4와 JSONL을 교체하고 공개 오류가 나면 이전 결과를 복구한다."""
@@ -182,6 +219,7 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
     writer = None
     temporary_path = None
     processed_frames = 0
+    read_frames = 0
     risk_log = None
     voice = None
     signal_voice = None
@@ -207,6 +245,22 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
             int(reported_frames)
             if math.isfinite(reported_frames) and reported_frames >= 1 else None
         )
+        first_pts_ms = 0.0
+        source_fps = fps
+        expected_source_frames = total_frames
+        pts_timing = video_path.suffix.lower() == ".webm"
+        if pts_timing:
+            capture.release()
+            expected_source_frames, first_pts_ms, last_pts_ms, source_fps = (
+                inspect_video_timing(video_path)
+            )
+            total_frames = math.floor(
+                (last_pts_ms - first_pts_ms) * WEBM_OUTPUT_FPS / 1000 + 1e-9
+            ) + 1
+            fps = WEBM_OUTPUT_FPS
+            capture = cv2.VideoCapture(str(video_path))
+            if not capture.isOpened():
+                raise RuntimeError(f"영상을 열 수 없습니다: {video_path}")
         if width <= 0 or height <= 0 or not math.isfinite(fps) or fps <= 0:
             raise ValueError(f"영상 크기 또는 FPS가 올바르지 않습니다: {video_path}")
         output_scale = (min(1.0, recorded_frame_config["max_side"] / max(width, height))
@@ -260,6 +314,19 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
             success, frame = capture.read()
             if not success:
                 break
+            read_frames += 1
+            source_pts_ms = (
+                capture.get(cv2.CAP_PROP_POS_MSEC)
+                if pts_timing or engine is not None else processed_frames * 1000 / fps
+            )
+            if (pts_timing and math.isfinite(source_pts_ms)
+                    and source_pts_ms >= first_pts_ms):
+                output_time_s = (source_pts_ms - first_pts_ms) / 1000
+            else:
+                output_time_s = ((read_frames - 1) / source_fps
+                                 if pts_timing else processed_frames / fps)
+            if pts_timing and output_time_s + 1e-9 < processed_frames / fps:
+                continue
             frame = prepare_recorded_frame(frame, recorded_frame_config)
             # 모든 모델이 색칠 전의 같은 JPEG 변환 프레임 사용
             detections = detector.predict(frame) if detector is not None else []
@@ -267,7 +334,7 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
             risk_result = None
             if engine is not None:
                 timestamp, valid_time, time_source = clock.read(
-                    capture.get(cv2.CAP_PROP_POS_MSEC), processed_frames)
+                    output_time_s * 1000 if pts_timing else source_pts_ms, processed_frames)
                 risk_result = engine.update(frame, detections, timestamp, valid_time, class_map,
                     segmenter.label_ids if segmenter is not None else None)
                 risk_result.update(frame_index=processed_frames, timestamp_source=time_source)
@@ -285,7 +352,7 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
                     segmenter.label_ids if segmenter is not None else None, frame.shape)
             traffic_result = traffic.predict(
                 frame, frame_id=processed_frames + 1,
-                captured_at_ms=processed_frames * 1000 / fps,
+                captured_at_ms=output_time_s * 1000,
             ) if traffic is not None else None
             if risk_result is not None:
                 apply_obstacle_voice_suppression(
@@ -299,33 +366,33 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
                     frame.shape, (risk_result or {}).get("roi"))
                 if risk_result is not None:
                     risk_result["traffic_voice_gate"] = traffic_result["voice_gate"]
-                signal_voice.observe(traffic_result, processed_frames + 1, processed_frames / fps)
+                signal_voice.observe(traffic_result, processed_frames + 1, output_time_s)
             crosswalk_result = None
             if crosswalk_engine is not None:
                 camera_stable = crosswalk_camera_stable(risk_result)
                 crosswalk_result = crosswalk_engine.update(
                     class_map, segmenter.label_ids, frame.shape, traffic_result,
-                    processed_frames / fps, camera_stable=camera_stable,
+                    output_time_s, camera_stable=camera_stable,
                     detections=(risk_result or {}).get("detections", []),
                 )
-                crosswalk_voice.observe(crosswalk_result, processed_frames / fps, 1 / fps)
+                crosswalk_voice.observe(crosswalk_result, output_time_s, 1 / fps)
                 if risk_result is not None:
                     risk_result["crosswalk_safety"] = crosswalk_result
             walking_surface_result = None
             if walking_surface_engine is not None:
                 walking_surface_result = walking_surface_engine.update(
-                    class_map, segmenter.label_ids, frame.shape, processed_frames / fps,
+                    class_map, segmenter.label_ids, frame.shape, output_time_s,
                     camera_stable=crosswalk_camera_stable(risk_result),
                     crosswalk_status=(crosswalk_result or {}).get("status"),
                 )
                 walking_surface_voice.observe(
-                    walking_surface_result, processed_frames / fps, 1 / fps)
+                    walking_surface_result, output_time_s, 1 / fps)
                 if risk_result is not None:
                     risk_result["walking_surface"] = walking_surface_result
             if risk_result is not None:
                 event_count = len(voice.events)
                 voice.observe(
-                    risk_result, output_width, processed_frames / fps,
+                    risk_result, output_width, output_time_s,
                     crossing_active=bool(
                         crosswalk_result and crosswalk_result["crossing_active"]),
                     crosswalk_status=(crosswalk_result or {}).get("status"),
@@ -338,7 +405,7 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
                     else:
                         walking_voice_action = risk_result.get("voice_action")
                         walking_voice_end_s = event_time + clip_duration(event_clip)
-                if processed_frames / fps >= walking_voice_end_s - 1e-9:
+                if output_time_s >= walking_voice_end_s - 1e-9:
                     walking_voice_action = None
                 risk_result["voice_playback_action"] = walking_voice_action
             if traffic_result is not None:
@@ -373,6 +440,13 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
             )
         if processed_frames == 0:
             raise RuntimeError(f"읽을 수 있는 프레임이 없습니다: {video_path}")
+        if (pts_timing and expected_source_frames is not None
+                and read_frames != expected_source_frames):
+            raise RuntimeError(
+                f"입력 프레임 수 불일치: 예상={expected_source_frames}, 처리={read_frames}\n"
+                f"읽기 오류 또는 영상 메타데이터 오류를 확인하세요: {video_path}\n"
+                "최종 결과 파일은 저장하지 않습니다."
+            )
         if total_frames is not None and processed_frames != total_frames:
             raise RuntimeError(
                 f"영상 프레임 수 불일치: 예상={total_frames}, 처리={processed_frames}\n"
