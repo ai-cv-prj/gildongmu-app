@@ -80,7 +80,7 @@ test("버스 동적 MP3도 기존 재생기와 녹화 오디오 그래프를 공
   app.player.setRate(.2);
   assert.equal(app.player.getRate(), .75);
   assert.equal(app.player.speak("멈추세요", 5000), true);
-  assert.equal(app.audio().src, "/audio/walking-stop.mp3?v=sesac-212-v2");
+  assert.equal(app.audio().src, "/audio/walking-stop.mp3?v=sesac-212-v3");
   assert.equal(app.audio().playbackRate, .75);
   app.player.cancel();
 });
@@ -176,7 +176,7 @@ test("긴급 음성이 동적 MP3를 취소한 뒤 늦은 MP3 오류가 버스 �
   app.rejectAudio();
   await Promise.resolve();
   assert.equal(app.utterance(), null);
-  assert.equal(app.audio().src, "/audio/walking-stop.mp3?v=sesac-212-v2");
+  assert.equal(app.audio().src, "/audio/walking-stop.mp3?v=sesac-212-v3");
   app.coordinator.stop();
 });
 
@@ -240,7 +240,7 @@ for (const [name, navigator] of [["iPhone Safari", iphone],
       assert.equal(app.player.recordingStream(), "recording-stream");
       let ends = 0;
       app.player.speak("오른쪽 두 걸음", 5000, { onEnd: () => ends++ });
-      assert.equal(app.audio().src, rate === 1 ? "/audio/walking-move-right-two.mp3?v=sesac-212-v2"
+      assert.equal(app.audio().src, rate === 1 ? "/audio/walking-move-right-two.mp3?v=sesac-212-v3"
         : `/api/guidance-speech?clip=walking-move-right-two&rate=${rate}`);
       assert.equal(app.audio().defaultPlaybackRate, 1);
       assert.equal(app.audio().playbackRate, 1);
@@ -268,7 +268,7 @@ for (const navigator of [{ userAgent: "Mozilla/5.0 (Linux; Android 16) AppleWebK
     for (const rate of [1, 1.5, 2]) {
       app.player.setRate(rate);
       app.player.speak("멈추세요", 5000);
-      assert.equal(app.audio().src, "/audio/walking-stop.mp3?v=sesac-212-v2");
+      assert.equal(app.audio().src, "/audio/walking-stop.mp3?v=sesac-212-v3");
       assert.equal(app.audio().defaultPlaybackRate, rate);
       assert.equal(app.audio().playbackRate, rate);
       app.player.cancel();

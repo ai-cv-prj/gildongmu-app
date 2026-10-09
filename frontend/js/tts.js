@@ -28,7 +28,7 @@
   ]);
   for (const [text, name] of [...CLIPS]) CLIPS.set(`모의 신호. ${text}`, `mock-${name}`);
   const SPEECH_TEXT = "정류장입니다. 버스를 선택하세요.";
-  const source = name => `/audio/${name}.mp3?v=sesac-212-v2`;
+  const source = name => `/audio/${name}.mp3?v=sesac-212-v3`;
 
   function create({ onError = () => {}, onStatus = () => {}, now = () => performance.now() } = {}) {
     const settings = window.GConfig.get().audio;
