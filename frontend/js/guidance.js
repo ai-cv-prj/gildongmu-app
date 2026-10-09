@@ -91,7 +91,7 @@
       if (age > audio.realtime_max_gap_ms) interrupt();
       if (hasConfirmedSignal && age >= limits.missing_ms && !missingAnnounced) {
         missingAnnounced = true;
-        announce("신호 확인 불가.", now() + limits.max_age_ms);
+        announce("신호 확인 불가", now() + limits.max_age_ms);
       }
     }
     function accept(res, capturedAt) {
@@ -175,11 +175,11 @@
       missingAnnounced = false;
       let text;
       if (previous !== null && previous !== next) {
-        text = next === "green" ? "초록불로 바뀜." : "빨간불로 바뀜.";
+        text = next === "green" ? "초록불로 바뀜" : "빨간불로 바뀜";
       } else if (next === "green") {
-        text = firstConfirmed ? "초록불. 다음 신호까지 대기."
-          : "초록불.";
-      } else text = "빨간불.";
+        text = firstConfirmed ? "초록불, 다음 신호까지 대기"
+          : "초록불";
+      } else text = "빨간불";
       if (lastAnnouncedTarget === target && lastAnnouncedColor === next && !recoveredAfterMissing) {
         // 소실 안내가 없었던 짧은 끊김 뒤 같은 대상·색상은 반복하지 않는다.
         update(mock ? `모의 신호. ${text}` : text);
@@ -189,7 +189,7 @@
       lastAnnouncedTarget = target;
       lastAnnouncedAt = capturedAt;
       // 전환 안내 뒤에는 현재 색상만, 첫 초록 대기 안내는 같은 문구로 다시 읽는다.
-      repeatText = text.includes("바뀜") ? (next === "green" ? "초록불." : "빨간불.") : text;
+      repeatText = text.includes("바뀜") ? (next === "green" ? "초록불" : "빨간불") : text;
       announce(text, capturedAt + limits.max_age_ms);
     }
     // 서버 세션 생성 후 결과를 연결한다.

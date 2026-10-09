@@ -5,33 +5,30 @@
  */
 (() => {
   const CLIPS = new Map([
-    ["빨간불.", "red"],
-    ["초록불. 다음 신호까지 대기.", "green-initial-wait"],
-    ["초록불.", "green"],
-    ["초록불로 바뀜.", "green-changed"],
-    ["빨간불로 바뀜.", "red-changed"],
-    ["신호 확인 불가.", "missing"],
-    ["횡단보도 이탈 오른쪽 이동!", "crosswalk-exit-right"],
-    ["횡단보도 이탈 왼쪽 이동!", "crosswalk-exit-left"],
-    ["오른쪽으로 이동!", "crosswalk-align-right"],
-    ["왼쪽으로 이동!", "crosswalk-align-left"],
-    ["왼쪽으로 한 걸음", "walking-move-left-one"],
-    ["왼쪽으로 두 걸음", "walking-move-left-two"],
-    ["오른쪽으로 한 걸음", "walking-move-right-one"],
-    ["오른쪽으로 두 걸음", "walking-move-right-two"],
-    ["전방 혼잡 주의하세요", "walking-crowded"],
-    ["전방 장애물 주의하세요", "walking-obstacle"],
+    ["빨간불", "red"],
+    ["초록불, 다음 신호까지 대기", "green-initial-wait"],
+    ["초록불", "green"],
+    ["초록불로 바뀜", "green-changed"],
+    ["빨간불로 바뀜", "red-changed"],
+    ["신호 확인 불가", "missing"],
+    ["횡단보도 이탈, 오른쪽 이동", "crosswalk-exit-right"],
+    ["횡단보도 이탈, 왼쪽 이동", "crosswalk-exit-left"],
+    ["횡단보도 앞, 오른쪽 이동", "crosswalk-align-right"],
+    ["횡단보도 앞, 왼쪽 이동", "crosswalk-align-left"],
+    ["왼쪽 한 걸음", "walking-move-left-one"],
+    ["왼쪽 두 걸음", "walking-move-left-two"],
+    ["오른쪽 한 걸음", "walking-move-right-one"],
+    ["오른쪽 두 걸음", "walking-move-right-two"],
+    ["혼잡 주의", "walking-crowded"],
+    ["전방 장애물", "walking-obstacle"],
     ["멈추세요", "walking-stop"],
     ["멈추세요.", "walking-stop"],
-    ["보행로 이탈 오른쪽 이동!", "walkway-exit-right"],
-    ["보행로 이탈 왼쪽 이동!", "walkway-exit-left"],
+    ["보행로 이탈, 오른쪽 이동", "walkway-exit-right"],
+    ["보행로 이탈, 왼쪽 이동", "walkway-exit-left"],
   ]);
   for (const [text, name] of [...CLIPS]) CLIPS.set(`모의 신호. ${text}`, `mock-${name}`);
   const SPEECH_TEXT = "정류장입니다. 버스를 선택하세요.";
-  const source = name => `/audio/${name}.mp3${name.startsWith("walkway-")
-    ? "?v=walkway-exit-v3" : name.startsWith("walking-")
-    ? "?v=walking-action-v10" : name.startsWith("crosswalk-")
-      ? "?v=crosswalk-sunhi-v3" : "?v=signal-ava-v3"}`;
+  const source = name => `/audio/${name}.mp3?v=sesac-212-v2`;
 
   function create({ onError = () => {}, onStatus = () => {}, now = () => performance.now() } = {}) {
     const settings = window.GConfig.get().audio;

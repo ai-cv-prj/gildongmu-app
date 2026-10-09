@@ -30,12 +30,12 @@ CROWDED_REPEAT_S = GUIDANCE.get("walking_crowded_repeat_ms", 3000) / 1000
 REPEAT_NONE_S = GUIDANCE.get("walking_repeat_none_ms", 3000) / 1000
 STOP_REPEAT_NONE_S = GUIDANCE.get("walking_stop_repeat_none_ms", 1000) / 1000
 ACTION_MESSAGES = {
-    ("left", 1): ("왼쪽으로 한 걸음", "walking-move-left-one.mp3"),
-    ("left", 2): ("왼쪽으로 두 걸음", "walking-move-left-two.mp3"),
-    ("right", 1): ("오른쪽으로 한 걸음", "walking-move-right-one.mp3"),
-    ("right", 2): ("오른쪽으로 두 걸음", "walking-move-right-two.mp3"),
-    "crowded": ("전방 혼잡 주의하세요", "walking-crowded.mp3"),
-    "blocked": ("전방 장애물 주의하세요", "walking-obstacle.mp3"),
+    ("left", 1): ("왼쪽 한 걸음", "walking-move-left-one.mp3"),
+    ("left", 2): ("왼쪽 두 걸음", "walking-move-left-two.mp3"),
+    ("right", 1): ("오른쪽 한 걸음", "walking-move-right-one.mp3"),
+    ("right", 2): ("오른쪽 두 걸음", "walking-move-right-two.mp3"),
+    "crowded": ("혼잡 주의", "walking-crowded.mp3"),
+    "blocked": ("전방 장애물", "walking-obstacle.mp3"),
     "stop": ("멈추세요", "walking-stop.mp3"),
 }
 VEHICLE_CLASSES = frozenset({"car", "bus", "truck", "motorcycle"})

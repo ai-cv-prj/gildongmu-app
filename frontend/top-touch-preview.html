@@ -144,7 +144,7 @@ lucide.createIcons({icons});\``);if(typeof c>"u")throw new Error("`createIcons()
     <h1 class="gm-story-heading">카메라 안내로,<br>버스에 오르기까지.</h1>
     <div class="gm-film-scene">
      <div class="gm-film-dialogue" data-speaker="길동무" aria-hidden="true"><div class="gm-film-sender"><i data-lucide="volume-2"></i><span data-film-speaker>길동무</span></div><p id="gm-film-caption">안내 시작</p></div>
-     <div class="gm-film-drawing"><canvas id="gm-film" width="1200" height="910" role="img" aria-label="가슴 카메라를 착용한 사람이 음성 안내를 듣고 왼쪽으로 한 걸음 이동합니다. 빨간불에 멈추고 초록불에 건넌 뒤 143번 버스를 말하고 탑승합니다. 28초 자동 반복 애니메이션입니다.">음성 안내에 따라 보행하고 신호를 기다린 뒤 버스에 탑승합니다.</canvas></div>
+     <div class="gm-film-drawing"><canvas id="gm-film" width="1200" height="910" role="img" aria-label="가슴 카메라를 착용한 사람이 음성 안내를 듣고 왼쪽 한 걸음 이동합니다. 빨간불에 멈추고 초록불에 건넌 뒤 143번 버스를 말하고 탑승합니다. 28초 자동 반복 애니메이션입니다.">음성 안내에 따라 보행하고 신호를 기다린 뒤 버스에 탑승합니다.</canvas></div>
     </div>
    </div>
   </section>
@@ -400,7 +400,7 @@ lucide.createIcons({icons});\``);if(typeof c>"u")throw new Error("`createIcons()
   }
   function dialogue(t) {
     if(t>=27.65 || t<2.25) return {speaker:'길동무',text:'안내 시작'};
-    if(t<6.4) return {speaker:'길동무',text:'왼쪽으로 한 걸음'};
+    if(t<6.4) return {speaker:'길동무',text:'왼쪽 한 걸음'};
     if(t<10.15) return {speaker:'길동무',text:'빨간불입니다'};
     if(t<13.8) return {speaker:'길동무',text:'초록불입니다'};
     if(t<15.8) return {speaker:'길동무',text:'버스 번호 말해 주세요'};
@@ -585,7 +585,7 @@ lucide.createIcons({icons});\``);if(typeof c>"u")throw new Error("`createIcons()
   function play(index){
    if(run!==previewRun||scene!=='home')return;
    try{
-    const u=new SpeechSynthesisUtterance('왼쪽으로 한 걸음');previewUtterance=u;u.lang='ko-KR';u.rate=sampleRate;
+    const u=new SpeechSynthesisUtterance('왼쪽 한 걸음');previewUtterance=u;u.lang='ko-KR';u.rate=sampleRate;
     u.onend=()=>{if(run!==previewRun||scene!=='home')return;if(index===1)previewTimer=setTimeout(()=>play(2),360);else{previewActive=false;previewUtterance=null;}};
     u.onerror=()=>{if(run!==previewRun)return;clearTimeout(previewTimer);previewActive=false;previewUtterance=null;};
     speechSynthesis.speak(u);

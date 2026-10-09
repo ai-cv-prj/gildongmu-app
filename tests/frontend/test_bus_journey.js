@@ -423,12 +423,12 @@ test("긴급·신호 안내가 버스 음성보다 우선하며 버스 안내는
   app.step(1000);
   assert.equal(app.spoken.at(-1).text, "143번 버스 인식 중. 143번 버스 인식 중.");
   app.coordinator.request({ source: "traffic", priority: app.coordinator.PRIORITY.trafficRed,
-    text: "빨간불.", validUntil: 15000 });
-  assert.equal(app.spoken.at(-1).text, "빨간불.");
+    text: "빨간불", validUntil: 15000 });
+  assert.equal(app.spoken.at(-1).text, "빨간불");
   app.step(3001);
   app.finish();
   app.tick();
-  assert.equal(app.spoken.at(-1).text, "빨간불.");
+  assert.equal(app.spoken.at(-1).text, "빨간불");
   app.journey.stop();
 });
 

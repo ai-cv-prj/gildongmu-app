@@ -118,10 +118,10 @@ class WalkingVoiceTests(unittest.TestCase):
         같은 행동은 침묵하고 다른 행동은 전환별 시간 후에 한 번 안내한다.
         """
         messages = {
-            "left": ("왼쪽으로 한 걸음", "walking-move-left-one.mp3"),
-            "right": ("오른쪽으로 한 걸음", "walking-move-right-one.mp3"),
-            "crowded": ("전방 혼잡 주의하세요", "walking-crowded.mp3"),
-            "blocked": ("전방 장애물 주의하세요", "walking-obstacle.mp3"),
+            "left": ("왼쪽 한 걸음", "walking-move-left-one.mp3"),
+            "right": ("오른쪽 한 걸음", "walking-move-right-one.mp3"),
+            "crowded": ("혼잡 주의", "walking-crowded.mp3"),
+            "blocked": ("전방 장애물", "walking-obstacle.mp3"),
             "stop": ("멈추세요", "walking-stop.mp3"),
         }
         actions = ("left", "right", "crowded", "blocked", "stop")
@@ -153,10 +153,10 @@ class WalkingVoiceTests(unittest.TestCase):
         혼잡·장애물·정지는 1.5초 none 후에만 같은 음성을 재생한다.
         """
         messages = {
-            "left": ("왼쪽으로 한 걸음", "walking-move-left-one.mp3"),
-            "right": ("오른쪽으로 한 걸음", "walking-move-right-one.mp3"),
-            "crowded": ("전방 혼잡 주의하세요", "walking-crowded.mp3"),
-            "blocked": ("전방 장애물 주의하세요", "walking-obstacle.mp3"),
+            "left": ("왼쪽 한 걸음", "walking-move-left-one.mp3"),
+            "right": ("오른쪽 한 걸음", "walking-move-right-one.mp3"),
+            "crowded": ("혼잡 주의", "walking-crowded.mp3"),
+            "blocked": ("전방 장애물", "walking-obstacle.mp3"),
             "stop": ("멈추세요", "walking-stop.mp3"),
         }
         for action in ("crowded", "blocked", "stop"):
@@ -193,8 +193,8 @@ class WalkingVoiceTests(unittest.TestCase):
     def test_same_direction_repeats_after_four_seconds_regardless_of_none(self):
         """짧은 none을 지나도 같은 방향은 마지막 안내로부터 4초 뒤 재안내한다."""
         for action, message in (
-            ("left", ("왼쪽으로 한 걸음", "walking-move-left-one.mp3")),
-            ("right", ("오른쪽으로 한 걸음", "walking-move-right-one.mp3")),
+            ("left", ("왼쪽 한 걸음", "walking-move-left-one.mp3")),
+            ("right", ("오른쪽 한 걸음", "walking-move-right-one.mp3")),
         ):
             with self.subTest(action=action):
                 voice = WalkingVoice()
@@ -222,10 +222,10 @@ class WalkingVoiceTests(unittest.TestCase):
         짧은 none 뒤 다른 방향도 안정화를 확인하며 긴급 정지만 즉시 안내한다.
         """
         messages = {
-            "left": ("왼쪽으로 한 걸음", "walking-move-left-one.mp3"),
-            "right": ("오른쪽으로 한 걸음", "walking-move-right-one.mp3"),
-            "crowded": ("전방 혼잡 주의하세요", "walking-crowded.mp3"),
-            "blocked": ("전방 장애물 주의하세요", "walking-obstacle.mp3"),
+            "left": ("왼쪽 한 걸음", "walking-move-left-one.mp3"),
+            "right": ("오른쪽 한 걸음", "walking-move-right-one.mp3"),
+            "crowded": ("혼잡 주의", "walking-crowded.mp3"),
+            "blocked": ("전방 장애물", "walking-obstacle.mp3"),
             "stop": ("멈추세요", "walking-stop.mp3"),
         }
         actions = ("left", "right", "crowded", "blocked", "stop")
@@ -350,7 +350,7 @@ class WalkingVoiceTests(unittest.TestCase):
         voice = WalkingVoice()
         active = prediction(danger_item(2, [45, 0, 55, 20]))
         self.assertEqual(voice.observe(active, 100, 3.0),
-                         ("전방 장애물 주의하세요", "walking-obstacle.mp3"))
+                         ("전방 장애물", "walking-obstacle.mp3"))
         self.assertIsNone(voice.observe(result, 100, 3.1))
         self.assertEqual(result["last_action"], "blocked")
         self.assertIsNone(result["voice_action"])
@@ -475,7 +475,7 @@ class WalkingVoiceTests(unittest.TestCase):
                 }
                 self.assertEqual(
                     WalkingVoice().observe(result, 100, 0),
-                    ("전방 장애물 주의하세요", "walking-obstacle.mp3"),
+                    ("전방 장애물", "walking-obstacle.mp3"),
                 )
                 self.assertEqual(result["last_action"], action)
                 self.assertEqual(result["voice_action"], "blocked")
@@ -494,7 +494,7 @@ class WalkingVoiceTests(unittest.TestCase):
                 result["direction_walkability"] = walkability
                 self.assertEqual(
                     WalkingVoice().observe(result, 100, 0),
-                    ("왼쪽으로 한 걸음", "walking-move-left-one.mp3"),
+                    ("왼쪽 한 걸음", "walking-move-left-one.mp3"),
                 )
 
     # 최종 행동 변경에만 음성 생성
@@ -503,7 +503,7 @@ class WalkingVoiceTests(unittest.TestCase):
         voice = WalkingVoice()
         first = prediction(danger_item(1, [20, 0, 43, 20]))
         self.assertEqual(voice.observe(first, 100, .2),
-                         ("오른쪽으로 한 걸음", "walking-move-right-one.mp3"))
+                         ("오른쪽 한 걸음", "walking-move-right-one.mp3"))
         same = prediction(danger_item(2, [20, 0, 43, 20]))
         self.assertIsNone(voice.observe(same, 100, .3))
         self.assertEqual(same["last_action"], "right")
@@ -513,13 +513,13 @@ class WalkingVoiceTests(unittest.TestCase):
         self.assertIsNone(voice.observe(prediction(*opposite), 100, .5))
         self.assertIsNone(voice.observe(prediction(*opposite), 100, .6))
         self.assertEqual(voice.observe(prediction(*opposite), 100, 1.0),
-                         ("왼쪽으로 한 걸음", "walking-move-left-one.mp3"))
+                         ("왼쪽 한 걸음", "walking-move-left-one.mp3"))
         for timestamp in (1.5, 2.5, 3.5, 4.5):
             cleared = prediction(level="monitor")
             self.assertIsNone(voice.observe(cleared, 100, timestamp))
         self.assertIsNone(cleared["last_action"])
         self.assertEqual(voice.observe(prediction(*opposite), 100, 4.6),
-                         ("왼쪽으로 한 걸음", "walking-move-left-one.mp3"))
+                         ("왼쪽 한 걸음", "walking-move-left-one.mp3"))
         self.assertEqual(len(voice.events), 3)
 
     # 혼잡 안내 직후 방향 음성을 혼잡 경고로 치환
@@ -527,7 +527,7 @@ class WalkingVoiceTests(unittest.TestCase):
         """혼잡 안내 후 3초 동안 좌우 판단이 흔들려도 같은 문구를 다시 생성하지 않는다."""
         voice = WalkingVoice()
         result = prediction(level="monitor")
-        crowded = ("전방 혼잡 주의하세요", "walking-crowded.mp3")
+        crowded = ("혼잡 주의", "walking-crowded.mp3")
         with patch("src.walking_voice.walking_action", return_value="crowded"):
             self.assertEqual(voice.observe(result, 100, 0.0), crowded)
 
@@ -552,7 +552,7 @@ class WalkingVoiceTests(unittest.TestCase):
             self.assertIsNone(voice.observe(prediction(level="monitor"), 100, 3.1))
             self.assertEqual(
                 voice.observe(prediction(level="monitor"), 100, 3.7),
-                ("왼쪽으로 한 걸음", "walking-move-left-one.mp3"),
+                ("왼쪽 한 걸음", "walking-move-left-one.mp3"),
             )
 
     # 혼잡 안내 후 위험 행동이 없으면 추가 안내하지 않음
@@ -598,7 +598,7 @@ class WalkingVoiceTests(unittest.TestCase):
         two_steps = prediction(danger_item(1, [20, 0, 55, 20]))
         self.assertEqual(
             voice.observe(one_step, 100, .1),
-            ("오른쪽으로 한 걸음", "walking-move-right-one.mp3"),
+            ("오른쪽 한 걸음", "walking-move-right-one.mp3"),
         )
         self.assertIsNone(voice.observe(two_steps, 100, .2))
         self.assertEqual(two_steps["voice_steps"], 1)
@@ -609,7 +609,7 @@ class WalkingVoiceTests(unittest.TestCase):
         self.assertIsNone(voice.observe(prediction(danger_item(1, [20, 0, 55, 20])), 100, 3.0))
         self.assertEqual(
             voice.observe(confirmed, 100, 4.1),
-            ("오른쪽으로 한 걸음", "walking-move-right-one.mp3"),
+            ("오른쪽 한 걸음", "walking-move-right-one.mp3"),
         )
         self.assertEqual(confirmed["voice_action"], "right")
         self.assertEqual(confirmed["voice_steps"], 1)
@@ -631,7 +631,7 @@ class WalkingVoiceTests(unittest.TestCase):
                 result = prediction(danger_item(1, [45, 0, 55, 20], name))
                 self.assertEqual(
                     voice.observe(result, 100, .1, crossing_active=True),
-                    ("전방 장애물 주의하세요", "walking-obstacle.mp3"),
+                    ("전방 장애물", "walking-obstacle.mp3"),
                 )
                 self.assertEqual(result["last_action"], "blocked")
                 self.assertEqual(result["voice_action"], "blocked")
@@ -654,7 +654,7 @@ class WalkingVoiceTests(unittest.TestCase):
                 result = prediction(danger_item(1, [45, 0, 55, 20], name))
                 self.assertEqual(
                     voice.observe(result, 100, .1, crosswalk_status="approach"),
-                    ("전방 장애물 주의하세요", "walking-obstacle.mp3"),
+                    ("전방 장애물", "walking-obstacle.mp3"),
                 )
 
     # 횡단 접근 시 기존 비차량 음성 중단 확인
@@ -931,7 +931,7 @@ class WalkingVoiceTests(unittest.TestCase):
             capture.release()
             lines = risk_log_path(output).read_text(encoding="utf-8").splitlines()
             self.assertEqual(len(lines), 20)
-            self.assertEqual(json.loads(lines[0])["voice_text"], "전방 장애물 주의하세요")
+            self.assertEqual(json.loads(lines[0])["voice_text"], "전방 장애물")
             self.assertEqual(json.loads(lines[0])["voice_clip"], "walking-obstacle.mp3")
             self.assertEqual(json.loads(lines[0])["last_action"], "blocked")
             self.assertEqual(json.loads(lines[0])["voice_playback_action"], "blocked")
