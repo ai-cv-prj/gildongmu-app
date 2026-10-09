@@ -661,26 +661,26 @@ test("정류장 도착 후 늦은 장애물 결과와 재개를 차단하고 취
   await app.action("start");
   await app.capture();
   await app.respond(0, { walking_surface: { event: { status: "outside_left", repeat: true,
-    voice_text: "보행로 이탈 오른쪽 이동!", stale_after_ms: 1500 } } });
-  assert.equal(app.voice()?.text, "보행로 이탈 오른쪽 이동!");
+    voice_text: "보행로 이탈, 오른쪽 이동", stale_after_ms: 1500 } } });
+  assert.equal(app.voice()?.text, "보행로 이탈, 오른쪽 이동");
   await app.capture();
   const walking = app.guides[0];
   const stops = walking.stops;
   await app.action("manual-arrival");
   assert.equal(walking.stops, stops + 1);
-  assert.notEqual(app.voice()?.text, "보행로 이탈 오른쪽 이동!");
+  assert.notEqual(app.voice()?.text, "보행로 이탈, 오른쪽 이동");
   await app.respond(1, { boarding: { status: "searching", revision: 0 },
     walking: { mask_png: "stale-walkable-mask",
       detections: [{ class_name: "person" }], event: { level: "danger", voice_text: "멈추세요" } },
     walking_surface: { event: { status: "outside_left", repeat: true,
-      voice_text: "보행로 이탈 오른쪽 이동!" } } });
+      voice_text: "보행로 이탈, 오른쪽 이동" } } });
   assert.equal(walking.accepted.length, 0);
   assert.equal(app.renders.at(-1).walking.event.enabled, false);
   assert.equal(app.renders.at(-1).walking.mask_png, null);
   assert.equal(app.renders.at(-1).walking_surface.event.status, "disabled");
   assert.equal(app.overlayRenders.at(-1).walking_surface.event.status, "disabled");
   assert.equal(app.overlayRenders.at(-1).walking.mask_png, null);
-  assert.notEqual(app.voice()?.text, "보행로 이탈 오른쪽 이동!");
+  assert.notEqual(app.voice()?.text, "보행로 이탈, 오른쪽 이동");
   await app.finishVoice();
   await app.confirmRoute("143");
   const starts = walking.starts;
@@ -780,10 +780,10 @@ test("음성 속도 선택은 두 번 미리 듣고 화면 이동이나 안내 �
   await app.action("enter"); app.rate(1.5);
   assert.deepEqual(app.audioLifecycle, ["unlock"], "미리듣기 타이머 전에 클릭 안에서 오디오를 준비한다");
   assert.equal(await app.previewTimer(220), true);
-  assert.equal(app.voice().text, "왼쪽으로 한 걸음");
+  assert.equal(app.voice().text, "왼쪽 한 걸음");
   await app.finishVoice();
   assert.equal(await app.previewTimer(360), true);
-  assert.equal(app.voice().text, "왼쪽으로 한 걸음");
+  assert.equal(app.voice().text, "왼쪽 한 걸음");
   await app.finishVoice();
   assert.equal(await app.previewTimer(360), false);
   app.rate(2); await app.action("settings-type");

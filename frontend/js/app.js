@@ -422,7 +422,7 @@
       coordinator.start();
       coordinator.clear("interface");
       coordinator.request({ source: "rate-preview", priority: coordinator.PRIORITY.boarding,
-        text: "왼쪽으로 한 걸음", dynamic: true, validUntil: performance.now() + 10000,
+        text: "왼쪽 한 걸음", dynamic: true, validUntil: performance.now() + 10000,
         onComplete() {
           if (index === 0 && token === ratePreviewToken && !running && view.getScreen() === "home")
             ratePreviewTimer = setTimeout(() => play(1), 360);

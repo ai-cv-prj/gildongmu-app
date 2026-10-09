@@ -39,7 +39,7 @@ function harness() {
 test("같은 빨간불은 5초마다 낮은 우선순위로 다시 안내한다", () => {
   const h = harness();
   h.send("red", 0, 11000);
-  assert.deepEqual(h.requests.map(item => item.text), ["빨간불.", "빨간불.", "빨간불."]);
+  assert.deepEqual(h.requests.map(item => item.text), ["빨간불", "빨간불", "빨간불"]);
   assert.deepEqual(h.requests.map(item => item.priority), [PRIORITY.trafficRed, PRIORITY.traffic, PRIORITY.traffic]);
   assert.equal(h.requests[1].metadata.repeat, true);
 });
@@ -54,9 +54,9 @@ test("첫 초록 대기 안내는 같은 문구로, 전환 뒤에는 현재 색�
   const waiting = harness();
   waiting.send("green", 0, 5500);
   assert.deepEqual(waiting.requests.map(item => item.text),
-    ["초록불. 다음 신호까지 대기.", "초록불. 다음 신호까지 대기."]);
+    ["초록불, 다음 신호까지 대기", "초록불, 다음 신호까지 대기"]);
   const changed = harness();
   changed.send("red", 0, 500);
   changed.send("green", 750, 6250);
-  assert.deepEqual(changed.requests.map(item => item.text), ["빨간불.", "초록불로 바뀜.", "초록불."]);
+  assert.deepEqual(changed.requests.map(item => item.text), ["빨간불", "초록불로 바뀜", "초록불"]);
 });

@@ -25,11 +25,11 @@ const coordinator = context.window.GAudioCoordinator.create({ player, now: () =>
 coordinator.start();
 
 // 하위 신호 안내를 횡단보도 이탈이 즉시 중단하고 이탈 음성만 반복한다.
-coordinator.request({ source: "traffic", priority: 4, text: "빨간불.", validUntil: 3000 });
+coordinator.request({ source: "traffic", priority: 4, text: "빨간불", validUntil: 3000 });
 coordinator.acceptCrosswalk({ status: "outside_left", repeat: true,
-  voice_text: "횡단보도 이탈 오른쪽 이동!" }, now);
+  voice_text: "횡단보도 이탈, 오른쪽 이동" }, now);
 assert.equal(cancelCount, 2);
-assert.equal(spoken.at(-1), "횡단보도 이탈 오른쪽 이동!");
+assert.equal(spoken.at(-1), "횡단보도 이탈, 오른쪽 이동");
 assert.equal(coordinator.request({ source: "walking", priority: 2,
   text: "서행하세요.", validUntil: 3000 }), false);
 // 보행 행동이 오른쪽으로 유지되거나 없어도 이탈 음성은 끊거나 재시작하지 않는다.
@@ -37,16 +37,16 @@ const exitCount = spoken.length;
 assert.equal(coordinator.request({ source: "walking", priority: coordinator.PRIORITY.walking,
   text: "오른쪽 이동.", validUntil: 3000 }), false);
 coordinator.acceptCrosswalk({ status: "outside_left", repeat: true,
-  voice_text: "횡단보도 이탈 오른쪽 이동!" }, now + 10);
+  voice_text: "횡단보도 이탈, 오른쪽 이동" }, now + 10);
 assert.equal(spoken.length, exitCount);
 assert.equal(cancelCount, 2);
 onEnd();
-assert.equal(spoken.filter(text => text.startsWith("횡단보도 이탈 ")).length, 2);
+assert.equal(spoken.filter(text => text.startsWith("횡단보도 이탈, ")).length, 2);
 
 // 이탈 방향이 바뀌면 같은 1순위라도 이전 문장을 취소하고 최신 방향으로 교체한다.
 coordinator.acceptCrosswalk({ status: "outside_right", repeat: true,
-  voice_text: "횡단보도 이탈 왼쪽 이동!" }, now + 50);
-assert.equal(spoken.at(-1), "횡단보도 이탈 왼쪽 이동!");
+  voice_text: "횡단보도 이탈, 왼쪽 이동" }, now + 50);
+assert.equal(spoken.at(-1), "횡단보도 이탈, 왼쪽 이동");
 assert.equal(cancelCount, 3);
 
 // 순간적인 카메라·경계 불확실 상태는 진행 중인 이탈 음성을 끊지 않는다.
@@ -54,7 +54,7 @@ coordinator.acceptCrosswalk({ status: "uncertain", crossing_active: true,
   stale_after_ms: 1500 }, now + 80);
 assert.equal(cancelCount, 3);
 onEnd();
-assert.equal(spoken.at(-1), "횡단보도 이탈 왼쪽 이동!");
+assert.equal(spoken.at(-1), "횡단보도 이탈, 왼쪽 이동");
 
 // 복귀 판정을 받으면 현재 문장은 유지하고 다음 반복만 보류한다.
 coordinator.acceptCrosswalk({ status: "crossing", repeat: false }, now + 100);
@@ -62,11 +62,11 @@ assert.equal(cancelCount, 3);
 
 // 현재 문장이 끝나기 전 같은 방향으로 재이탈하면 끊거나 재시작하지 않고 반복을 잇는다.
 coordinator.acceptCrosswalk({ status: "outside_right", repeat: true,
-  voice_text: "횡단보도 이탈 왼쪽 이동!" }, now + 110);
+  voice_text: "횡단보도 이탈, 왼쪽 이동" }, now + 110);
 assert.equal(cancelCount, 3);
-const sameDirectionCount = spoken.filter(text => text === "횡단보도 이탈 왼쪽 이동!").length;
+const sameDirectionCount = spoken.filter(text => text === "횡단보도 이탈, 왼쪽 이동").length;
 onEnd();
-assert.equal(spoken.filter(text => text === "횡단보도 이탈 왼쪽 이동!").length,
+assert.equal(spoken.filter(text => text === "횡단보도 이탈, 왼쪽 이동").length,
   sameDirectionCount + 1);
 
 // 다시 복귀하면 재생 중인 문장을 끝낸 뒤 추가 반복하지 않는다.
@@ -80,15 +80,15 @@ assert.equal(cancelCount, 3);
 coordinator.request({ source: "walking", priority: coordinator.PRIORITY.walking,
   text: "서행하세요.", validUntil: 4000 });
 coordinator.request({ source: "traffic", priority: coordinator.PRIORITY.trafficRed,
-  text: "빨간불.", validUntil: 4000 });
-assert.equal(spoken.at(-1), "빨간불.");
+  text: "빨간불", validUntil: 4000 });
+assert.equal(spoken.at(-1), "빨간불");
 assert.equal(cancelCount, 4);
 onEnd();
 
 // 보행로 이탈은 반복하지만 복귀 시 재생 중인 문장을 자르지 않고 다음 반복만 멈춘다.
 coordinator.acceptWalkingSurface({ status: "outside_left", repeat: true,
-  voice_text: "보행로 이탈 오른쪽 이동!" }, now + 130);
-assert.equal(spoken.at(-1), "보행로 이탈 오른쪽 이동!");
+  voice_text: "보행로 이탈, 오른쪽 이동" }, now + 130);
+assert.equal(spoken.at(-1), "보행로 이탈, 오른쪽 이동");
 const walkwayCancelCount = cancelCount;
 coordinator.acceptWalkingSurface({ status: "returning", repeat: false }, now + 140);
 assert.equal(cancelCount, walkwayCancelCount);
@@ -99,25 +99,25 @@ assert.equal(spoken.length, walkwayCount);
 // 진입 전 정렬 안내를 반복하고 발이 경계 안에 들어오면 즉시 중단한다.
 const beforeAlignCancelCount = cancelCount;
 coordinator.acceptCrosswalk({ status: "align_right", repeat: true,
-  voice_text: "오른쪽으로 이동!" }, now + 150);
-assert.equal(spoken.at(-1), "오른쪽으로 이동!");
+  voice_text: "횡단보도 앞, 오른쪽 이동" }, now + 150);
+assert.equal(spoken.at(-1), "횡단보도 앞, 오른쪽 이동");
 coordinator.acceptCrosswalk({ status: "crossing", repeat: false }, now + 160);
 assert.equal(cancelCount, beforeAlignCancelCount + 1);
 
 // 방향 미확정 상태는 이탈 음성을 시작하지 않는다.
 coordinator.acceptCrosswalk({ status: "outside_unknown", repeat: true,
-  voice_text: "횡단보도 이탈!" }, now + 180);
-assert.equal(spoken.at(-1), "오른쪽으로 이동!");
+  voice_text: "횡단보도 이탈" }, now + 180);
+assert.equal(spoken.at(-1), "횡단보도 앞, 오른쪽 이동");
 
 // 가장자리 상태에서는 음성을 시작하지 않는다.
 const edge = { status: "edge", event_id: 8 };
 coordinator.acceptCrosswalk(edge, now + 200);
 coordinator.acceptCrosswalk(edge, now + 300);
-assert.equal(spoken.at(-1), "오른쪽으로 이동!");
+assert.equal(spoken.at(-1), "횡단보도 앞, 오른쪽 이동");
 
 // 오래된 이탈 응답은 틱에서 반복을 중단한다.
 coordinator.acceptCrosswalk({ status: "outside_right", repeat: true,
-  voice_text: "횡단보도 이탈 왼쪽 이동!" }, now + 300);
+  voice_text: "횡단보도 이탈, 왼쪽 이동" }, now + 300);
 const beforeStaleCancelCount = cancelCount;
 now = 3000;
 coordinator.tick();
@@ -149,7 +149,7 @@ assert.equal(interrupted, 1);
 // 장애물 음원이 실제 시작된 동안에만 배지용 행동을 노출한다.
 playback.clear("walking");
 playback.request({ source: "walking", priority: playback.PRIORITY.walking,
-  text: "오른쪽으로 한 걸음", validUntil: now + 1000, metadata: { action: "right" } });
+  text: "오른쪽 한 걸음", validUntil: now + 1000, metadata: { action: "right" } });
 assert.equal(playback.walkingPlaybackAction(), "right");
 runningClip.onEnd();
 assert.equal(playback.walkingPlaybackAction(), null);

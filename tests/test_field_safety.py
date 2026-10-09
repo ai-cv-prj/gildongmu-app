@@ -31,7 +31,7 @@ def test_road_gap_blocks_even_when_almost_all_sweep_pixels_are_walkable():
 def test_missing_ground_does_not_delay_warning_or_allow_direction():
     result = prediction(danger_item(1, [55, 20, 70, 70]))
     result.pop("direction_ground")
-    assert WalkingVoice().observe(result, 100, 0)[0] == "전방 장애물 주의하세요"
+    assert WalkingVoice().observe(result, 100, 0)[0] == "전방 장애물"
 
 
 def test_diagonal_nonwalkable_gap_cannot_join_disconnected_ground():
@@ -53,7 +53,7 @@ def test_clip002_left_candidate_uses_clear_right_when_left_route_is_occupied():
     result = prediction(right, left, chair)
     result["roi"] = {"immediate_polygon": [[.02, .6], [.98, .6], [.98, 1], [.02, 1]]}
     assert walking_action(result, 100) == "left"
-    assert WalkingVoice().observe(result, 100, 0)[0] == "오른쪽으로 한 걸음"
+    assert WalkingVoice().observe(result, 100, 0)[0] == "오른쪽 한 걸음"
     assert result["voice_diagnostics"]["direction_safety"]["left"]["blockers"] == [523]
     assert left["risk_level"] == "caution"
 
@@ -78,7 +78,7 @@ def test_clip002_center_people_do_not_veto_clear_right_step():
                         motion={"quality": "valid", "velocity_norm_per_s": [-.002, .008]})
     result = prediction(center, left, edge)
     assert walking_action(result, 100) == "right"
-    assert WalkingVoice().observe(result, 100, 0)[0] == "오른쪽으로 한 걸음"
+    assert WalkingVoice().observe(result, 100, 0)[0] == "오른쪽 한 걸음"
     assert result["voice_diagnostics"]["direction_safety"]["right"]["allowed"]
 
 
@@ -87,7 +87,7 @@ def test_center_person_crossing_into_near_right_still_vetoes_direction():
                         caution_item(2, [45, 30, 60, 60],
                                      motion={"quality": "valid", "velocity_norm_per_s": [.2, .1]}))
     assert walking_action(result, 100) == "right"
-    assert WalkingVoice().observe(result, 100, 0)[0] == "전방 혼잡 주의하세요"
+    assert WalkingVoice().observe(result, 100, 0)[0] == "혼잡 주의"
     assert result["voice_diagnostics"]["direction_safety"]["right"]["blockers"] == [2]
 
 
@@ -104,7 +104,7 @@ def test_people_on_both_sides_use_crowd_without_waiting_for_both_to_be_danger():
     result = prediction(danger_item(1, [20, 20, 43, 75]),
                         caution_item(2, [70, 20, 85, 75]))
     assert walking_action(result, 100) == "right"
-    assert WalkingVoice().observe(result, 100, 0)[0] == "전방 혼잡 주의하세요"
+    assert WalkingVoice().observe(result, 100, 0)[0] == "혼잡 주의"
 
 
 def test_crowd_keeps_one_message_when_distribution_becomes_blocked():
@@ -125,16 +125,16 @@ def test_crowd_keeps_one_message_when_distribution_becomes_blocked():
     cleared = prediction(*(caution_item(i, [10, 20, 90, 40]) for i in (1, 2, 3)))
     for timestamp in (7.2, 8, 8.8):
         assert voice.observe(deepcopy(cleared), 100, timestamp) is None
-    assert voice.observe(deepcopy(blocked), 100, 9)[0] == "전방 장애물 주의하세요"
+    assert voice.observe(deepcopy(blocked), 100, 9)[0] == "전방 장애물"
 
 
 def test_unsafe_previous_direction_is_retracted_before_opposite_confirmation():
     voice = WalkingVoice()
-    assert voice.observe(prediction(danger_item(1, [20, 20, 43, 80])), 100, 0)[0] == "오른쪽으로 한 걸음"
+    assert voice.observe(prediction(danger_item(1, [20, 20, 43, 80])), 100, 0)[0] == "오른쪽 한 걸음"
     opposite = danger_item(1, [57, 20, 80, 80])
-    assert voice.observe(prediction(opposite), 100, .1)[0] == "전방 장애물 주의하세요"
+    assert voice.observe(prediction(opposite), 100, .1)[0] == "전방 장애물"
     assert voice.observe(prediction(opposite), 100, .5) is None
-    assert voice.observe(prediction(opposite), 100, .7)[0] == "왼쪽으로 한 걸음"
+    assert voice.observe(prediction(opposite), 100, .7)[0] == "왼쪽 한 걸음"
 
 
 def test_unsafe_direction_is_cancelled_even_when_no_voice_candidate_remains():
@@ -148,7 +148,7 @@ def test_unsafe_direction_is_cancelled_even_when_no_voice_candidate_remains():
 
 def test_confirmed_image_route_only_authorizes_one_step():
     result = prediction(danger_item(1, [20, 20, 55, 70]))
-    assert WalkingVoice().observe(result, 100, 0)[0] == "오른쪽으로 한 걸음"
+    assert WalkingVoice().observe(result, 100, 0)[0] == "오른쪽 한 걸음"
 
 
 def test_crowd_repeats_every_three_seconds_without_extending_redirect_window():
@@ -178,7 +178,7 @@ def test_step_jitter_does_not_restart_direction_confirmation_after_crowd():
     with patch("src.walking_voice.movement_steps", side_effect=[1, 2, 1, 2]):
         for timestamp in (3.1, 3.3, 3.5):
             assert voice.observe(deepcopy(result), 100, timestamp) is None
-        assert voice.observe(deepcopy(result), 100, 3.7)[0] == "오른쪽으로 두 걸음"
+        assert voice.observe(deepcopy(result), 100, 3.7)[0] == "오른쪽 두 걸음"
 
 
 def test_no_crowd_repeat_after_hazards_clear_and_stop_is_immediate():

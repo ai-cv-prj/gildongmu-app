@@ -272,11 +272,11 @@ class WalkingSurfaceEngine:
 
         result.update(status=self.status, direction=self.direction, event_id=self.event_id)
         if self.status == "outside_left":
-            result.update(voice_text="보행로 이탈 오른쪽 이동!",
+            result.update(voice_text="보행로 이탈, 오른쪽 이동",
                           voice_clip="walkway-exit-right.mp3", repeat=True,
                           reasons=["walkable_left_exit"])
         elif self.status == "outside_right":
-            result.update(voice_text="보행로 이탈 왼쪽 이동!",
+            result.update(voice_text="보행로 이탈, 왼쪽 이동",
                           voice_clip="walkway-exit-left.mp3", repeat=True,
                           reasons=["walkable_right_exit"])
         else:

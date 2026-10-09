@@ -53,13 +53,13 @@ test("ROI 밖 신호는 침묵하고 진입·재진입 후 3프레임 400ms를 �
   h.send("red", 800, true);
   assert.equal(h.requests.length, 0);
   h.send("red", 1000, true);
-  assert.equal(h.requests.at(-1).text, "빨간불.");
+  assert.equal(h.requests.at(-1).text, "빨간불");
   h.send("green", 1200, false);
   h.tick(4000);
   assert.equal(h.requests.length, 1);
   assert.ok(h.cleared.every(source => source === "traffic"));
   for (const t of [4000, 4200, 4400]) h.send("green", t, true);
-  assert.deepEqual(h.requests.map(item => item.text), ["빨간불.", "초록불. 다음 신호까지 대기."]);
+  assert.deepEqual(h.requests.map(item => item.text), ["빨간불", "초록불, 다음 신호까지 대기"]);
 });
 
 test("ROI에 다시 들어오면 이전과 같은 빨간불도 새로 안내한다", () => {
@@ -67,7 +67,7 @@ test("ROI에 다시 들어오면 이전과 같은 빨간불도 새로 안내한�
   for (const t of [0, 200, 400]) h.send("red", t, true);
   h.send("red", 600, false);
   for (const t of [800, 1000, 1200]) h.send("red", t, true);
-  assert.deepEqual(h.requests.map(item => item.text), ["빨간불.", "빨간불."]);
+  assert.deepEqual(h.requests.map(item => item.text), ["빨간불", "빨간불"]);
 });
 
 test("신호 확인 불가는 최신 ROI 조건을 충족할 때만 생성한다", () => {
@@ -75,7 +75,7 @@ test("신호 확인 불가는 최신 ROI 조건을 충족할 때만 생성한다
   for (const t of [0, 200, 400]) h.send("red", t, true);
   for (const t of [1000, 1800, 2400]) h.send(null, t, true);
   h.tick(2400);
-  assert.deepEqual(h.requests.map(item => item.text), ["빨간불.", "신호 확인 불가."]);
+  assert.deepEqual(h.requests.map(item => item.text), ["빨간불", "신호 확인 불가"]);
   h.send(null, 2600, false);
   h.tick(6000);
   assert.equal(h.requests.length, 2);
@@ -90,5 +90,5 @@ test("허용 정보 누락과 프레임 소실은 신호 안내를 차단한다"
   h.tick(2500);
   assert.equal(h.cleared.length, clears + 1);
   h.tick(5000);
-  assert.deepEqual(h.requests.map(item => item.text), ["빨간불."]);
+  assert.deepEqual(h.requests.map(item => item.text), ["빨간불"]);
 });
