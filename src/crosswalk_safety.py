@@ -31,7 +31,6 @@ DEFAULT_CROSSWALK_SAFETY = {
     "exit_roi_bottom": 1.00,
     "exit_roi_crosswalk_threshold": 0.05,
     "entry_confirm_s": 0.50,
-    "geometry_entry_confirm_s": 0.30,
     "entry_occlusion_hold_s": 0.50,
     "edge_confirm_s": 0.20,
     "exit_confirm_s": 0.25,
@@ -117,7 +116,7 @@ def crosswalk_safety_config(value=None):
     time_keys = (
         "entry_confirm_s", "edge_confirm_s", "exit_confirm_s", "return_confirm_s",
         "finish_confirm_s", "uncertainty_hold_s", "max_gap_s", "boundary_smooth_s",
-        "outside_finish_confirm_s", "geometry_entry_confirm_s", "entry_occlusion_hold_s",
+        "outside_finish_confirm_s", "entry_occlusion_hold_s",
         "exit_candidate_hold_s", "boundary_hold_s", "boundary_candidate_confirm_s",
     )
     for key in time_keys:
@@ -314,9 +313,6 @@ class CrosswalkSafetyEngine:
         self.boundary_candidate_right = None
         self.roi_crosswalk_since = None
         self.roi_crosswalk_last_seen = None
-        self.entry_geometry_since = None
-        self.entry_left_x = None
-        self.entry_right_x = None
         self.event_id = 0
 
     # 연속 시간 조건 확인
@@ -465,35 +461,13 @@ class CrosswalkSafetyEngine:
         if not self.crossing_active:
             foot_x = self.config["foot_x"]
             inside = bool(geometry and geometry["left_x"] <= foot_x <= geometry["right_x"])
-            geometry_candidate = bool(geometry and geometry["near"] and inside)
-            if geometry_candidate:
-                stable = bool(
-                    self.entry_left_x is None or self.entry_right_x is None
-                    or max(abs(geometry["left_x"] - self.entry_left_x),
-                           abs(geometry["right_x"] - self.entry_right_x))
-                    <= self.config["max_boundary_shift"]
-                )
-                if self.entry_geometry_since is None or not stable:
-                    self.entry_geometry_since = timestamp
-                self.entry_left_x = geometry["left_x"]
-                self.entry_right_x = geometry["right_x"]
-            else:
-                self.entry_geometry_since = None
-                self.entry_left_x = None
-                self.entry_right_x = None
-            geometry_confirmed = bool(
-                self.entry_geometry_since is not None
-                and timestamp - self.entry_geometry_since + 1e-9
-                >= self.config["geometry_entry_confirm_s"]
-            )
-            if (roi_confirmed or geometry_confirmed) and inside:
+            if roi_confirmed and inside:
                 self.crossing_active = True
                 self._transition("crossing")
                 self._clear_pending()
                 result.update(status="crossing", crossing_active=True,
                               event_id=self.event_id,
-                              reasons=["entry_confirmed" if roi_confirmed
-                                       else "geometry_entry_confirmed"])
+                              reasons=["entry_confirmed"])
                 return result
             if roi_visible and geometry is not None and not inside:
                 move = "right" if foot_x < geometry["left_x"] else "left"

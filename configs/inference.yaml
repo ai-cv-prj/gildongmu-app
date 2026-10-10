@@ -78,7 +78,6 @@ crosswalk_safety:
 
   # 상태 확정 시간(초)
   entry_confirm_s: 0.50
-  geometry_entry_confirm_s: 0.30
   entry_occlusion_hold_s: 0.50
   edge_confirm_s: 0.20
   exit_confirm_s: 0.25
