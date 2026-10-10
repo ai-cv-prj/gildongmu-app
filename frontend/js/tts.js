@@ -69,12 +69,13 @@
 
     /** Call inside the user's click, before a preview timer or camera await. */
     function unlock() {
-      if (!serverRate || !audio) return;
+      if (!audio) return;
       try {
+        // Android/WebView also needs the speaker graph resumed by the click.
         recordingStream();
         // WebKit's explicit load() releases this element's gesture restriction.
         // Never reload an announcement already playing or being prepared.
-        if (!current) audio.load();
+        if (serverRate && !current) audio.load();
       } catch (_) {
         onError("안내 음성을 준비하지 못했습니다. 다시 시작해 주세요.");
       }
@@ -83,14 +84,14 @@
     function cancel() {
       queue.length = 0;
       const hadCurrent = current !== null;
-      const hadSpeech = current?.synthesized === true;
+      const hadSpeech = Boolean(current?.utterance);
       current = null;
       clearTimeout(timer);
       timer = null;
       clearTimeout(fallbackTimer);
       fallbackTimer = null;
       if (hadSpeech) window.speechSynthesis?.cancel();
-      if (audio && hadCurrent && !hadSpeech) {
+      if (audio && hadCurrent) {
         audio.onplaying = audio.onended = audio.onerror = null;
         audio.pause();
         // 로딩 중 취소도 실제 요청과 보류 중인 play()까지 중단한다.
@@ -102,13 +103,12 @@
 
     function speak(text, validUntil = now() + settings.default_validity_ms,
                    { onEnd = () => {}, onStart = () => {}, onFailure = () => {}, dynamic = false } = {}) {
-      const synthesized = text === SPEECH_TEXT;
+      // The bus input prompt must work without an installed device TTS engine.
+      dynamic = dynamic || text === SPEECH_TEXT;
       const canSynthesize = window.speechSynthesis && window.SpeechSynthesisUtterance;
-      const supported = synthesized ? canSynthesize : audio || (dynamic && canSynthesize);
-      if (!supported || (!synthesized && !dynamic && !CLIPS.has(text))) {
-        const message = synthesized
-          ? "버스 번호 질문 음성을 지원하지 않는 브라우저입니다. 화면에서 입력하거나 취소해 주세요."
-          : !audio ? "이 브라우저는 음성 재생을 지원하지 않습니다." : "안내 음원이 없습니다. 페이지를 새로고침해 주세요.";
+      const supported = audio || (dynamic && canSynthesize);
+      if (!supported || (!dynamic && !CLIPS.has(text))) {
+        const message = !audio ? "이 브라우저는 음성 재생을 지원하지 않습니다." : "안내 음원이 없습니다. 페이지를 새로고침해 주세요.";
         onStatus(message);
         onError(message);
         return false;
@@ -116,7 +116,7 @@
       if (typeof text !== "string" || !text.trim() || text.length > 200 || now() >= validUntil) return false;
       // 안내 간 우선순위와 취소는 전역 음성 관리자가 결정한다.
       // 음원 로딩 제한 시간은 앞선 안내가 끝난 뒤 재생을 시도할 때부터 센다.
-      queue.push({ text, onEnd, onStart, onFailure, synthesized, dynamic,
+      queue.push({ text, onEnd, onStart, onFailure, synthesized: false, dynamic,
         startTimeoutMs: validUntil - now(), started: false });
       return current ? true : playNext();
     }
@@ -160,33 +160,64 @@
         request.onEnd();
         playNext();
       };
-      const synthesize = (releaseAudio = true) => {
+      const mediaStarted = () => {
+        if (current !== request || request.synthesized) return;
+        // A queued device voice can start much later on Android. Choose the
+        // first actual playback and invalidate the other callbacks before cancel.
+        if (request.utterance) {
+          request.utterance = null;
+          window.speechSynthesis.cancel();
+        }
+        started();
+      };
+      const synthesize = () => {
         if (current !== request || request.fallbackAttempted || now() >= validUntil
             || !window.speechSynthesis || !window.SpeechSynthesisUtterance) return false;
         request.fallbackAttempted = true;
-        request.synthesized = true;
-        if (audio && releaseAudio) {
-          audio.onplaying = audio.onended = audio.onerror = null;
-          audio.pause();
-          audio.removeAttribute("src");
-          audio.load();
+        try {
+          const utterance = new window.SpeechSynthesisUtterance(request.text);
+          request.utterance = utterance;
+          utterance.lang = "ko-KR";
+          utterance.volume = settings.volume;
+          utterance.rate = rate;
+          const korean = window.speechSynthesis.getVoices().find(voice => voice.lang.startsWith("ko"));
+          if (korean) utterance.voice = korean;
+          utterance.onstart = () => {
+            if (current !== request || request.utterance !== utterance || request.started) return;
+            request.synthesized = true;
+            // Keep the pending MP3 until native speech actually starts. Missing
+            // language data or a stalled TTS engine must not discard usable audio.
+            if (audio) {
+              audio.onplaying = audio.onended = audio.onerror = null;
+              audio.pause();
+              audio.removeAttribute("src");
+              audio.load();
+            }
+            started();
+          };
+          utterance.onerror = () => {
+            if (current !== request || request.utterance !== utterance) return;
+            request.utterance = null;
+            if (request.synthesized || !audio || request.audioFailed) {
+              fail("안내 음성을 재생하지 못했습니다. 화면의 안내를 확인해 주세요.");
+            }
+          };
+          utterance.onend = () => {
+            if (request.utterance === utterance && request.synthesized) finish();
+          };
+          window.speechSynthesis.speak(utterance);
+          return true;
+        } catch (_) {
+          request.utterance = null;
+          return false;
         }
-        const utterance = new window.SpeechSynthesisUtterance(request.text);
-        utterance.lang = "ko-KR";
-        utterance.volume = settings.volume;
-        utterance.rate = rate;
-        const korean = window.speechSynthesis.getVoices().find(voice => voice.lang.startsWith("ko"));
-        if (korean) utterance.voice = korean;
-        utterance.onstart = started;
-        utterance.onerror = () => fail("안내 음성을 재생하지 못했습니다. 화면의 안내를 확인해 주세요.");
-        utterance.onend = finish;
-        try { window.speechSynthesis.speak(utterance); return true; }
-        catch (_) { return false; }
       };
       const rejected = error => {
         if (current !== request) return;
         // A late MP3 rejection must not cancel speech already handed to the device.
-        if (request.synthesized && request.fallbackAttempted) return true;
+        if (request.synthesized) return true;
+        request.audioFailed = true;
+        if (request.utterance) return true;
         // 서버 MP3를 사용할 수 없을 때 같은 우선순위 요청 안에서 한국어 합성을 시도한다.
         if (request.dynamic && !request.started && synthesize()) return true;
         const messages = {
@@ -197,8 +228,8 @@
         return false;
       };
       if (audio) {
-        audio.onplaying = started;
-        audio.onended = () => { if (audio.ended) finish(); };
+        audio.onplaying = mediaStarted;
+        audio.onended = () => { if (audio.ended && !request.synthesized) finish(); };
         audio.onerror = () => { if (audio.error) rejected({ name: "NotSupportedError" }); };
       }
       timer = setTimeout(() => fail("음성 재생이 지연되어 안내를 중단했습니다. 연결 상태를 확인하고 다시 시작해 주세요."),
@@ -212,13 +243,7 @@
         }, Math.min(1000, Math.max(0, validUntil - now()) / 2));
       }
       try {
-        if (request.synthesized) {
-          // 기존 번호 입력 질문은 브라우저 합성을 그대로 사용한다.
-          // MP3를 재생하지 않았으므로 합성 시작 때 불필요한 pause를 피한다.
-          if (audio) audio.onplaying = audio.onended = audio.onerror = null;
-          return synthesize(false);
-        }
-        if (!audio) return synthesize();
+        if (!audio) return synthesize() || rejected();
         const clip = CLIPS.get(request.text);
         if (audioContext?.state === "suspended") {
           audioContext.resume().catch(() => onError("브라우저가 안내 음성 재생을 차단했습니다. 사이트 소리 허용을 확인하고 테스트를 다시 시작해 주세요."));
@@ -235,7 +260,7 @@
         audio.playbackRate = serverRate ? 1 : rate;
         // await 없이 클릭 처리 중 호출해야 모바일의 사용자 동작으로 인정된다.
         const playing = audio.play();
-        playing?.then(started, rejected);
+        playing?.then(mediaStarted, rejected);
         return true;
       } catch (error) {
         return rejected(error);
