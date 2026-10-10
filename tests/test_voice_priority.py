@@ -90,6 +90,14 @@ def test_red_traffic_preempts_walking_without_queue():
     assert events == [(0.0, "walking-move-right-two.mp3"), (0.2, "red.mp3")]
 
 
+# 신호 확인 불가 도중 색상 재확인 우선순위 확인
+def test_traffic_color_preempts_missing_signal_voice():
+    """신호 확인 불가 재생 중 다시 확정한 초록불은 소실 안내를 끊고 바로 시작한다."""
+    with patch("src.voice_priority.clip_duration", return_value=1.0):
+        events = prioritize_voice_events([], [(0.0, "missing.mp3"), (0.5, "green.mp3")], [])
+    assert events == [(0.0, "missing.mp3"), (0.5, "green.mp3")]
+
+
 # 긴급 장애물 정지 음성의 최상위 우선순위 확인
 def test_emergency_walking_stop_preempts_crosswalk_and_red_traffic():
     """장애물 멈춤 안내는 횡단보도와 빨간불 음성을 즉시 중단한다."""

@@ -300,10 +300,12 @@ class TemporalSelector:
             # 횡단보도 연결 없이 신호등 하나만 보고 임시 선택한 대상은 ID 자체가
             # 선택 근거가 아니다. 현재도 추적 가능한 신호가 정확히 하나라면 끊긴
             # ID를 3초 기다리지 않고 그 신호를 새 임시 대상으로 선택한다.
+            # 연결 확인 중이던 대상이 사라진 경우에도 신호가 하나만 남아 1초가 지나면
+            # 3초를 다 기다리지 않고 그 신호를 임시 대상으로 선택한다.
             reselect_single = (
                 tracking["reason"] == "target_missing"
                 and self.target_origin == "single_signal"
-                and not self.target_requires_crosswalk
+                and (not self.target_requires_crosswalk or missing_ms >= self.SINGLE_RELEASE_MS)
                 and len(signals) == 1
                 and signals[0].get("track_id") is not None
             )
