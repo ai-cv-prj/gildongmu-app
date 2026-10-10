@@ -9,11 +9,13 @@ from src.settings import load_audio_settings
 
 AUDIO_SETTINGS = load_audio_settings()
 STABLE_FRAMES = AUDIO_SETTINGS["guidance"]["stable_frames"]
+STABLE_WINDOW_FRAMES = AUDIO_SETTINGS["guidance"]["stable_window_frames"]
 STABLE_SECONDS = AUDIO_SETTINGS["guidance"]["stable_ms"] / 1000
 MAX_GAP_SECONDS = AUDIO_SETTINGS["video_max_gap_ms"] / 1000
 MISSING_SECONDS = AUDIO_SETTINGS["guidance"]["missing_ms"] / 1000
 REPEAT_SECONDS = AUDIO_SETTINGS["guidance"]["traffic_repeat_ms"] / 1000
 CROSSING_HOLD_SECONDS = AUDIO_SETTINGS["guidance"]["traffic_crossing_hold_ms"] / 1000
+COLOR_MEMORY_SECONDS = AUDIO_SETTINGS["guidance"]["traffic_color_memory_ms"] / 1000
 # 전환 안내 후 같은 색상을 다시 읽을 때는 현재 색상만 안내한다.
 REPEAT_CLIPS = {"green-changed.mp3": "green.mp3", "red-changed.mp3": "red.mp3"}
 
@@ -27,7 +29,10 @@ class TrafficVoice:
         self.events = []
         self.target = None
         self.color = None
-        self.candidate = None
+        # 현재 대상의 최근 색상 관측이며, 인식불가 프레임은 넣지 않는다.
+        self.samples = []
+        # 대상 추적이 잠깐 끊겨도 직전에 확정한 대상·색상을 기억해 전환과 다른 신호의 초록을 구분한다.
+        self.remembered = None
         self.last_valid = None
         self.last_frame = None
         self.last_capture = None
@@ -52,6 +57,7 @@ class TrafficVoice:
         self.confirmed = self.missing_announced = False
         self.last_announced_target = self.last_announced_color = None
         self.last_announced_time = self.repeat_clip = None
+        self.remembered = None
 
     # 횡단 중 짧은 횡단보도 근거 소실 시 신호 음성만 중단
     def _hold(self, time_s):
@@ -69,7 +75,7 @@ class TrafficVoice:
         """연속 관측이 끊기면 전환 판단에 쓰던 색상과 후보를 지운다."""
         self.target = None
         self.color = None
-        self.candidate = None
+        self.samples = []
 
     # 전역 음성 우선순위에 사용할 신호 이벤트 기록
     def _announce(self, time_s, filename):
@@ -107,6 +113,8 @@ class TrafficVoice:
         if (self.confirmed and not self.missing_announced and self.last_valid is not None
                 and time_s - self.last_valid >= MISSING_SECONDS):
             self.missing_announced = True
+            # 소실을 알린 뒤에는 이전 관측을 버리고 다시 확정한 색상을 안내한다.
+            self._reset_evidence()
             self._announce(time_s, "missing.mp3")
         continuous = (self.last_frame is None or
                       (frame_id == self.last_frame + 1 and self.last_capture is not None
@@ -122,25 +130,33 @@ class TrafficVoice:
                     else None)
         target = selected.get("track_id") if selected else None
         next_color = result.get("signal_state")
+        # 인식불가 프레임은 색상 다수결에서 건너뛰고, 긴 공백은 위의 최대 간격 기준으로 정리한다.
         if type(target) is not int or next_color not in ("red", "green"):
-            self._reset_evidence()
             return
         self.last_valid = time_s
         if self.target != target:
             self._reset_evidence()
             self.target = target
-        if self.candidate is None or self.candidate["color"] != next_color:
-            self.candidate = {"color": next_color, "since": time_s, "count": 1}
-        else:
-            self.candidate["count"] += 1
-        if (self.candidate["count"] < STABLE_FRAMES or
-                time_s - self.candidate["since"] < STABLE_SECONDS - 1e-9):
+        # 최근 관측 중 같은 색이 기준 개수 이상이면 순간 오인식이 섞여도 색상을 확정한다.
+        self.samples.append((next_color, time_s))
+        del self.samples[:-STABLE_WINDOW_FRAMES]
+        votes = [at for color, at in self.samples if color == next_color]
+        if len(votes) < STABLE_FRAMES or time_s - votes[0] < STABLE_SECONDS - 1e-9:
             return
+        memory = (self.remembered if self.remembered is not None
+                  and time_s - self.remembered[2] <= COLOR_MEMORY_SECONDS + 1e-9 else None)
+        self.remembered = (target, next_color, time_s)
         if self.color == next_color:
             self._repeat(time_s)
             return
 
+        # 같은 대상이 짧게 끊긴 뒤 다른 색으로 확인되면 전환으로 안내한다.
         previous = self.color
+        if previous is None and memory is not None and memory[0] == target:
+            previous = memory[1]
+        # 빨간불을 보던 중 다른 신호등의 초록을 잡으면 바뀌는 순간을 보지 못한 초록으로 본다.
+        unverified_green = (next_color == "green" and memory is not None
+                            and memory[0] != target and memory[1] == "red")
         self.color = next_color
         first = not self.confirmed
         recovered = self.missing_announced
@@ -149,7 +165,7 @@ class TrafficVoice:
         if previous is not None and previous != next_color:
             clip = "green-changed.mp3" if next_color == "green" else "red-changed.mp3"
         elif next_color == "green":
-            clip = "green-initial-wait.mp3" if first else "green.mp3"
+            clip = "green-initial-wait.mp3" if first or unverified_green else "green.mp3"
         else:
             clip = "red.mp3"
         if self.last_announced_target == target and self.last_announced_color == next_color and not recovered:

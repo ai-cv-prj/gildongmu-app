@@ -14,12 +14,16 @@ audio:
   guidance:
     stable_ms: 400
     stable_frames: 3
+    # 최근 이 개수의 색상 관측 중 stable_frames 이상이 같은 색이면 확정한다. 인식불가는 세지 않는다.
+    stable_window_frames: 5
     max_age_ms: 1500
     missing_ms: 2000
     # 같은 대상·색상이 계속 확인되면 마지막 신호 안내 후 이 시간이 지나 다시 읽는다.
     traffic_repeat_ms: 5000
     # 건너도 되는 초록불을 안내하고 횡단 중일 때 파란 ROI의 횡단보도 근거가 이 시간보다 짧게 끊기면 신호 기억을 유지한다.
     traffic_crossing_hold_ms: 5000
+    # 신호를 잠깐 놓쳐도 이 시간 안에는 직전에 확정한 대상·색상을 기억해 전환 안내에 쓴다.
+    traffic_color_memory_ms: 5000
     # 파란 ROI 면적 중 횡단보도 마스크가 이 비율 이상일 때만 신호 음성을 허용한다.
     traffic_crosswalk_roi_min_fraction: 0.05
     walking_left_max_ratio: 0.35

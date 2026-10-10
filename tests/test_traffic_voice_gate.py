@@ -152,6 +152,42 @@ def test_finished_crossing_or_long_gate_loss_resets_signal(crossing_active, lost
     assert voice.events[-1] == (pytest.approx(start + .4), "green-initial-wait.mp3")
 
 
+# 순간 오인식이 섞인 색상 다수결 확인
+def test_majority_confirms_change_despite_single_flicker():
+    """초록 사이에 빨강 한 프레임이 섞여도 최근 다수 색상으로 전환을 확정한다."""
+    voice = TrafficVoice()
+    for index, color in enumerate(["red", "red", "red", "green", "green", "red", "green"]):
+        voice.observe(signal(color), index + 1, index * .2)
+    assert [clip for _, clip in voice.events] == ["red.mp3", "green-changed.mp3"]
+
+
+# 짧은 신호 소실 뒤 직전 색상 기억 확인
+@pytest.mark.parametrize("unknown_until,expected", [(2.6, "green-changed.mp3"), (6.0, "green.mp3")])
+def test_recent_color_memory_turns_recovery_into_change(unknown_until, expected):
+    """신호를 놓쳐도 5초 안에 같은 대상의 다른 색을 확인하면 전환으로 안내한다."""
+    voice = TrafficVoice()
+    for index in range(3):
+        voice.observe(signal("red"), index + 1, index * .2)
+    frame, time_s = 4, .6
+    while time_s < unknown_until - 1e-9:
+        voice.observe(signal(target=None), frame, time_s)
+        frame, time_s = frame + 1, round(time_s + .2, 1)
+    for index in range(3):
+        voice.observe(signal("green"), frame + index, time_s + index * .2)
+    assert [clip for _, clip in voice.events] == ["red.mp3", "missing.mp3", expected]
+
+
+# 빨간불 관측 중 다른 신호등 초록 확인
+def test_other_signal_green_after_red_is_unverified():
+    """빨간불을 보던 중 다른 대상의 초록을 잡으면 전환을 보지 못한 초록으로 대기 안내한다."""
+    voice = TrafficVoice()
+    for index in range(3):
+        voice.observe(signal("red"), index + 1, index * .2)
+    for index in range(3, 6):
+        voice.observe(signal("green", target=2), index + 1, index * .2)
+    assert [clip for _, clip in voice.events] == ["red.mp3", "green-initial-wait.mp3"]
+
+
 # ROI 밖 신호색 변화를 재진입 전환으로 오인하지 않기
 def test_color_changes_outside_roi_are_not_announced():
     """차단 중 색상 변화와 소실 안내를 생성하지 않고 재진입 시 최초 안내를 사용한다."""

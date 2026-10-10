@@ -135,3 +135,30 @@ test("빨간불 대기 중에는 횡단 상태여도 끊긴 뒤 신호를 새로
   for (const t of [800, 1000, 1200]) h.send("green", t, true, { crossing: true, target: 2 });
   assert.deepEqual(h.requests.map(item => item.text), ["빨간불", "초록불, 다음 신호까지 대기"]);
 });
+
+test("순간 오인식 한 프레임이 섞여도 최근 다수 색상으로 전환을 확정한다", () => {
+  const h = harness();
+  for (const t of [0, 200, 400]) h.send("red", t, true);
+  for (const [color, t] of [["green", 600], ["green", 800], ["red", 1000], ["green", 1200]]) h.send(color, t, true);
+  assert.deepEqual(h.requests.map(item => item.text), ["빨간불", "초록불로 바뀜"]);
+});
+
+test("신호를 잠깐 놓쳐도 5초 안에는 직전 색상을 기억해 전환으로 안내한다", () => {
+  for (const [nullTimes, start, expected] of [
+    [[1000, 1800, 2400], 2600, "초록불로 바뀜"],
+    [[1000, 1800, 2400, 3200, 4000, 4800, 5600], 6000, "초록불"],
+  ]) {
+    const h = harness();
+    for (const t of [0, 200, 400]) h.send("red", t, true);
+    for (const t of nullTimes) { h.send(null, t, true); h.tick(t); }
+    for (const t of [start, start + 200, start + 400]) h.send("green", t, true);
+    assert.deepEqual(h.requests.map(item => item.text), ["빨간불", "신호 확인 불가", expected]);
+  }
+});
+
+test("빨간불을 보던 중 다른 신호등의 초록은 대기 안내한다", () => {
+  const h = harness();
+  for (const t of [0, 200, 400]) h.send("red", t, true);
+  for (const t of [600, 800, 1000]) h.send("green", t, true, { target: 2 });
+  assert.deepEqual(h.requests.map(item => item.text), ["빨간불", "초록불, 다음 신호까지 대기"]);
+});

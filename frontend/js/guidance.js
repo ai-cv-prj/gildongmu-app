@@ -9,7 +9,10 @@
     const limits = audio.guidance;
     let active = false, sessionId = null, mock = false;
     let startedAt = 0, lastFrame = null, lastCapture = null, lastValid = null;
-    let target = null, color = null, candidate = null, missingAnnounced = false;
+    // samples는 현재 대상의 최근 색상 관측이며, 인식불가 프레임은 넣지 않는다.
+    let target = null, color = null, samples = [], missingAnnounced = false;
+    // 대상 추적이 잠깐 끊겨도 직전에 확정한 대상·색상을 기억해 전환과 다른 신호의 초록을 구분한다.
+    let remembered = null;
     let hasConfirmedSignal = false;
     let trafficAllowed = false;
     let mode = "traffic";
@@ -25,13 +28,13 @@
     let lastWalkingEvent = null;
 
     function update(text) { onChange({ active, text }); }
-    function resetEvidence() { target = null; color = null; candidate = null; retryText = null; }
+    function resetEvidence() { target = null; color = null; samples = []; retryText = null; }
     // 횡단보도 근거가 없으면 신호 음성과 이전 색상 기억을 해제한다.
     /** 다시 허용될 때 새 신호처럼 안정화하며 다른 출처의 음성은 유지한다. */
     function suspendTraffic() {
       trafficAllowed = false;
       hasConfirmedSignal = missingAnnounced = false;
-      lastAnnouncedColor = lastAnnouncedTarget = lastValid = null;
+      lastAnnouncedColor = lastAnnouncedTarget = lastValid = remembered = null;
       lastAnnouncedAt = repeatText = null;
       resetEvidence();
       coordinator.clear("traffic");
@@ -78,7 +81,7 @@
       trafficAllowed = false;
       lastAnnouncedColor = null;
       lastAnnouncedTarget = null;
-      lastAnnouncedAt = repeatText = null;
+      lastAnnouncedAt = repeatText = remembered = null;
       resetEvidence();
       lastWalkingAction = null;
       lastWalkingEvent = null;
@@ -98,7 +101,7 @@
     }
     function interrupt() {
       if (!active) return;
-      if (target !== null || candidate !== null) {
+      if (target !== null || samples.length) {
         resetEvidence();
         update("신호를 다시 확인하고 있습니다.");
       }
@@ -118,6 +121,8 @@
       if (age > audio.realtime_max_gap_ms) interrupt();
       if (hasConfirmedSignal && age >= limits.missing_ms && !missingAnnounced) {
         missingAnnounced = true;
+        // 소실을 알린 뒤에는 이전 관측을 버리고 다시 확정한 색상을 안내한다.
+        resetEvidence();
         announce("신호 확인 불가", now() + limits.max_age_ms, { missing: true });
       }
     }
@@ -175,11 +180,9 @@
       trafficAllowed = true;
       const index = event.selected_detection_index;
       const selected = Number.isInteger(index) && index >= 0 ? res.detections?.[index] : null;
+      // 인식불가 프레임은 색상 다수결에서 건너뛰고, 긴 공백은 tick의 소실 기준으로 정리한다.
       if (event.type !== "traffic_signal" || !selected || !Number.isInteger(selected.track_id) ||
-          !["red", "green"].includes(event.signal_state)) {
-        interrupt();
-        return;
-      }
+          !["red", "green"].includes(event.signal_state)) return;
       lastValid = capturedAt;
       if (target !== selected.track_id) {
         resetEvidence();
@@ -187,10 +190,14 @@
         update("안내 대상의 신호를 확인하고 있습니다.");
       }
       const next = event.signal_state;
-      if (!candidate || candidate.color !== next) {
-        candidate = { color: next, since: capturedAt, count: 1 };
-      } else candidate.count++;
-      if (candidate.count < limits.stable_frames || capturedAt - candidate.since < limits.stable_ms) return;
+      // 최근 관측 중 같은 색이 기준 개수 이상이면 순간 오인식이 섞여도 색상을 확정한다.
+      samples.push({ color: next, at: capturedAt });
+      if (samples.length > limits.stable_window_frames) samples.shift();
+      const votes = samples.filter(item => item.color === next);
+      if (votes.length < limits.stable_frames || capturedAt - votes[0].at < limits.stable_ms) return;
+      const memory = remembered && capturedAt - remembered.at <= limits.traffic_color_memory_ms
+        ? remembered : null;
+      remembered = { target, color: next, at: capturedAt };
       if (color === next) {
         if (retryText !== null) {
           announceSignal(retryText, capturedAt);
@@ -203,7 +210,10 @@
         }
         return;
       }
-      const previous = color;
+      // 같은 대상이 짧게 끊긴 뒤 다른 색으로 확인되면 전환으로 안내한다.
+      const previous = color ?? (memory?.target === target ? memory.color : null);
+      // 빨간불을 보던 중 다른 신호등의 초록을 잡으면 바뀌는 순간을 보지 못한 초록으로 본다.
+      const unverifiedGreen = next === "green" && memory?.target !== target && memory?.color === "red";
       color = next;
       const firstConfirmed = !hasConfirmedSignal;
       const recoveredAfterMissing = missingAnnounced;
@@ -214,7 +224,7 @@
       if (previous !== null && previous !== next) {
         text = next === "green" ? "초록불로 바뀜" : "빨간불로 바뀜";
       } else if (next === "green") {
-        text = firstConfirmed ? "초록불, 다음 신호까지 대기"
+        text = firstConfirmed || unverifiedGreen ? "초록불, 다음 신호까지 대기"
           : "초록불";
       } else text = "빨간불";
       if (lastAnnouncedTarget === target && lastAnnouncedColor === next && !recoveredAfterMissing) {
