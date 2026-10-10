@@ -74,17 +74,18 @@ def test_crossing_requires_only_sustained_roi_mask_and_inside_foot():
     assert result["crossing_active"]
 
 
-# 보라색 ROI 밖의 안정적인 횡단보도 경계 진입 확인
-def test_stable_near_geometry_can_confirm_entry_before_bottom_roi_fills():
-    """보라색 ROI까지 닿지 않아도 가까운 횡단보도 경계가 안정적이면 진입을 확정한다."""
+# 보라색 ROI 밖의 횡단보도 경계만으로 진입하지 않음 확인
+def test_stable_near_geometry_cannot_confirm_entry_without_bottom_roi():
+    """가까운 횡단보도 경계가 안정적이어도 보라색 ROI가 비면 진입하지 않는다."""
     item = engine()
     near = mask(bottom=.85)
     first = item.update(near, LABELS, SHAPE, SIGNAL, 0)
     result = item.update(near, LABELS, SHAPE, SIGNAL, .3)
     assert first["status"] == "search"
     assert first["crosswalk_roi"]["crosswalk_fraction"] == 0
-    assert result["status"] == "crossing"
-    assert result["reasons"] == ["geometry_entry_confirmed"]
+    assert result["status"] == "search"
+    assert not result["crossing_active"]
+    assert result["reasons"] == []
 
 
 # 진입 확인 중 짧은 가림 허용 확인
@@ -146,7 +147,7 @@ def test_crossing_entry_and_edge_is_silent():
 # 횡단 중 안정된 새 경계 승격 확인
 def test_stable_boundary_jump_is_held_then_promoted():
     """크게 이동한 경계가 안정적으로 유지되면 잠시 보류한 뒤 정상 경계로 승격한다."""
-    item = CrosswalkSafetyEngine({"entry_confirm_s": .2, "geometry_entry_confirm_s": .2,
+    item = CrosswalkSafetyEngine({"entry_confirm_s": .2,
                                   "max_boundary_shift": .1, "boundary_hold_s": .5,
                                   "boundary_candidate_confirm_s": .3,
                                   "boundary_smooth_s": .01})
@@ -164,7 +165,7 @@ def test_stable_boundary_jump_is_held_then_promoted():
 # 계속 흔들리는 경계의 판단 보류 확인
 def test_unstable_boundary_candidates_become_uncertain_after_hold():
     """서로 다른 새 경계가 반복되면 정상 경계로 승격하지 않고 판단을 보류한다."""
-    item = CrosswalkSafetyEngine({"entry_confirm_s": .2, "geometry_entry_confirm_s": .2,
+    item = CrosswalkSafetyEngine({"entry_confirm_s": .2,
                                   "max_boundary_shift": .1, "boundary_hold_s": .5,
                                   "boundary_candidate_confirm_s": .3,
                                   "boundary_smooth_s": .01})
