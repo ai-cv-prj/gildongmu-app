@@ -494,11 +494,16 @@
         lastBusCaptureAtMs = null;
         activeRoute = route; busScreen = "search"; void GCamera.setBusMode(true); view.setRoute(route);
         if (!temporaryScreen()) view.show("search");
+        coordinator.clear("interface");
+        coordinator.request({ source: "bus-start", priority: coordinator.PRIORITY.boarding,
+          text: `${route}번 버스 안내 시작.`, dynamic: true,
+          validUntil: performance.now() + 10000 });
         journey.start(route);
         if (paused) journey.pause();
       }
     } else {
       if (activeRoute) {
+        coordinator.clear("bus-start");
         journey.stop(); activeRoute = null; lastBusCaptureAtMs = null;
         void GCamera.setBusMode(false);
       }

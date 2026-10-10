@@ -3,7 +3,8 @@ const fs = require("node:fs");
 const vm = require("node:vm");
 
 module.exports = (async () => {
-  let now = 1000, current = null, view = null, calls = [], version = 1;
+  let now = 1000, current = null, view = null, calls = [], version = 1, nextFailure = null;
+  const errors = [];
   let server = { status: "awaiting_stop", arrival_event_id: 1, revision: version, bus_number: null };
   const coordinator = {
     PRIORITY: { emergency: 0, boarding: 6 },
@@ -23,6 +24,7 @@ module.exports = (async () => {
   };
   const api = { async boarding(id, action, event, number) {
     calls.push({ id, action, event, number });
+    if (nextFailure) { const failure = nextFailure; nextFailure = null; throw failure; }
     if (action === "input_ready") server.status = "pending";
     if (action === "cancel") server.status = "cancelled";
     if (action === "submit") { server.status = "submitted"; server.bus_number = number; }
@@ -33,7 +35,7 @@ module.exports = (async () => {
   const context = { window: {}, performance: { now: () => now } };
   vm.runInNewContext(fs.readFileSync("frontend/js/boarding.js", "utf8"), context);
   const guide = context.window.GBoarding.create({ api, coordinator, now: () => now,
-    onChange: next => { view = next; } });
+    onChange: next => { view = next; }, onError: message => errors.push(message) });
   const accept = (state = server, extra = {}) => guide.accept({ session_id: "session", boarding: { ...state },
     stop_proximity: { nearby: true }, ...extra }, now);
   const finish = () => { const old = current; current = null; old?.onComplete?.(); };
@@ -126,5 +128,36 @@ module.exports = (async () => {
   assert.equal(current, null, "입력 준비 응답과 음성 입력 종료 뒤에도 도착 안내를 재시작하지 않는다");
   assert.equal(await guide.submit("143"), true);
   guide.stop();
+  // A rejected submission keeps the input and its arrival token so a corrected
+  // request can succeed. Only the spoken error changes; transport details stay intact.
+  const failureCases = [
+    [Object.assign(new Error("현재 정류장 도착에 해당하는 요청이 아닙니다."), { status: 409 }),
+      "입력 상태 변경. 다시 입력."],
+    [Object.assign(new Error("버스 번호는 1~30자의 문자로 입력해 주세요."), { status: 422 }),
+      "번호 확인 불가. 직접 입력."],
+    [Object.assign(new Error("서버 응답 시간이 초과됐습니다."), { name: "TimeoutError", stage: "timeout" }),
+      "서버 응답 지연. 다시 시도."],
+    [Object.assign(new TypeError("Failed to fetch"), { stage: "request", request_id: "network-test" }),
+      "서버 연결 불가. 다시 시도."],
+    [Object.assign(new Error("서버 내부 오류 상세"), { status: 500 }), "요청 실패. 다시 시도."],
+    [new Error("알 수 없는 입력 오류"), "요청 실패. 다시 시도."],
+  ];
+  for (const [failure, message] of failureCases) {
+    server = { status: "pending", arrival_event_id: 5, revision: ++version,
+      arrival_source: "user_confirmed", bus_number: null };
+    guide.start("session"); accept(); guide.dismissPrompt();
+    const previous = { ...view }, originalMessage = failure.message;
+    nextFailure = failure;
+    assert.equal(await guide.submit("773"), false);
+    assert.deepEqual({ ...view }, previous, "실패는 입력 상태와 현재 도착 요청 번호를 변경하지 않는다");
+    assert.equal(errors.at(-1), message);
+    assert.equal(failure.message, originalMessage, "API 진단용 오류 원문을 유지한다");
+    assert.equal(await guide.submit("773"), true, "오류 후에도 같은 입력에서 다시 제출할 수 있다");
+    assert.equal(calls.at(-1).event, previous.arrival_event_id);
+    assert.equal(view.status, "submitted");
+    assert.equal(view.bus_number, "773");
+    assert.equal(view.busy, false);
+    guide.stop();
+  }
   console.log("boarding: pass");
 })();

@@ -1,6 +1,27 @@
 /** Arrival guidance, bus input and cancellation share one session. */
 (() => {
   const PROMPT = "정류장입니다. 버스를 선택하세요.";
+  const ERROR_MESSAGES = new Map([
+    ["횡단 중에는 버스 탑승 입력을 시작할 수 없습니다.", "횡단 중 입력 불가."],
+    ["현재 정류장 도착에 해당하는 요청이 아닙니다.", "입력 상태 변경. 다시 입력."],
+    ["탑승할 버스 번호를 입력해 주세요.", "번호 확인 불가. 직접 입력."],
+    ["버스 번호는 1~30자의 문자로 입력해 주세요.", "번호 확인 불가. 직접 입력."],
+    ["버스 번호 입력 화면을 먼저 열어 주세요.", "번호 입력 화면을 열어 주세요."],
+    ["현재 취소할 버스 번호 입력이 없습니다.", "취소할 입력 없음."],
+    ["확인된 정류장 도착이 없습니다.", "정류장 도착 확인 필요."],
+    ["지원하지 않는 탑승 입력 요청입니다.", "입력 요청 불가."],
+    ["진행 중인 세션이 없습니다.", "세션 종료됨. 안내 다시 시작."],
+  ]);
+
+  function boardingErrorMessage(error) {
+    const known = ERROR_MESSAGES.get(error?.message);
+    if (known) return known;
+    if (error?.name === "TimeoutError" || error?.stage === "timeout"
+        || error?.message === "서버 응답 시간이 초과됐습니다.") return "서버 응답 지연. 다시 시도.";
+    if (!error?.status && (error?.name === "TypeError" || error?.name === "NetworkError"
+        || error?.stage === "request")) return "서버 연결 불가. 다시 시도.";
+    return "요청 실패. 다시 시도.";
+  }
 
   function create({ api, coordinator, onChange = () => {}, onError = () => {},
     now = () => performance.now() }) {
@@ -35,7 +56,7 @@
         if (action === "arrive") { resultAt = now(); canEnter = true; }
         return true;
       } catch (error) {
-        if (generation === version) onError(error.message);
+        if (generation === version) onError(boardingErrorMessage(error));
         return false;
       } finally {
         if (generation === version) { busy = false; emit(); }

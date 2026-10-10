@@ -28,7 +28,7 @@
     function start(mode = "input") {
       stop();
       if (!Recognition) {
-        onError("이 브라우저는 음성 입력을 지원하지 않습니다. 번호를 입력하거나 화면의 버튼을 눌러 주세요.");
+        onError("음성 입력 지원 안함. 번호 직접 입력.");
         return false;
       }
       const token = generation;
@@ -53,27 +53,27 @@
           handled = true;
           const value = mode === "confirm" ? confirmation(transcript) : normalizeRouteTranscript(transcript);
           if (!value) {
-            onError(mode === "confirm" ? "답변을 확인하지 못했어요. 맞아요 또는 다시 입력을 눌러 주세요." : "번호를 확인하지 못했어요. 다시 말하거나 직접 입력해 주세요.");
+            onError(mode === "confirm" ? "답변 확인 불가. 맞아요 또는 다시 입력." : "번호 확인 불가. 다시 말하거나 직접 입력.");
           } else onResult({ mode, value, transcript });
         };
         next.onerror = event => {
           if (token !== generation || event.error === "aborted") return;
           handled = true;
           const messages = {
-            "not-allowed": "마이크 권한이 필요합니다. 브라우저 설정에서 허용하거나 번호를 직접 입력해 주세요.",
-            "service-not-allowed": "이 브라우저에서는 음성 입력을 사용할 수 없습니다. 번호를 직접 입력해 주세요.",
-            "audio-capture": "마이크를 사용할 수 없습니다. 번호를 직접 입력해 주세요.",
-            "no-speech": "음성이 들리지 않았어요. 다시 말하거나 번호를 직접 입력해 주세요.",
-            network: "음성 인식 서비스에 연결하지 못했어요. 번호를 직접 입력해 주세요.",
+            "not-allowed": "마이크 권한 필요.",
+            "service-not-allowed": "음성 인식 불가.",
+            "audio-capture": "마이크 사용 불가. 번호 직접 입력.",
+            "no-speech": "음성 감지 안됨. 다시 말하거나 직접 입력.",
+            network: "음성 인식 불가.",
           };
-          onError(messages[event.error] || "음성 입력을 완료하지 못했어요. 화면에서 입력해 주세요.");
+          onError(messages[event.error] || "음성 인식 불가.");
         };
         next.onend = () => {
           if (token !== generation) return;
           recognition = null;
           active = false;
           onState(false, mode);
-          if (!handled) onError("음성을 확인하지 못했어요. 다시 말하거나 화면에서 입력해 주세요.");
+          if (!handled) onError("음성 확인 불가. 다시 말하거나 직접 입력.");
         };
         next.start();
         active = true;
@@ -81,7 +81,7 @@
         return true;
       } catch (_) {
         stop();
-        onError("음성 입력을 시작하지 못했어요. 번호를 직접 입력해 주세요.");
+        onError("음성 입력 시작 불가. 번호 직접 입력.");
         return false;
       }
     }

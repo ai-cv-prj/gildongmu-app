@@ -217,6 +217,32 @@ test("수동 도착은 정지 음성 없이 입력을 열고 도착 안내가 �
   assert.equal(app.screen(), "search");
   assert.deepEqual(app.journeyStarts, ["143"]);
   assert.deepEqual(app.cameraModeCalls, [true]);
+  assert.equal(app.voice().text, "143번 버스 안내 시작.");
+  await app.action("back");
+  assert.equal(app.voice(), null, "입력 화면으로 돌아가면 시작 안내를 취소한다");
+  await app.end();
+});
+
+test("773 안내 시작은 제출 성공 후 한 번만 읽고 같은 상태의 프레임에서 반복하지 않는다", async () => {
+  const app = await harness({ deferRouteSubmit: true });
+  await app.action("start");
+  await app.action("manual-arrival");
+  await app.finishVoice();
+  const pending = app.submit("773");
+  await flush();
+  assert.equal(app.voice(), null, "서버가 제출을 수락하기 전에는 시작 안내를 하지 않는다");
+  assert.deepEqual(app.journeyStarts, []);
+  app.releaseSubmit();
+  await pending; await flush();
+  assert.equal(app.voice().text, "773번 버스 안내 시작.");
+  assert.equal(app.voice().dynamic, true);
+  assert.deepEqual(app.journeyStarts, ["773"]);
+  await app.finishVoice();
+  const frame = await app.capture();
+  await app.respond(0); await frame.pending;
+  await app.tick();
+  assert.equal(app.voice(), null);
+  assert.deepEqual(app.journeyStarts, ["773"]);
   await app.end();
 });
 
@@ -665,6 +691,7 @@ test("정류장 도착 후 늦은 장애물 결과와 재개를 차단하고 취
   assert.equal(app.voice()?.text, "보행로 이탈, 오른쪽 이동");
   await app.capture();
   const walking = app.guides[0];
+  const acceptedBeforeArrival = walking.accepted.length;
   const stops = walking.stops;
   await app.action("manual-arrival");
   assert.equal(walking.stops, stops + 1);
@@ -674,7 +701,7 @@ test("정류장 도착 후 늦은 장애물 결과와 재개를 차단하고 취
       detections: [{ class_name: "person" }], event: { level: "danger", voice_text: "멈추세요" } },
     walking_surface: { event: { status: "outside_left", repeat: true,
       voice_text: "보행로 이탈, 오른쪽 이동" } } });
-  assert.equal(walking.accepted.length, 0);
+  assert.equal(walking.accepted.length, acceptedBeforeArrival);
   assert.equal(app.renders.at(-1).walking.event.enabled, false);
   assert.equal(app.renders.at(-1).walking.mask_png, null);
   assert.equal(app.renders.at(-1).walking_surface.event.status, "disabled");
@@ -693,7 +720,7 @@ test("정류장 도착 후 늦은 장애물 결과와 재개를 차단하고 취
   assert.equal(walking.starts, starts + 1);
   await app.capture();
   await app.respond(2);
-  assert.equal(walking.accepted.length, 1);
+  assert.equal(walking.accepted.length, acceptedBeforeArrival + 1);
   await app.end();
 });
 

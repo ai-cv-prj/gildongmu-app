@@ -14,6 +14,7 @@
     let positionPoll = null, lastPositionPollAt = -Infinity, locationDenied = false;
     let arrivalUnavailable = false;
     let lastLookupAt = -Infinity, lastLookupPosition = null, lastOcrAt = -Infinity;
+    let lastSuppressedOtherCaptureAt = -Infinity;
     let observationStartedAt = 0;
     let manualStationKey = null, gps = {}, ocr = {}, arrivalEntry = null;
     let ocrPending = null, speakingArrival = null, speakingOcr = null;
@@ -82,6 +83,7 @@
       lastLookupPosition = null;
       lastLookupAt = -Infinity;
       lastOcrAt = -Infinity;
+      lastSuppressedOtherCaptureAt = -Infinity;
       if (!preserveSelection) manualStationKey = null;
       arrivalEntry = null;
       ocrPending = null;
@@ -101,16 +103,28 @@
         && entry.stop.current === entry.vehicle && entry.stop.phase === entry.phase;
     }
 
+    function confirmedTargetIsFresh() {
+      return ocrPending?.isTarget === true && ocrPending.state === "matched_candidate"
+        && freshCapture(ocrPending.capturedAt);
+    }
+
+    function hasFreshArrival() {
+      return Boolean(arrivalEntry && arrivalIsFresh(arrivalEntry));
+    }
+
     function sayArrival(replay = false) {
       const entry = arrivalEntry;
       if (!entry || !arrivalIsFresh(entry) || speakingArrival
-          || (!replay && ocrPending?.isTarget && freshCapture(ocrPending.capturedAt))
-          || (!replay && entry.vehicle.announcedPhase >= entry.phase)) return false;
+          || (!replay && confirmedTargetIsFresh())
+          // When GPS recovers, replace an in-progress other-route fallback even
+          // if this selected vehicle's arrival phase was heard before.
+          || (!replay && entry.vehicle.announcedPhase >= entry.phase
+            && speakingOcr?.isTarget !== false)) return false;
       const arrival = entry.match.arrival || {};
       const seconds = arrival.first_eta_seconds;
       const minute = /([0-9]+)분/.exec(arrival.first_arrival || "");
       const eta = Number.isFinite(seconds) && seconds > 0
-        ? seconds >= 60 ? `${Math.ceil(seconds / 60)}분 후` : `${Math.ceil(seconds)}초 후`
+        ? seconds >= 60 ? `${Math.round(seconds / 60)}분 후` : `${Math.ceil(seconds)}초 후`
         : minute ? `${minute[1]}분 후` : arrival.first_arrival || "도착정보 확인 중";
       const text = `도착정보. ${route}번, ${entry.phase === 3 ? "도착" : entry.phase === 2 ? "곧 도착" : eta}.`;
       const token = generation;
@@ -141,9 +155,16 @@
 
     function sayOcr(replay = false) {
       const item = ocrPending;
+      if (item && !item.isTarget && (speakingArrival || hasFreshArrival())) {
+        // GPS-suppressed observations must not become a delayed cue when GPS expires.
+        lastSuppressedOtherCaptureAt = Math.max(lastSuppressedOtherCaptureAt, item.capturedAt);
+        return false;
+      }
       if (!item || !active || paused || !freshCapture(item.capturedAt) || speakingOcr
           || item.isTarget && item.state !== "matched_candidate"
-          || (!replay && ocrAnnounced.has(item.key))) return false;
+          || (!replay && !item.isTarget && item.capturedAt <= lastSuppressedOtherCaptureAt)
+          // A previously heard target still needs a cue when it replaces GPS.
+          || (!replay && ocrAnnounced.has(item.key) && !(item.isTarget && speakingArrival))) return false;
       const alreadyConfirmed = item.state === "recognized_single" && ocrAnnounced.has(
         `${item.track_id ?? "unknown"}:${item.route_number}:confirmed`);
       if (!replay && (alreadyConfirmed || !item.isTarget && otherRecentlyAnnounced(item.route_number))) return false;
@@ -586,14 +607,18 @@
 
     function repeat() {
       if (!active || paused) return false;
-      if (ocrPending && freshCapture(ocrPending.capturedAt)) {
+      if (confirmedTargetIsFresh()) {
         clearSpeech("bus-ocr");
         return sayOcr(true);
       }
-      if (arrivalEntry && arrivalIsFresh(arrivalEntry)) {
+      if (hasFreshArrival()) {
         clearSpeech("bus-ocr");
         clearSpeech("bus-arrival");
         return sayArrival(true);
+      }
+      if (ocrPending && freshCapture(ocrPending.capturedAt)) {
+        clearSpeech("bus-ocr");
+        return sayOcr(true);
       }
       return false;
     }

@@ -8,6 +8,7 @@ function harness({ noAudio = false, playFailure = false, deferred = false, navig
   let audio = null, resolvePlayback = null, rejectPlayback = null, utterance = null, cancels = 0;
   const audioSources = [], playbackSources = [], utterances = [], connections = [], timers = new Map();
   let timerId = 0, clock = 0;
+  const intervals = new Map();
   class Audio {
     constructor() { audio = this; this.loads = 0; this.pauses = 0; this.defaultPlaybackRate = this.playbackRate = 1; }
     pause() { this.pauses++; }
@@ -41,9 +42,11 @@ function harness({ noAudio = false, playFailure = false, deferred = false, navig
       if (!speechDeferred) value.onstart?.();
     },
       cancel() { cancels++; } },
-  }, performance: { now: () => clock },
+  }, AbortController, performance: { now: () => clock },
     setTimeout(fn, delay) { const id = ++timerId; timers.set(id, { fn, at: clock + delay }); return id; },
-    clearTimeout(id) { timers.delete(id); }, setInterval: () => 1, clearInterval() {} };
+    clearTimeout(id) { timers.delete(id); },
+    setInterval(fn) { const id = ++timerId; intervals.set(id, fn); return id; },
+    clearInterval(id) { intervals.delete(id); } };
   vm.createContext(context);
   for (const name of ["tts", "audio_coordinator", "gps-motion", "gps-stop-select", "bus-journey"]) {
     vm.runInContext(fs.readFileSync(`frontend/js/${name}.js`, "utf8"), context);
@@ -51,8 +54,11 @@ function harness({ noAudio = false, playFailure = false, deferred = false, navig
   const player = context.window.GTts.create();
   const coordinator = context.window.GAudioCoordinator.create({ player });
   return { player, coordinator, audio: () => audio, utterance: () => utterance, cancels: () => cancels,
-    journey: () => context.window.GBusJourney.create({ coordinator, geolocation: {},
-      now: () => 100000 + clock, monotonicNow: () => clock }),
+    journey: (options = {}) => context.window.GBusJourney.create({ coordinator, geolocation: {},
+      now: () => 100000 + clock, monotonicNow: () => clock, ...options }),
+    now: () => 100000 + clock,
+    tick() { for (const fn of intervals.values()) fn(); coordinator.tick(); },
+    audioFailure: () => rejectPlayback,
     audioSources, playbackSources, utterances, connections, timers,
     step(ms) {
       const end = clock + ms;
@@ -246,6 +252,134 @@ test("서버 MP3가 시작했거나 안내가 취소되면 지연 대체 음성�
 });
 
 const android = { userAgent: "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 Chrome/140.0" };
+
+const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
+const busSpeechSource = text => `/api/bus-arrival-speech?text=${encodeURIComponent(text)}`;
+
+async function gpsJourney(app) {
+  let receivePosition;
+  const events = [];
+  const geolocation = { watchPosition(success) { receivePosition = success; return 1; }, clearWatch() {} };
+  const api = { nearbyBusArrival: async () => ({ matches: [{
+    station: { station_id: "station-a", station_name: "테스트 정류장", latitude: 37.5,
+      longitude: 127, distance_m: 0 }, bus_route_id: "route-773",
+    arrival: { route_id: "route-773", direction: "종점", station_order: 1,
+      first_arrival: "3분 후", first_arrival_state: "approaching", first_vehicle_id: "vehicle-1" },
+    announcement: "테스트 정류장에 773번 버스가 3분 후 도착합니다.",
+  }] }) };
+  const journey = app.journey({ api, geolocation, onEvent: event => events.push(event) });
+  app.coordinator.start();
+  journey.start("773");
+  receivePosition({ timestamp: app.now(), coords: { latitude: 37.5, longitude: 127, accuracy: 5 } });
+  await flush();
+  assert.equal(journey.snapshot().gps.status, "ready");
+  const detect = ({ target = false, state = "matched_candidate", id = 4 } = {}) => {
+    const observation = { track_id: id, route_number: target ? "773" : "7011", state,
+      token_score: .99, is_target: target };
+    journey.accept({ status: "ready", captured_at_ms: app.now(), event: { target_route: "773",
+      matches: target ? [observation] : [], recognized_routes: target ? [] : [observation] } });
+  };
+  return { journey, detect, events };
+}
+
+test("773 도착정보 MP3 재생 중 목표 773 확인은 이전 음성을 끊고 확인 안내로 교체한다", async () => {
+  const app = harness();
+  const { journey, detect, events } = await gpsJourney(app);
+  assert.equal(app.audio().src, busSpeechSource("도착정보. 773번, 3분 후."));
+  const loads = app.audio().loads, pauses = app.audio().pauses;
+  const latePlaying = app.audio().onplaying, lateEnded = app.audio().onended;
+  detect({ target: true });
+  const targetSource = busSpeechSource("773 목표 버스 확인.");
+  assert.equal(app.audio().src, targetSource);
+  assert.equal(app.audio().pauses, pauses + 1);
+  assert.ok(app.audio().loads > loads, "목표 버스 확인 음원을 새로 로딩한다");
+  assert.deepEqual(app.playbackSources, [busSpeechSource("도착정보. 773번, 3분 후."), targetSource]);
+  latePlaying?.(); lateEnded?.();
+  assert.equal(app.audio().src, targetSource);
+  assert.equal(events.filter(event => event.type === "bus_arrival_speech_completed").length, 0);
+  assert.equal(events.filter(event => event.type === "bus_ocr_speech_started").length, 1);
+  app.finishAudio(); app.tick();
+  assert.equal(app.playbackSources.length, 2, "확인 뒤 이전 도착정보를 자동으로 재생하지 않는다");
+  journey.stop(); app.coordinator.stop();
+});
+
+test("773 도착정보 MP3 재생 중 목표 번호 후보는 현재 음원을 중단하지 않는다", async () => {
+  const app = harness();
+  const { journey, detect } = await gpsJourney(app);
+  const source = app.audio().src, loads = app.audio().loads, pauses = app.audio().pauses;
+  detect({ target: true, state: "recognized_single" }); app.tick();
+  assert.equal(journey.snapshot().ocr.confirmed, false);
+  assert.equal(app.audio().src, source);
+  assert.equal(app.audio().loads, loads);
+  assert.equal(app.audio().pauses, pauses);
+  assert.deepEqual(app.playbackSources, [source]);
+  assert.equal(app.utterance(), null);
+  journey.stop(); app.coordinator.stop();
+});
+
+test("773 도착정보 MP3 재생 중 7011 인식은 음원을 유지하고 종료 뒤에도 다른 버스 안내를 지연 재생하지 않는다", async () => {
+  const app = harness();
+  const { journey, detect } = await gpsJourney(app);
+  const source = app.audio().src, loads = app.audio().loads, pauses = app.audio().pauses;
+  detect(); app.step(500); app.tick();
+  assert.equal(journey.snapshot().ocr.routeNumber, "7011");
+  assert.equal(journey.snapshot().ocr.isTarget, false);
+  assert.equal(app.audio().src, source);
+  assert.equal(app.audio().loads, loads);
+  assert.equal(app.audio().pauses, pauses);
+  assert.deepEqual(app.playbackSources, [source]);
+  app.finishAudio(); app.tick();
+  app.step(500); detect({ id: 5 }); app.tick();
+  assert.deepEqual(app.playbackSources, [source], "최신 773 도착정보가 있으면 7011 안내를 뒤늦게 재생하지 않는다");
+  assert.equal(app.utterance(), null);
+  journey.stop(); app.coordinator.stop();
+});
+
+test("7011 인식 후 다시 듣기도 최신 773 도착정보 MP3를 재생한다", async () => {
+  const app = harness();
+  const { journey, detect } = await gpsJourney(app);
+  const source = app.audio().src;
+  detect(); app.finishAudio();
+  assert.equal(journey.repeat(), true);
+  assert.equal(app.audio().src, source);
+  assert.deepEqual(app.playbackSources, [source, source]);
+  app.finishAudio(); app.tick();
+  assert.equal(app.playbackSources.length, 2);
+  journey.stop(); app.coordinator.stop();
+});
+
+test("773 확인으로 전환한 뒤 이전 도착정보 MP3·Android 기기 합성의 늦은 콜백은 현재 확인 안내를 끊지 않는다", async () => {
+  const app = harness({ navigator: android, deferred: true, speechDeferred: true });
+  const { journey, detect, events } = await gpsJourney(app);
+  const latePlaying = app.audio().onplaying, lateEnded = app.audio().onended;
+  const lateReject = app.audioFailure();
+  app.step(1000);
+  const oldSpeech = app.utterance();
+  assert.equal(oldSpeech.text, "도착정보. 773번, 3분 후.");
+  const lateStart = oldSpeech.onstart, lateEnd = oldSpeech.onend, lateError = oldSpeech.onerror;
+  detect({ target: true });
+  const targetSource = busSpeechSource("773 목표 버스 확인.");
+  assert.equal(app.audio().src, targetSource);
+  app.step(1000);
+  const targetSpeech = app.utterance();
+  assert.equal(targetSpeech.text, "773 목표 버스 확인.");
+  assert.notEqual(targetSpeech, oldSpeech);
+  const loads = app.audio().loads, pauses = app.audio().pauses, cancels = app.cancels();
+  latePlaying?.(); lateEnded?.(); lateStart?.(); lateEnd?.(); lateError?.({ error: "canceled" });
+  lateReject(Object.assign(new Error("late GPS error"), { name: "NotSupportedError" }));
+  await flush();
+  assert.equal(app.audio().src, targetSource);
+  assert.equal(app.audio().loads, loads);
+  assert.equal(app.audio().pauses, pauses);
+  assert.equal(app.cancels(), cancels);
+  assert.equal(events.filter(event => event.type === "bus_arrival_speech_completed").length, 0);
+  app.startSpeech();
+  assert.equal(events.filter(event => event.type === "bus_ocr_speech_started").length, 1);
+  targetSpeech.onend?.();
+  assert.equal(events.filter(event => event.type === "bus_ocr_speech_completed").length, 1);
+  assert.equal(app.timers.size, 0);
+  journey.stop(); app.coordinator.stop();
+});
 
 for (const [mode, options] of [["한국어 엔진 초기화 대기", { voices: [], speechDeferred: true }],
   ["기기 합성 시작 대기", { speechDeferred: true }], ["기기 합성 호출 실패", { speechThrow: true }],
