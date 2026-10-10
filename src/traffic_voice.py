@@ -92,7 +92,9 @@ class TrafficVoice:
         if (result.get("voice_gate") or {}).get("allowed") is not True:
             if self.gate_lost_time is None:
                 self.gate_lost_time = time_s
-            if (crossing_active and self.confirmed
+            # 건너도 되는 초록불을 안내하고 건너는 중일 때만 유지한다.
+            # 빨간불이나 대기 안내 뒤에는 기존처럼 새로 확인해 대기 안내를 이어 간다.
+            if (crossing_active and self.repeat_clip == "green.mp3"
                     and time_s - self.gate_lost_time < CROSSING_HOLD_SECONDS - 1e-9):
                 self._hold(time_s)
             else:

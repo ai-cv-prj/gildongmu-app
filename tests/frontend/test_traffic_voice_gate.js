@@ -93,26 +93,45 @@ test("허용 정보 누락과 프레임 소실은 신호 안내를 차단한다"
   assert.deepEqual(h.requests.map(item => item.text), ["빨간불"]);
 });
 
-test("횡단 중 짧게 끊긴 뒤 다른 대상의 초록불은 대기 문구 없이 안내한다", () => {
+test("초록불로 바뀐 뒤 건너는 중 짧게 끊기면 다른 대상의 초록불은 대기 문구 없이 안내한다", () => {
   const h = harness();
   const crossing = { crossing: true };
-  for (const t of [0, 200, 400]) h.send("green", t, true, crossing);
-  h.send("green", 600, false, crossing);
-  h.send("green", 800, false, crossing);
+  for (const t of [0, 200, 400]) h.send("red", t, true, crossing);
+  for (const t of [600, 800, 1000]) h.send("green", t, true, crossing);
+  h.send("green", 1200, false, crossing);
+  h.send("green", 1400, false, crossing);
   assert.ok(h.cleared.includes("traffic"));
-  for (const t of [1000, 1200, 1400]) h.send("green", t, true, { crossing: true, target: 2 });
-  assert.deepEqual(h.requests.map(item => item.text), ["초록불, 다음 신호까지 대기", "초록불"]);
+  for (const t of [1600, 1800, 2000]) h.send("green", t, true, { crossing: true, target: 2 });
+  assert.deepEqual(h.requests.map(item => item.text), ["빨간불", "초록불로 바뀜", "초록불"]);
 });
 
 test("횡단이 끝났거나 근거가 오래 끊기면 다시 잡은 초록불을 처음처럼 안내한다", () => {
   for (const [crossing, lostMs] of [[false, 200], [true, 5000]]) {
     const h = harness();
-    for (const t of [0, 200, 400]) h.send("green", t, true, { crossing: true });
-    h.send("green", 600, false, { crossing });
-    h.send("green", 600 + lostMs, false, { crossing });
-    const start = 800 + lostMs;
+    for (const t of [0, 200, 400]) h.send("red", t, true, { crossing: true });
+    for (const t of [600, 800, 1000]) h.send("green", t, true, { crossing: true });
+    h.send("green", 1200, false, { crossing });
+    h.send("green", 1200 + lostMs, false, { crossing });
+    const start = 1400 + lostMs;
     for (const t of [start, start + 200, start + 400]) h.send("green", t, true, { crossing, target: 2 });
     assert.deepEqual(h.requests.map(item => item.text),
-      ["초록불, 다음 신호까지 대기", "초록불, 다음 신호까지 대기"]);
+      ["빨간불", "초록불로 바뀜", "초록불, 다음 신호까지 대기"]);
   }
+});
+
+test("대기 안내 뒤에는 건너는 중 끊겨도 다시 잡은 초록불을 대기 안내한다", () => {
+  const h = harness();
+  for (const t of [0, 200, 400]) h.send("green", t, true, { crossing: true });
+  h.send("green", 600, false, { crossing: true });
+  for (const t of [800, 1000, 1200]) h.send("green", t, true, { crossing: true, target: 2 });
+  assert.deepEqual(h.requests.map(item => item.text),
+    ["초록불, 다음 신호까지 대기", "초록불, 다음 신호까지 대기"]);
+});
+
+test("빨간불 대기 중에는 횡단 상태여도 끊긴 뒤 신호를 새로 확인한다", () => {
+  const h = harness();
+  for (const t of [0, 200, 400]) h.send("red", t, true, { crossing: true });
+  h.send("red", 600, false, { crossing: true });
+  for (const t of [800, 1000, 1200]) h.send("green", t, true, { crossing: true, target: 2 });
+  assert.deepEqual(h.requests.map(item => item.text), ["빨간불", "초록불, 다음 신호까지 대기"]);
 });

@@ -163,7 +163,9 @@
       }
       if (event.voice_gate?.allowed !== true) {
         gateLostAt ??= capturedAt;
-        if (res.crossing_active === true && hasConfirmedSignal
+        // 건너도 되는 초록불을 안내하고 건너는 중일 때만 유지한다.
+        // 빨간불이나 대기 안내 뒤에는 기존처럼 새로 확인해 대기 안내를 이어 간다.
+        if (res.crossing_active === true && repeatText === "초록불"
             && capturedAt - gateLostAt < limits.traffic_crossing_hold_ms) holdTraffic(capturedAt);
         else suspendTraffic();
         update("횡단보도 접근을 확인하고 있습니다.");

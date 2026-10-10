@@ -105,17 +105,33 @@ def test_signal_requires_gate_then_fresh_confirmation(color):
 
 # 횡단 중 짧은 횡단보도 근거 소실 뒤 신호 기억 유지 확인
 def test_crossing_keeps_confirmed_signal_through_short_gate_loss():
-    """횡단 중 짧게 끊긴 뒤 다른 대상의 초록불을 잡으면 대기 문구 없이 초록불만 안내한다."""
+    """초록불로 바뀐 뒤 건너는 중 짧게 끊기면 다른 대상의 초록불을 대기 문구 없이 안내한다."""
     voice = TrafficVoice()
     for index in range(3):
+        voice.observe(signal("red"), index + 1, index * .2, crossing_active=True)
+    for index in range(3, 6):
         voice.observe(signal("green"), index + 1, index * .2, crossing_active=True)
-    assert voice.events == [(.4, "green-initial-wait.mp3")]
-    voice.observe(signal("green", allowed=False), 4, .6, crossing_active=True)
-    voice.observe(signal("green", allowed=False), 5, .8, crossing_active=True)
-    assert voice.events[-1] == (.6, None)
-    for index in range(5, 8):
+    assert [clip for _, clip in voice.events] == ["red.mp3", "green-changed.mp3"]
+    voice.observe(signal("green", allowed=False), 7, 1.2, crossing_active=True)
+    voice.observe(signal("green", allowed=False), 8, 1.4, crossing_active=True)
+    assert voice.events[-1] == (1.2, None)
+    for index in range(8, 11):
         voice.observe(signal("green", target=2), index + 1, index * .2, crossing_active=True)
-    assert voice.events[-1] == (pytest.approx(1.4), "green.mp3")
+    assert voice.events[-1] == (pytest.approx(2.0), "green.mp3")
+
+
+# 빨간불·대기 안내 뒤 횡단 상태에서도 신호 기억 해제 확인
+@pytest.mark.parametrize("first,expected", [("red", "green-initial-wait.mp3"),
+                                            ("green", "green-initial-wait.mp3")])
+def test_red_or_wait_announcement_still_resets_signal(first, expected):
+    """빨간불이나 대기 안내 뒤에는 횡단 상태여도 끊긴 뒤 다른 대상의 초록불을 대기 안내한다."""
+    voice = TrafficVoice()
+    for index in range(3):
+        voice.observe(signal(first), index + 1, index * .2, crossing_active=True)
+    voice.observe(signal(first, allowed=False), 4, .6, crossing_active=True)
+    for index in range(4, 7):
+        voice.observe(signal("green", target=2), index + 1, index * .2, crossing_active=True)
+    assert voice.events[-1] == (pytest.approx(1.2), expected)
 
 
 # 횡단 종료 또는 긴 근거 소실 뒤 새 신호 확인
@@ -124,12 +140,14 @@ def test_finished_crossing_or_long_gate_loss_resets_signal(crossing_active, lost
     """횡단이 끝났거나 근거가 설정 시간 이상 끊기면 다시 잡은 초록불을 처음처럼 대기 안내한다."""
     voice = TrafficVoice()
     for index in range(3):
+        voice.observe(signal("red"), index + 1, index * .2, crossing_active=True)
+    for index in range(3, 6):
         voice.observe(signal("green"), index + 1, index * .2, crossing_active=True)
-    voice.observe(signal("green", allowed=False), 4, .6, crossing_active=crossing_active)
-    voice.observe(signal("green", allowed=False), 5, .6 + lost_s, crossing_active=crossing_active)
-    start = .8 + lost_s
+    voice.observe(signal("green", allowed=False), 7, 1.2, crossing_active=crossing_active)
+    voice.observe(signal("green", allowed=False), 8, 1.2 + lost_s, crossing_active=crossing_active)
+    start = 1.4 + lost_s
     for index in range(3):
-        voice.observe(signal("green", target=2), index + 6, start + index * .2,
+        voice.observe(signal("green", target=2), index + 9, start + index * .2,
                       crossing_active=crossing_active)
     assert voice.events[-1] == (pytest.approx(start + .4), "green-initial-wait.mp3")
 
