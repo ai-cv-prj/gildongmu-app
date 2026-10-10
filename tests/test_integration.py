@@ -21,6 +21,7 @@ from src.pipeline import (
     DEFAULT_CONFIG,
     PROJECT_DIR,
     find_sample_videos,
+    inspect_video_timing,
     load_config,
     process_video,
     prepare_recorded_frame,
@@ -83,6 +84,23 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(config["yolo"]["conf"], 0.25)
         self.assertEqual(config["yolo"]["imgsz"], 640)
         self.assertEqual(config["yolo"]["head"], "nms")
+
+    # WebM 프레임 PTS 기반 FPS 계산 확인
+    def test_webm_timing_uses_frame_pts(self):
+        """잘못된 메타데이터 FPS 대신 프레임 PTS 간격으로 실제 FPS를 계산한다."""
+        capture = Mock()
+        capture.isOpened.return_value = True
+        frame = np.zeros((2, 2, 3), dtype=np.uint8)
+        capture.read.side_effect = [(True, frame)] * 3 + [(False, None)]
+        timestamps = iter((0.0, 20.0, 40.0))
+        capture.get.side_effect = lambda prop: next(timestamps)
+        with patch("src.pipeline.cv2.VideoCapture", return_value=capture):
+            frame_count, first_pts_ms, last_pts_ms, fps = inspect_video_timing("recording.webm")
+        self.assertEqual(frame_count, 3)
+        self.assertEqual(first_pts_ms, 0.0)
+        self.assertEqual(last_pts_ms, 40.0)
+        self.assertAlmostEqual(fps, 50.0)
+        capture.release.assert_called_once()
 
     # 모델별 가중치 설정 검증
     def test_invalid_mask2former_weights_config_rejected(self):

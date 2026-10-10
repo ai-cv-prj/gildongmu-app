@@ -140,6 +140,8 @@ def load_audio_settings(config_path=DEFAULT_AUDIO_CONFIG):
         number(guidance, key, 1, 300000, integer=True)
     left = number(guidance, "walking_left_max_ratio", 0, 1)
     right = number(guidance, "walking_right_min_ratio", 0, 1)
+    crowded_left = number(guidance, "walking_crowded_center_left_ratio", 0, 1)
+    crowded_right = number(guidance, "walking_crowded_center_right_ratio", 0, 1)
     number(guidance, "walking_center_intrusion_ratio", 0, 1)
     number(guidance, "walking_side_intrusion_ratio", 0, 1)
     number(guidance, "walking_voice_immediate_overlap_ratio", 0, 1)
@@ -159,6 +161,8 @@ def load_audio_settings(config_path=DEFAULT_AUDIO_CONFIG):
             number(guidance, key, 1, 300000, integer=True)
     if left >= right:
         raise ValueError("walking_left_max_ratio는 walking_right_min_ratio보다 작아야 합니다.")
+    if not left < crowded_left < crowded_right < right:
+        raise ValueError("혼잡 중앙 구간은 보행 가운데 영역 안에서 왼쪽부터 설정해야 합니다.")
     if two_step_exit >= two_step_enter:
         raise ValueError("walking_two_step_exit_ratio는 walking_two_step_enter_ratio보다 작아야 합니다.")
     return audio

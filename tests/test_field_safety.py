@@ -82,12 +82,12 @@ def test_clip002_center_people_do_not_veto_clear_right_step():
     assert result["voice_diagnostics"]["direction_safety"]["right"]["allowed"]
 
 
-def test_center_person_crossing_into_near_right_still_vetoes_direction():
+def test_center_person_crossing_into_near_right_uses_blocked_warning():
     result = prediction(danger_item(1, [20, 20, 40, 75]),
                         caution_item(2, [45, 30, 60, 60],
                                      motion={"quality": "valid", "velocity_norm_per_s": [.2, .1]}))
     assert walking_action(result, 100) == "right"
-    assert WalkingVoice().observe(result, 100, 0)[0] == "혼잡 주의"
+    assert WalkingVoice().observe(result, 100, 0)[0] == "전방 장애물"
     assert result["voice_diagnostics"]["direction_safety"]["right"]["blockers"] == [2]
 
 
@@ -100,11 +100,11 @@ def test_distant_side_person_does_not_block_until_predicted_near_entry():
     assert not direction_safety(result, 100)["right"]["allowed"]
 
 
-def test_people_on_both_sides_use_crowd_without_waiting_for_both_to_be_danger():
+def test_caution_route_blocker_uses_blocked_without_three_direction_dangers():
     result = prediction(danger_item(1, [20, 20, 43, 75]),
                         caution_item(2, [70, 20, 85, 75]))
     assert walking_action(result, 100) == "right"
-    assert WalkingVoice().observe(result, 100, 0)[0] == "혼잡 주의"
+    assert WalkingVoice().observe(result, 100, 0)[0] == "전방 장애물"
 
 
 def test_crowd_keeps_one_message_when_distribution_becomes_blocked():

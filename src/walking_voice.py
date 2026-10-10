@@ -17,6 +17,8 @@ from src.walking_direction import direction_ground, direction_safety, warning_di
 GUIDANCE = load_audio_settings()["guidance"]
 LEFT_MAX_RATIO = GUIDANCE["walking_left_max_ratio"]
 RIGHT_MIN_RATIO = GUIDANCE["walking_right_min_ratio"]
+CROWDED_CENTER_LEFT_RATIO = GUIDANCE["walking_crowded_center_left_ratio"]
+CROWDED_CENTER_RIGHT_RATIO = GUIDANCE["walking_crowded_center_right_ratio"]
 VOICE_IMMEDIATE_OVERLAP_RATIO = GUIDANCE["walking_voice_immediate_overlap_ratio"]
 DISTANCE_TIE_RATIO = GUIDANCE["walking_distance_tie_ratio"]
 WALKABLE_SIDE_TIE_RATIO = GUIDANCE["walking_walkable_side_tie_ratio"]
@@ -324,9 +326,6 @@ def direction_voice_action(action, safety):
         available = [side for side in ("left", "right") if safety[side]["allowed"]]
         if len(available) == 1:
             return available[0]
-        left, right = safety["left"]["blockers"], safety["right"]["blockers"]
-        if left and right and len(set(left + right)) >= 2:
-            return "crowded"
     return action
 
 
@@ -372,6 +371,31 @@ def rapid_approach_hazard(item):
     return (motion.get("quality") == "valid"
             and bool({"approaching_near_path", "short_ttc",
                       "predicted_moving_conflict"}.intersection(reasons)))
+
+
+# 혼잡 안내에 필요한 화면 중앙 점유 확인
+def crowded_center_intrusion(items, image_width):
+    """위험 객체가 화면 가로 45~55% 구간을 침범했는지 반환한다."""
+    if image_width <= 0:
+        return False
+    start = image_width * CROWDED_CENTER_LEFT_RATIO
+    end = image_width * CROWDED_CENTER_RIGHT_RATIO
+    for item in items:
+        try:
+            left, right = float(item["xyxy"][0]), float(item["xyxy"][2])
+        except (KeyError, TypeError, ValueError, IndexError):
+            continue
+        if (all(isfinite(value) for value in (left, right))
+                and left < end - 1e-9 and right > start + 1e-9):
+            return True
+    return False
+
+
+# 위험 객체가 차지한 좌·중·우 방향 통합
+def danger_directions(items, image_width):
+    """음성 대상 위험 객체들이 침범한 화면 방향 집합을 반환한다."""
+    return {direction for item in items
+            for direction in warning_directions(item, image_width)}
 
 
 # 후보 방향과 객체 박스 사이의 가로 거리 계산
@@ -464,8 +488,7 @@ def walking_action(prediction, image_width, crossing_active=False, stationary_vo
     dangers = guidance_items(prediction, "danger", crossing_active, stationary_voice)
     if any("predicted_moving_conflict" in item.get("reasons", []) for item in dangers):
         return "stop"
-    directions = {direction for item in dangers
-                  for direction in warning_directions(item, image_width)}
+    directions = danger_directions(dangers, image_width)
     if "center" not in directions:
         return None
     if directions == {"left", "center"}:
@@ -473,7 +496,7 @@ def walking_action(prediction, image_width, crossing_active=False, stationary_vo
     if directions == {"center", "right"}:
         return "left"
     if directions == {"left", "center", "right"}:
-        return "crowded"
+        return "crowded" if crowded_center_intrusion(dangers, image_width) else "blocked"
     if directions == {"center"}:
         return safer_side(
             dangers, image_width, prediction.get("walkable_sides")) or "blocked"
@@ -571,10 +594,13 @@ class WalkingVoice:
         vehicle_only = crossing_active or crosswalk_status == "approach"
         candidate_action = walking_action(evidence, image_width, vehicle_only, True)
         safety = direction_safety(evidence, image_width)
-        raw_action = direction_voice_action(candidate_action, safety)
+        eligible = guidance_items(evidence, "danger", vehicle_only, True)
+        all_directions_danger = danger_directions(eligible, image_width) == {
+            "left", "center", "right"}
+        raw_action = (candidate_action if candidate_action == "blocked" and all_directions_danger
+                      else direction_voice_action(candidate_action, safety))
         unsafe_previous = (previous_action in ("left", "right")
                            and not safety[previous_action]["allowed"])
-        eligible = guidance_items(evidence, "danger", vehicle_only, True)
         if (prediction.get("boarding") or {}).get("assumed_stationary") and eligible:
             # 입력 중에는 측면 위험만 남아도 기존 정지 안내를 유지한다.
             raw_action = "stop"

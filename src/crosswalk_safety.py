@@ -530,8 +530,11 @@ class CrosswalkSafetyEngine:
             kind = "outside_finish" if outside_finish else "finish"
             if self._confirmed(kind, timestamp, duration):
                 self.crossing_active = False
-                self._transition("finished")
+                finished = self._transition("finished")
                 self._clear_pending()
+                if finished:
+                    result.update(voice_text="횡단 완료",
+                                  voice_clip="crosswalk-finished.mp3")
             result.update(status=self.phase, crossing_active=self.crossing_active,
                           event_id=self.event_id, reasons=["walkable_destination"])
             if outside_finish and self.crossing_active:

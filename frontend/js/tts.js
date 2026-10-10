@@ -15,6 +15,7 @@
     ["횡단보도 이탈, 왼쪽 이동", "crosswalk-exit-left"],
     ["횡단보도 앞, 오른쪽 이동", "crosswalk-align-right"],
     ["횡단보도 앞, 왼쪽 이동", "crosswalk-align-left"],
+    ["횡단 완료", "crosswalk-finished"],
     ["왼쪽 한 걸음", "walking-move-left-one"],
     ["왼쪽 두 걸음", "walking-move-left-two"],
     ["오른쪽 한 걸음", "walking-move-right-one"],

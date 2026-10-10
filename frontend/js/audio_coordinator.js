@@ -107,7 +107,7 @@
     }
 
     // 횡단보도 안전 판정 수신
-    /** 진입 전 정렬과 방향이 확정된 이탈만 반복 안내한다. */
+    /** 진입 전 정렬·확정 이탈은 반복하고 정상 횡단 완료는 한 번 안내한다. */
     function acceptCrosswalk(event, capturedAt) {
       if (!active || !event || !Number.isFinite(capturedAt)) return;
       const staleAfter = Number.isFinite(event.stale_after_ms)
@@ -125,12 +125,18 @@
           validUntil, repeat: true, kind: "exit" });
         return;
       }
+      if (event.status === "finished" && !event.repeat && event.voice_text) {
+        request({ source: "crosswalk", priority: PRIORITY.crosswalk, text: event.voice_text,
+          validUntil, kind: "finish" });
+        return;
+      }
       if (event.status === "uncertain" && event.crossing_active
           && current?.source === "crosswalk") {
         current.validUntil = Math.max(current.validUntil, validUntil);
         return;
       }
       if (finishRepeat("crosswalk", "exit")) return;
+      if (finishRepeat("crosswalk", "finish")) return;
       clear("crosswalk");
     }
 
