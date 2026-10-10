@@ -212,7 +212,7 @@ def test_right_exit_guides_left():
 
 # 반대편 보행가능영역 정상 도착 확인
 def test_walkable_destination_finishes_without_exit_warning():
-    """횡단보도 끝에서 보행가능영역이 이어지면 정상 도착으로 종료한다."""
+    """횡단보도 끝에서 보행가능영역이 이어지면 정상 도착을 한 번 안내한다."""
     item = engine()
     item.update(mask(), LABELS, SHAPE, SIGNAL, 0)
     item.update(mask(), LABELS, SHAPE, SIGNAL, .2)
@@ -221,7 +221,9 @@ def test_walkable_destination_finishes_without_exit_warning():
     result = item.update(walkable, LABELS, SHAPE, {"crosswalks": []}, .51)
     assert result["status"] == "finished"
     assert not result["crossing_active"]
-    assert result["voice_text"] is None
+    assert result["voice_text"] == "횡단 완료"
+    assert result["voice_clip"] == "crosswalk-finished.mp3"
+    assert not result["repeat"]
 
 
 # 하단 ROI에서 횡단보도가 사라진 경우의 무음 보류 확인
@@ -307,7 +309,9 @@ def test_outside_state_finishes_on_strong_walkable_destination():
     result = item.update(walkable, LABELS, SHAPE, {"crosswalks": []}, 1.41)
     assert result["status"] == "finished"
     assert not result["crossing_active"]
-    assert result["voice_text"] is None
+    assert result["voice_text"] == "횡단 완료"
+    assert result["voice_clip"] == "crosswalk-finished.mp3"
+    assert not result["repeat"]
 
 
 # 하단 ROI 기본 높이 확인
@@ -352,9 +356,10 @@ def test_crosswalk_config_rejects_invalid_margins():
         raise AssertionError("invalid crosswalk margins were accepted")
 
 
-# Ava 횡단보도 음원 파일 확인
-def test_crosswalk_ava_clips_are_decodable():
-    """진입 정렬과 방향 확정 이탈 안내 MP3가 실제 PCM으로 해독되는지 확인한다."""
+# 횡단보도 음원 파일 확인
+def test_crosswalk_clips_are_decodable():
+    """정렬·방향 확정 이탈·횡단 완료 MP3가 실제 PCM으로 해독되는지 확인한다."""
     for filename in ("crosswalk-exit-left.mp3", "crosswalk-exit-right.mp3",
-                     "crosswalk-align-left.mp3", "crosswalk-align-right.mp3"):
+                     "crosswalk-align-left.mp3", "crosswalk-align-right.mp3",
+                     "crosswalk-finished.mp3"):
         assert decode_clip(filename)

@@ -23,6 +23,16 @@ def test_crosswalk_voice_repeats_until_return():
     assert all(item[1] == "crosswalk-exit-right.mp3" for item in events)
 
 
+# 횡단 완료 일회 안내 확인
+def test_crosswalk_voice_records_finished_once():
+    """정상 횡단 완료 음원은 반복 구간이 아닌 단일 이벤트로 기록한다."""
+    voice = CrosswalkVoice()
+    voice.observe({"repeat": False, "voice_clip": "crosswalk-finished.mp3"}, 2.0, 0.1)
+    assert voice.events(3.0) == [
+        (2.0, "crosswalk-finished.mp3", 1, "crosswalk"),
+    ]
+
+
 # 짧은 복귀 뒤 같은 방향 이탈의 연속 재생 확인
 def test_same_direction_reexit_continues_current_crosswalk_clip():
     """현재 문장이 끝나기 전 같은 방향으로 재이탈하면 원래 반복 박자를 유지한다."""

@@ -12,6 +12,7 @@ from src.video_audio import ffmpeg_executable
 _GUIDANCE_CLIPS = frozenset({
     "red", "green-initial-wait", "green", "green-changed", "red-changed", "missing",
     "crosswalk-exit-right", "crosswalk-exit-left", "crosswalk-align-right", "crosswalk-align-left",
+    "crosswalk-finished",
     "walking-move-left-one", "walking-move-left-two",
     "walking-move-right-one", "walking-move-right-two", "walking-crowded",
     "walking-obstacle", "walking-stop",
