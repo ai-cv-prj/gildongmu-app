@@ -13,6 +13,7 @@ STABLE_SECONDS = AUDIO_SETTINGS["guidance"]["stable_ms"] / 1000
 MAX_GAP_SECONDS = AUDIO_SETTINGS["video_max_gap_ms"] / 1000
 MISSING_SECONDS = AUDIO_SETTINGS["guidance"]["missing_ms"] / 1000
 REPEAT_SECONDS = AUDIO_SETTINGS["guidance"]["traffic_repeat_ms"] / 1000
+CROSSING_HOLD_SECONDS = AUDIO_SETTINGS["guidance"]["traffic_crossing_hold_ms"] / 1000
 # 전환 안내 후 같은 색상을 다시 읽을 때는 현재 색상만 안내한다.
 REPEAT_CLIPS = {"green-changed.mp3": "green.mp3", "red-changed.mp3": "red.mp3"}
 
@@ -37,6 +38,8 @@ class TrafficVoice:
         self.last_announced_time = None
         self.repeat_clip = None
         self.voice_allowed = False
+        # 횡단 중 파란 ROI의 횡단보도 근거가 처음 끊긴 시각이다. 다시 허용되면 지운다.
+        self.gate_lost_time = None
 
     # 횡단보도 근거 소실 시 신호 음성과 관측 이력 해제
     def _suspend(self, time_s):
@@ -49,6 +52,17 @@ class TrafficVoice:
         self.confirmed = self.missing_announced = False
         self.last_announced_target = self.last_announced_color = None
         self.last_announced_time = self.repeat_clip = None
+
+    # 횡단 중 짧은 횡단보도 근거 소실 시 신호 음성만 중단
+    def _hold(self, time_s):
+        """재생 중인 신호를 멈추되 확인한 신호 기억은 유지해 재확인 시 대기 안내를 반복하지 않는다."""
+        if self.voice_allowed:
+            self.events.append((time_s, None))
+        self.voice_allowed = False
+        self._reset_evidence()
+        # 끊긴 동안은 소실 시간에 포함하지 않는다.
+        self.last_valid = time_s
+        self.last_frame = self.last_capture = None
 
     # 현재 대상의 색상 증거 폐기
     def _reset_evidence(self):
@@ -73,11 +87,18 @@ class TrafficVoice:
         self.events.append((time_s, self.repeat_clip, "repeat"))
 
     # 한 프레임의 신호 상태 관측
-    def observe(self, result, frame_id, time_s):
+    def observe(self, result, frame_id, time_s, crossing_active=False):
         """테스트앱과 같은 3프레임·400ms, 소실·반복 억제 규칙을 적용한다."""
         if (result.get("voice_gate") or {}).get("allowed") is not True:
-            self._suspend(time_s)
+            if self.gate_lost_time is None:
+                self.gate_lost_time = time_s
+            if (crossing_active and self.confirmed
+                    and time_s - self.gate_lost_time < CROSSING_HOLD_SECONDS - 1e-9):
+                self._hold(time_s)
+            else:
+                self._suspend(time_s)
             return
+        self.gate_lost_time = None
         self.voice_allowed = True
         if self.last_valid is not None and time_s - self.last_valid > MAX_GAP_SECONDS:
             self._reset_evidence()

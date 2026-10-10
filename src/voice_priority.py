@@ -14,6 +14,7 @@ from src.video_audio import SAMPLE_RATE, decode_clip
 TRAFFIC_CHANGE_CLIPS = {"red-changed.mp3", "green-changed.mp3"}
 RED_TRAFFIC_CLIPS = {"red.mp3", "red-changed.mp3"}
 EMERGENCY_WALKING_CLIPS = {"walking-stop.mp3"}
+MISSING_TRAFFIC_CLIP = "missing.mp3"
 
 
 # 음원 길이 계산
@@ -99,9 +100,11 @@ def prioritize_voice_events(walking_events, traffic_events, crosswalk_events,
                    "walking" if clip else "walking_stop")
                   for time_s, clip in walking_events]
     # 같은 색상 재안내는 보행 안내를 끊지 않도록 가장 낮은 신호 우선순위를 쓴다.
+    # 신호 확인 불가는 그보다 낮아 재생 중 신호를 다시 잡으면 색상 안내가 끊고 들어간다.
     candidates += [
-        (time_s, clip, 6 if "repeat" in flags else 2 if clip in RED_TRAFFIC_CLIPS
-         else 5 if clip in TRAFFIC_CHANGE_CLIPS else 6, "traffic" if clip else "traffic_stop")
+        (time_s, clip, 7 if clip == MISSING_TRAFFIC_CLIP else 6 if "repeat" in flags
+         else 2 if clip in RED_TRAFFIC_CLIPS else 5 if clip in TRAFFIC_CHANGE_CLIPS else 6,
+         "traffic" if clip else "traffic_stop")
         for time_s, clip, *flags in traffic_events
     ]
     candidates += list(crosswalk_events)

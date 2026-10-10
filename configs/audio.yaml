@@ -18,6 +18,8 @@ audio:
     missing_ms: 2000
     # 같은 대상·색상이 계속 확인되면 마지막 신호 안내 후 이 시간이 지나 다시 읽는다.
     traffic_repeat_ms: 5000
+    # 횡단 중 파란 ROI의 횡단보도 근거가 이 시간보다 짧게 끊기면 확인한 신호 기억을 유지한다.
+    traffic_crossing_hold_ms: 5000
     # 파란 ROI 면적 중 횡단보도 마스크가 이 비율 이상일 때만 신호 음성을 허용한다.
     traffic_crosswalk_roi_min_fraction: 0.05
     walking_left_max_ratio: 0.35

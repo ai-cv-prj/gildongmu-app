@@ -5,9 +5,10 @@
  * 지난 장면의 음성은 대기열에 쌓지 않고 유효한 현재 안내만 재생한다.
  */
 (() => {
+  // 신호 확인 불가는 색상 안내보다 낮아 재생 중 신호를 다시 잡으면 바로 끊긴다.
   const PRIORITY = Object.freeze({ emergency: 0, crosswalk: 1, trafficRed: 2,
-    walkingSurface: 3, walking: 4, trafficChange: 5, traffic: 6, boarding: 7,
-    busOcr: 8, busArrival: 9 });
+    walkingSurface: 3, walking: 4, trafficChange: 5, traffic: 6, trafficMissing: 7,
+    boarding: 8, busOcr: 9, busArrival: 10 });
 
   // 전체 안내에서 하나뿐인 음성 재생 관리자 생성
   /** 단일 플레이어의 취소와 반복을 안내 우선순위에 맞춰 제어한다. */

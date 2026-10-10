@@ -366,7 +366,6 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
                     frame.shape, (risk_result or {}).get("roi"))
                 if risk_result is not None:
                     risk_result["traffic_voice_gate"] = traffic_result["voice_gate"]
-                signal_voice.observe(traffic_result, processed_frames + 1, output_time_s)
             crosswalk_result = None
             if crosswalk_engine is not None:
                 camera_stable = crosswalk_camera_stable(risk_result)
@@ -378,6 +377,11 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
                 crosswalk_voice.observe(crosswalk_result, output_time_s, 1 / fps)
                 if risk_result is not None:
                     risk_result["crosswalk_safety"] = crosswalk_result
+            if traffic_result is not None:
+                # 실시간과 같이 같은 프레임의 횡단 상태로 신호 기억 유지 여부를 판단한다.
+                signal_voice.observe(
+                    traffic_result, processed_frames + 1, output_time_s,
+                    crossing_active=bool(crosswalk_result and crosswalk_result["crossing_active"]))
             walking_surface_result = None
             if walking_surface_engine is not None:
                 walking_surface_result = walking_surface_engine.update(

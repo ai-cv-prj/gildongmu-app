@@ -567,7 +567,8 @@
       crossing_active: result.crosswalk?.event?.crossing_active === true,
       crosswalk_status: result.crosswalk?.event?.status }, capturedAt);
     traffic.accept({ session_id: result.session_id, frame_id: result.frame_id,
-      detections: result.traffic.detections, event: result.traffic.event }, capturedAt);
+      detections: result.traffic.detections, event: result.traffic.event,
+      crossing_active: result.crosswalk?.event?.crossing_active === true }, capturedAt);
     if (activeRoute) journey.accept(result.bus, result.bus?.captured_at_ms ?? result.captured_at_ms);
     const overlayResult = { ...result, bus_mode: Boolean(activeRoute), target_route: activeRoute,
       bus_guidance: activeRoute ? journey.snapshot().ocr : null, walking: { ...result.walking,

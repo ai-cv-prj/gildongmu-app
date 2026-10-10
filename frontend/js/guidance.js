@@ -17,11 +17,15 @@
     let lastAnnouncedColor = null, lastAnnouncedTarget = null;
     // 같은 대상·색상이 계속 확인되면 마지막 신호 안내 후 일정 시간마다 다시 읽는다.
     let lastAnnouncedAt = null, repeatText = null;
+    // 다른 음성에 밀려 재생하지 못한 신호 안내는 같은 색상이 유지되는 동안 다시 요청한다.
+    let retryText = null;
+    // 횡단 중 파란 ROI의 횡단보도 근거가 처음 끊긴 시각이다. 다시 허용되면 지운다.
+    let gateLostAt = null;
     let lastWalkingAction = null;
     let lastWalkingEvent = null;
 
     function update(text) { onChange({ active, text }); }
-    function resetEvidence() { target = null; color = null; candidate = null; }
+    function resetEvidence() { target = null; color = null; candidate = null; retryText = null; }
     // 횡단보도 근거가 없으면 신호 음성과 이전 색상 기억을 해제한다.
     /** 다시 허용될 때 새 신호처럼 안정화하며 다른 출처의 음성은 유지한다. */
     function suspendTraffic() {
@@ -29,6 +33,15 @@
       hasConfirmedSignal = missingAnnounced = false;
       lastAnnouncedColor = lastAnnouncedTarget = lastValid = null;
       lastAnnouncedAt = repeatText = null;
+      resetEvidence();
+      coordinator.clear("traffic");
+    }
+    // 횡단 중 횡단보도 근거가 잠깐 끊기면 신호 음성만 멈추고 확인한 신호 기억은 유지한다.
+    /** 다시 허용될 때 이미 확인한 신호를 처음 본 신호처럼 대기 안내하지 않는다. */
+    function holdTraffic(capturedAt) {
+      trafficAllowed = false;
+      // 끊긴 동안은 소실 시간에 포함하지 않는다.
+      lastValid = capturedAt;
       resetEvidence();
       coordinator.clear("traffic");
     }
@@ -43,7 +56,21 @@
         ? coordinator.PRIORITY.trafficRed
         : changed ? coordinator.PRIORITY.trafficChange
           : metadata.action === "stop" ? coordinator.PRIORITY.emergency ?? 0
+          : metadata.missing === true ? coordinator.PRIORITY.trafficMissing ?? coordinator.PRIORITY[mode]
           : coordinator.PRIORITY[mode], text: message, validUntil, metadata });
+    }
+    // 재생이 수락된 신호 안내만 마지막 안내로 기록한다.
+    function announceSignal(text, capturedAt) {
+      if (!announce(text, capturedAt + limits.max_age_ms)) {
+        retryText = text;
+        return;
+      }
+      retryText = null;
+      lastAnnouncedColor = color;
+      lastAnnouncedTarget = target;
+      lastAnnouncedAt = capturedAt;
+      // 전환 안내 뒤에는 현재 색상만, 첫 초록 대기 안내는 같은 문구로 다시 읽는다.
+      repeatText = text.includes("바뀜") ? (color === "green" ? "초록불" : "빨간불") : text;
     }
     function stop(text = "음성 안내가 꺼져 있습니다.") {
       active = false;
@@ -65,7 +92,7 @@
       sessionId = id;
       mock = isMock;
       startedAt = now();
-      lastFrame = lastCapture = lastValid = null;
+      lastFrame = lastCapture = lastValid = gateLostAt = null;
       missingAnnounced = false;
       update(mode === "walking" ? "위험 장애물을 확인하고 있습니다." : "안내 대상의 신호를 확인하고 있습니다.");
     }
@@ -91,7 +118,7 @@
       if (age > audio.realtime_max_gap_ms) interrupt();
       if (hasConfirmedSignal && age >= limits.missing_ms && !missingAnnounced) {
         missingAnnounced = true;
-        announce("신호 확인 불가", now() + limits.max_age_ms);
+        announce("신호 확인 불가", now() + limits.max_age_ms, { missing: true });
       }
     }
     function accept(res, capturedAt) {
@@ -135,10 +162,14 @@
         return;
       }
       if (event.voice_gate?.allowed !== true) {
-        suspendTraffic();
+        gateLostAt ??= capturedAt;
+        if (res.crossing_active === true && hasConfirmedSignal
+            && capturedAt - gateLostAt < limits.traffic_crossing_hold_ms) holdTraffic(capturedAt);
+        else suspendTraffic();
         update("횡단보도 접근을 확인하고 있습니다.");
         return;
       }
+      gateLostAt = null;
       trafficAllowed = true;
       const index = event.selected_detection_index;
       const selected = Number.isInteger(index) && index >= 0 ? res.detections?.[index] : null;
@@ -159,6 +190,10 @@
       } else candidate.count++;
       if (candidate.count < limits.stable_frames || capturedAt - candidate.since < limits.stable_ms) return;
       if (color === next) {
+        if (retryText !== null) {
+          announceSignal(retryText, capturedAt);
+          return;
+        }
         if (repeatText !== null && lastAnnouncedTarget === target && lastAnnouncedColor === next
             && capturedAt - lastAnnouncedAt >= limits.traffic_repeat_ms) {
           lastAnnouncedAt = capturedAt;
@@ -185,12 +220,7 @@
         update(mock ? `모의 신호. ${text}` : text);
         return;
       }
-      lastAnnouncedColor = next;
-      lastAnnouncedTarget = target;
-      lastAnnouncedAt = capturedAt;
-      // 전환 안내 뒤에는 현재 색상만, 첫 초록 대기 안내는 같은 문구로 다시 읽는다.
-      repeatText = text.includes("바뀜") ? (next === "green" ? "초록불" : "빨간불") : text;
-      announce(text, capturedAt + limits.max_age_ms);
+      announceSignal(text, capturedAt);
     }
     // 서버 세션 생성 후 결과를 연결한다.
     function bindSession(id) { if (active) sessionId = id; }

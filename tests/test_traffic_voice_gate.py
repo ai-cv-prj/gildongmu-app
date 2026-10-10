@@ -103,6 +103,37 @@ def test_signal_requires_gate_then_fresh_confirmation(color):
     assert voice.events[-1] == (4.0, clip)
 
 
+# 횡단 중 짧은 횡단보도 근거 소실 뒤 신호 기억 유지 확인
+def test_crossing_keeps_confirmed_signal_through_short_gate_loss():
+    """횡단 중 짧게 끊긴 뒤 다른 대상의 초록불을 잡으면 대기 문구 없이 초록불만 안내한다."""
+    voice = TrafficVoice()
+    for index in range(3):
+        voice.observe(signal("green"), index + 1, index * .2, crossing_active=True)
+    assert voice.events == [(.4, "green-initial-wait.mp3")]
+    voice.observe(signal("green", allowed=False), 4, .6, crossing_active=True)
+    voice.observe(signal("green", allowed=False), 5, .8, crossing_active=True)
+    assert voice.events[-1] == (.6, None)
+    for index in range(5, 8):
+        voice.observe(signal("green", target=2), index + 1, index * .2, crossing_active=True)
+    assert voice.events[-1] == (pytest.approx(1.4), "green.mp3")
+
+
+# 횡단 종료 또는 긴 근거 소실 뒤 새 신호 확인
+@pytest.mark.parametrize("crossing_active,lost_s", [(False, .2), (True, 5.0)])
+def test_finished_crossing_or_long_gate_loss_resets_signal(crossing_active, lost_s):
+    """횡단이 끝났거나 근거가 설정 시간 이상 끊기면 다시 잡은 초록불을 처음처럼 대기 안내한다."""
+    voice = TrafficVoice()
+    for index in range(3):
+        voice.observe(signal("green"), index + 1, index * .2, crossing_active=True)
+    voice.observe(signal("green", allowed=False), 4, .6, crossing_active=crossing_active)
+    voice.observe(signal("green", allowed=False), 5, .6 + lost_s, crossing_active=crossing_active)
+    start = .8 + lost_s
+    for index in range(3):
+        voice.observe(signal("green", target=2), index + 6, start + index * .2,
+                      crossing_active=crossing_active)
+    assert voice.events[-1] == (pytest.approx(start + .4), "green-initial-wait.mp3")
+
+
 # ROI 밖 신호색 변화를 재진입 전환으로 오인하지 않기
 def test_color_changes_outside_roi_are_not_announced():
     """차단 중 색상 변화와 소실 안내를 생성하지 않고 재진입 시 최초 안내를 사용한다."""
