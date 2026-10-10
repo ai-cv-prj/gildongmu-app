@@ -25,6 +25,7 @@ from src.risk_visualization import action_status_text, risk_identity
 from src.walking_voice import (
     WalkingVoice,
     center_occupancy_ratio,
+    crowded_center_intrusion,
     apply_obstacle_voice_suppression,
     direction_edge_walkability,
     movement_steps,
@@ -357,7 +358,7 @@ class WalkingVoiceTests(unittest.TestCase):
         self.assertTrue(result["voice_clear"])
         self.assertEqual(voice.events[-1], (3.1, None))
 
-    # 기본 위험 분포의 안내 없음·회피·정지 확인
+    # 기본 위험 분포의 안내 없음·회피·혼잡 확인
     def test_danger_distribution_selects_basic_action(self):
         """세 방향의 위험 조합을 안내 없음·좌우 이동·정지로 바꾼다."""
         left = danger_item(1, [5, 0, 15, 20])
@@ -377,17 +378,45 @@ class WalkingVoiceTests(unittest.TestCase):
             with self.subTest(expected=expected):
                 self.assertEqual(walking_action(result, 100), expected)
 
-    # 세 방향 위험의 객체 종류와 무관한 혼잡 안내 확인
-    def test_all_direction_dangers_are_crowded_regardless_of_class(self):
-        """세 방향이 모두 위험하면 객체 종류와 관계없이 전방 혼잡으로 판단한다."""
+    # 세 방향 위험과 중앙 혼잡 구간의 결합 조건 확인
+    def test_all_direction_dangers_require_center_intrusion_for_crowded(self):
+        """세 방향이 위험해도 화면 45~55%를 침범할 때만 혼잡으로 판단한다."""
         left = danger_item(1, [5, 0, 15, 20])
         center = danger_item(2, [45, 0, 55, 20])
+        center_outside_core = danger_item(5, [35, 0, 45, 20])
         right_person = danger_item(3, [85, 0, 95, 20])
         right_bollard = danger_item(4, [85, 0, 95, 20], "bollard")
         self.assertEqual(
             walking_action(prediction(left, center, right_person), 100), "crowded")
         self.assertEqual(
             walking_action(prediction(left, center, right_bollard), 100), "crowded")
+        self.assertEqual(
+            walking_action(prediction(left, center_outside_core, right_person), 100), "blocked")
+
+    # 혼잡 중앙 구간의 경계와 침범 판정 확인
+    def test_crowded_center_intrusion_uses_open_45_to_55_percent_overlap(self):
+        """경계에 닿기만 한 박스는 제외하고 중앙 구간 내부에 겹친 위험만 인정한다."""
+        self.assertFalse(crowded_center_intrusion([danger_item(1, [35, 0, 45, 20])], 100))
+        self.assertTrue(crowded_center_intrusion([danger_item(1, [44.9, 0, 45.1, 20])], 100))
+        self.assertTrue(crowded_center_intrusion([danger_item(1, [54.9, 0, 55.1, 20])], 100))
+        self.assertFalse(crowded_center_intrusion([danger_item(1, [55, 0, 65, 20])], 100))
+
+    # 세 방향 위험의 화면 행동과 음성 행동 일치 확인
+    def test_all_direction_dangers_keep_action_and_voice_equal(self):
+        """중앙 혼잡 구간 침범 여부에 따라 ACTION과 VOICE를 같은 값으로 정한다."""
+        left = danger_item(1, [5, 0, 15, 20])
+        right = danger_item(2, [85, 0, 95, 20])
+        cases = [
+            (danger_item(3, [35, 0, 45, 20]), "blocked", "전방 장애물"),
+            (danger_item(4, [45, 0, 55, 20]), "crowded", "혼잡 주의"),
+        ]
+        for center, action, text in cases:
+            with self.subTest(action=action):
+                result = prediction(left, center, right)
+                result["direction_ground"]["right"] = False
+                self.assertEqual(WalkingVoice().observe(result, 100, 0)[0], text)
+                self.assertEqual(result["last_action"], action)
+                self.assertEqual(result["voice_action"], action)
 
     # 가운데 위험의 거리 우선 비교
     def test_center_danger_chooses_farther_side_after_three_percent_tie(self):
