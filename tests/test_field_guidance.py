@@ -32,7 +32,7 @@ def test_rapid_approach_remains_danger_but_caution_does_not_block_route():
     right = danger_item(2, [67, 49, 77, 66], "bicycle",
                         geometry={"immediate_overlap": 0, "corridor_overlap": 1},
                         reasons=["approaching_near_path"], motion={"quality": "valid"})
-    assert walking_action(prediction(left, right), 100) == "crowded"
+    assert walking_action(prediction(left, right), 100) == "blocked"
     assert walking_action(prediction(left, caution_item(3, [75, 40, 90, 75])), 100) == "right"
 
 
@@ -95,10 +95,13 @@ def test_duplicate_tree_boxes_do_not_create_a_crowded_instruction():
 
 
 def test_distinct_tree_and_overlapping_people_are_not_merged():
-    for name, boxes in (("tree_trunk", ([20, 20, 43, 95], [57, 20, 80, 95])),
-                        ("person", ([20, 20, 80, 95], [25, 20, 60, 95]))):
+    cases = (
+        ("tree_trunk", ([20, 20, 43, 95], [57, 20, 80, 95]), "전방 장애물"),
+        ("person", ([20, 20, 80, 95], [25, 20, 60, 95]), "혼잡 주의"),
+    )
+    for name, boxes, expected in cases:
         result = prediction(*(danger_item(i, box, name) for i, box in enumerate(boxes, 1)))
-        assert WalkingVoice().observe(result, 100, 0)[0] == "혼잡 주의"
+        assert WalkingVoice().observe(result, 100, 0)[0] == expected
         assert result["voice_diagnostics"]["duplicate_hazards"] == 0
 
 

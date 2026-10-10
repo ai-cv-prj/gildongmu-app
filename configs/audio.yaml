@@ -22,6 +22,9 @@ audio:
     traffic_crosswalk_roi_min_fraction: 0.05
     walking_left_max_ratio: 0.35
     walking_right_min_ratio: 0.65
+    # 좌·중·우가 모두 위험할 때 혼잡으로 확정하는 화면 중앙 구간
+    walking_crowded_center_left_ratio: 0.45
+    walking_crowded_center_right_ratio: 0.55
     walking_center_intrusion_ratio: 0.05
     walking_side_intrusion_ratio: 0.10
     walking_voice_immediate_overlap_ratio: 0.10
