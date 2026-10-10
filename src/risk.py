@@ -22,6 +22,25 @@ from src.camera_view import CameraViewGuard
 MOVING_TRAFFIC_CLASSES = frozenset({"car", "bus", "truck", "motorcycle", "bicycle"})
 
 
+def receding_person_clearance(detection, geometry, motion, proximity, cfg):
+    """신뢰 가능한 이탈 중인 비근접 사람만 ROI 점유 위험을 완화한다.
+
+    새 이력을 기다려 최초 경보를 미루지 않는다. 근접·잘림·횡진입·불안정한
+    운동은 완화하지 않고 기존 AlertPolicy에서 해제를 확인한다.
+    """
+    if (detection["class_name"] != "person" or geometry["clipped"]
+            or proximity["band"] not in ("middle", "far")
+            or motion["quality"] != "valid" or motion["approach_state"] != "receding"
+            or not motion.get("receding_consistent", False)
+            or motion["time_to_path_s"] is not None
+            or motion["time_to_near_s"] is not None):
+        return False
+    vx, vy = motion["velocity_norm_per_s"]
+    inward = (abs(vx) >= cfg["min_lateral_speed"]
+              and (geometry["point"][0] - .5) * vx < 0)
+    return vy <= -cfg["min_forward_speed"] / 2 and not inward
+
+
 def predicted_moving_conflict(detection, geometry, motion, entry_y, cfg):
     """Return image-space conflict time and evidence, or None.
 
@@ -240,9 +259,11 @@ class RiskEngine:
                 g["central_immediate_overlap"] >= threshold or
                 (g["point"][1] >= self.config["side_danger_y"] and g["close_candidate"]))
             if static:
-                if related and p["band"] == "near" and immediate_danger:
+                if g["immediate_overlap"] >= threshold and immediate_danger:
                     item["risk_level"] = "danger"
-                    item["reasons"].append("static_near_contact")
+                    item["reasons"].append(
+                        "static_near_contact" if p["band"] == "near"
+                        else "near_path_occupied")
                 elif related and p["band"] in ("middle","unknown","near"):
                     item["risk_level"] = "caution"
                     item["reasons"].append("static_path_candidate")
@@ -327,6 +348,14 @@ class RiskEngine:
                     and not ground_blocked):
                 item["risk_level"] = "danger"
                 item["reasons"].append("ground_approaching_near_path")
+            if (item["risk_level"] == "danger"
+                    and "near_path_occupied" in item["reasons"]
+                    and not {"short_ttc", "approaching_near_path", "predicted_moving_conflict"}.intersection(item["reasons"])
+                    and not roi["changed"]
+                    and receding_person_clearance(detection, g, m, p, self.config)):
+                item["risk_level"] = "caution"
+                item["reasons"].append("receding_person_clearance")
+                item["release_evidence"] = "receding_person_clearance"
             clear = (timestamp_valid and camera_stable and not g["clipped"] and not roi["changed"])
             if clear and item["risk_level"] == "monitor":
                 if (max(g["corridor_overlap"],g["immediate_overlap"]) < self.config["exit_overlap_threshold"]
@@ -334,7 +363,8 @@ class RiskEngine:
                         and not g["side_proximity"] and not future_related
                         and m["quality"] == "valid"):
                     item["release_evidence"] = "image_path_exit"
-            elif clear and item["risk_level"] == "caution" and m["quality"] == "valid":
+            elif (clear and item["risk_level"] == "caution" and m["quality"] == "valid"
+                  and item["release_evidence"] is None):
                 item["release_evidence"] = "lower_proximity_or_urgency"
             if m["quality"] == "valid" and not g["clipped"]:
                 item["assessment_quality"] = "valid"

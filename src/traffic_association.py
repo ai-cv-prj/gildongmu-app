@@ -185,6 +185,8 @@ class TemporalSelector:
     """BoT-SORT ID로 대상을 유지하고 횡단보도 연결의 연속성을 확인한다."""
 
     TRACK_MAX_GAP_MS = 1000
+    # 임시 대상만 남은 상태로 다른 신호등이 이 시간 이상 보이지 않으면 순간 오검출로 본다.
+    SINGLE_RELEASE_MS = 1000
 
     def __init__(self, required_frames=3):
         self.required_frames = required_frames
@@ -192,6 +194,7 @@ class TemporalSelector:
         self.target_id = None
         self.target_last_seen = None
         self.target_requires_crosswalk = False
+        self.last_multi_at = None
         self.previous_context = None
         self.previous_shape = None
         self.previous_gray = None
@@ -251,6 +254,8 @@ class TemporalSelector:
         self.last_crosswalk = transform_box(self.last_crosswalk, motion)
         self.previous_context = context
         self.previous_shape = frame.shape[:2]
+        if len(signals) > 1:
+            self.last_multi_at = context.captured_at_ms
 
         if self.target_id is not None:
             index, tracking = self._match_target(signals)
@@ -260,6 +265,13 @@ class TemporalSelector:
                 self.target_last_seen = context.captured_at_ms
                 if self.target_origin == "single_signal":
                     self.target_requires_crosswalk |= len(signals) > 1
+                    if (self.target_requires_crosswalk and len(signals) == 1
+                            and context.captured_at_ms - self.last_multi_at >= self.SINGLE_RELEASE_MS):
+                        # 다른 신호등이 잠깐 잡혔다 사라지면 연결 확인 대기를 풀고
+                        # 처음 선택한 임시 대상의 안내로 돌아간다.
+                        self.target_requires_crosswalk = False
+                        self._clear_pending()
+                        tracking["crosswalk_check_released"] = True
                     if self.target_requires_crosswalk:
                         # 복수 검출 이후에는 하나만 남아도 시작한 연결 확인을 끝낸다.
                         # 확인 중에는 임시 대상의 색상을 안내하지 않는다.

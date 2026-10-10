@@ -2,7 +2,7 @@
 file_path: src/walking_voice.py
 
 보행 위험 객체의 분포를 왼쪽·가운데·오른쪽으로 나눠 안전 행동을 안내한다.
-객체 위치가 아니라 최종 이동 행동이 변경될 때만 새 음성을 기록한다.
+안전성을 확인한 행동 전환과 지속 위험의 재안내 시점에 음성을 기록한다.
 """
 
 from math import isfinite
@@ -10,13 +10,13 @@ from copy import deepcopy
 
 import numpy as np
 from src.settings import load_audio_settings
+from src.risk_config import DEFAULT_RISK
+from src.walking_direction import direction_ground, direction_safety, warning_directions
 
 
 GUIDANCE = load_audio_settings()["guidance"]
 LEFT_MAX_RATIO = GUIDANCE["walking_left_max_ratio"]
 RIGHT_MIN_RATIO = GUIDANCE["walking_right_min_ratio"]
-CENTER_INTRUSION_RATIO = GUIDANCE["walking_center_intrusion_ratio"]
-SIDE_INTRUSION_RATIO = GUIDANCE["walking_side_intrusion_ratio"]
 VOICE_IMMEDIATE_OVERLAP_RATIO = GUIDANCE["walking_voice_immediate_overlap_ratio"]
 DISTANCE_TIE_RATIO = GUIDANCE["walking_distance_tie_ratio"]
 WALKABLE_SIDE_TIE_RATIO = GUIDANCE["walking_walkable_side_tie_ratio"]
@@ -26,18 +26,43 @@ LATERAL_CONFIRM_S = GUIDANCE.get("walking_lateral_confirm_ms", 200) / 1000
 FROM_STOP_CONFIRM_S = GUIDANCE.get("walking_from_stop_confirm_ms", 500) / 1000
 SAME_DIRECTION_REPEAT_S = GUIDANCE.get("walking_same_direction_repeat_ms", 1500) / 1000
 CROWDED_REDIRECT_S = GUIDANCE.get("walking_crowded_redirect_ms", 3000) / 1000
+CROWDED_REPEAT_S = GUIDANCE.get("walking_crowded_repeat_ms", 3000) / 1000
 REPEAT_NONE_S = GUIDANCE.get("walking_repeat_none_ms", 3000) / 1000
 STOP_REPEAT_NONE_S = GUIDANCE.get("walking_stop_repeat_none_ms", 1000) / 1000
 ACTION_MESSAGES = {
-    ("left", 1): ("왼쪽으로 한 걸음", "walking-move-left-one.mp3"),
-    ("left", 2): ("왼쪽으로 두 걸음", "walking-move-left-two.mp3"),
-    ("right", 1): ("오른쪽으로 한 걸음", "walking-move-right-one.mp3"),
-    ("right", 2): ("오른쪽으로 두 걸음", "walking-move-right-two.mp3"),
-    "crowded": ("전방 혼잡 주의하세요", "walking-crowded.mp3"),
-    "blocked": ("전방 장애물 주의하세요", "walking-obstacle.mp3"),
+    ("left", 1): ("왼쪽 한 걸음", "walking-move-left-one.mp3"),
+    ("left", 2): ("왼쪽 두 걸음", "walking-move-left-two.mp3"),
+    ("right", 1): ("오른쪽 한 걸음", "walking-move-right-one.mp3"),
+    ("right", 2): ("오른쪽 두 걸음", "walking-move-right-two.mp3"),
+    "crowded": ("혼잡 주의", "walking-crowded.mp3"),
+    "blocked": ("전방 장애물", "walking-obstacle.mp3"),
     "stop": ("멈추세요", "walking-stop.mp3"),
 }
 VEHICLE_CLASSES = frozenset({"car", "bus", "truck", "motorcycle"})
+STATIC_CLASSES = frozenset(DEFAULT_RISK["static_ground_classes"])
+
+
+def same_static_obstacle(a, b):
+    """같은 지면 접촉 위치의 겹친 정적 객체만 중복 관측으로 판단한다."""
+    if a.get("class_name") not in STATIC_CLASSES or a.get("class_name") != b.get("class_name"):
+        return False
+    try:
+        first, second = np.asarray(a["xyxy"], float), np.asarray(b["xyxy"], float)
+        if first.shape != (4,) or second.shape != (4,):
+            return False
+        sizes = [box[2:] - box[:2] for box in (first, second)]
+        if not np.isfinite([first, second]).all() or any((size <= 0).any() for size in sizes):
+            return False
+        if abs(first[3] - second[3]) > min(size[1] for size in sizes) * .10:
+            return False
+        areas = [float(np.prod(size)) for size in sizes]
+        intersection = float(np.prod(np.maximum(
+            0, np.minimum(first[2:], second[2:]) - np.maximum(first[:2], second[:2]))))
+        return (max(areas) / min(areas) <= 2.5
+                and (intersection / (sum(areas) - intersection) >= .65
+                     or intersection / min(areas) >= .85))
+    except (KeyError, TypeError, ValueError):
+        return False
 
 
 # 이전 행동과 다음 행동에 맞는 음성 확정 시간 선택
@@ -175,6 +200,12 @@ def apply_obstacle_voice_suppression(prediction, signal, class_map, label_ids, s
     """바깥 띠와 비초록 횡단보도 근거에 따라 위험 객체를 음성에서 제외한다."""
     prediction["walkable_sides"] = walkable_side_fractions(
         class_map, label_ids, shape)
+    prediction["direction_walkability"] = direction_edge_walkability(
+        class_map, label_ids, shape, prediction.get("roi"),
+        config.get("walking_direction_edge_width_ratio", .20),
+        config.get("walking_direction_min_walkable_ratio", .30),
+    )
+    prediction["direction_ground"] = direction_ground(class_map, label_ids, shape)
     for item in prediction.get("detections", []):
         item.pop("voice_suppressed_reason", None)
         item.pop("crosswalk_contact_fraction", None)
@@ -186,9 +217,9 @@ def apply_obstacle_voice_suppression(prediction, signal, class_map, label_ids, s
         item["voice_surrounding_walkability"] = surroundings
         fraction = surroundings["walkable_fraction"]
         if config.get("obstacle_surrounding_voice_suppression", True):
-            if fraction is None:
-                item["voice_suppressed_reason"] = "walkable_surroundings_unavailable"
-            else:
+            # 지면을 모른다는 이유로 위험 경보까지 없애지 않는다.
+            # 방향 지시는 별도의 direction_safety에서 차단한다.
+            if fraction is not None:
                 threshold = config.get(
                     "obstacle_surrounding_partial_walkable_threshold", .05
                 ) if surroundings["status"] == "partial" else config.get(
@@ -239,33 +270,64 @@ def walkable_side_fractions(class_map, label_ids, shape):
     }
 
 
-# 객체 하단 발자국의 화면 방향 판정
-def warning_directions(item, image_width):
-    """bbox 하단 발자국이 유효하게 침범한 왼쪽·가운데·오른쪽 구역을 반환한다."""
-    try:
-        box = item["xyxy"]
-        left = max(0.0, min(float(image_width), float(box[0])))
-        right = max(0.0, min(float(image_width), float(box[2])))
-    except (KeyError, TypeError, ValueError, IndexError, ZeroDivisionError):
-        return set()
-    if image_width <= 0 or not all(isfinite(value) for value in (left, right)) or right <= left:
-        return set()
-    boundaries = {
-        "left": (0.0, image_width * LEFT_MAX_RATIO),
-        "center": (image_width * LEFT_MAX_RATIO, image_width * RIGHT_MIN_RATIO),
-        "right": (image_width * RIGHT_MIN_RATIO, float(image_width)),
+# 핑크 ROI 양쪽 끝의 보행 가능 비율 계산
+def direction_edge_walkability(class_map, label_ids, shape, roi, edge_ratio, minimum):
+    """핑크 ROI 좌우 끝 영역에서 초록 보행 마스크가 차지하는 비율을 반환한다."""
+    unavailable = {
+        "status": "unavailable", "left": None, "right": None,
+        "edge_width_ratio": edge_ratio, "minimum": minimum,
     }
-    overlaps = {direction: max(0.0, min(right, end) - max(left, start))
-                for direction, (start, end) in boundaries.items()}
-    largest = max(overlaps.values())
-    directions = {direction for direction, overlap in overlaps.items()
-                  if overlap > 0 and overlap == largest}
-    for direction, overlap in overlaps.items():
-        start, end = boundaries[direction]
-        threshold = CENTER_INTRUSION_RATIO if direction == "center" else SIDE_INTRUSION_RATIO
-        if overlap >= (end - start) * threshold:
-            directions.add(direction)
-    return directions
+    if (class_map is None or not label_ids or "walkable" not in label_ids
+            or class_map.shape != tuple(shape[:2])):
+        return unavailable
+    polygon = (roi or {}).get("immediate_polygon")
+    if not isinstance(polygon, list) or len(polygon) < 4:
+        return unavailable
+    try:
+        xs = [float(point[0]) for point in polygon]
+        ys = [float(point[1]) for point in polygon]
+    except (TypeError, ValueError, IndexError):
+        return unavailable
+    if not all(isfinite(value) for value in xs + ys):
+        return unavailable
+    height, width = class_map.shape
+    left = max(0, min(width, int(np.floor(min(xs) * width))))
+    right = max(0, min(width, int(np.ceil(max(xs) * width))))
+    top = max(0, min(height, int(np.floor(min(ys) * height))))
+    bottom = max(0, min(height, int(np.ceil(max(ys) * height))))
+    edge_width = max(1, int(round((right - left) * edge_ratio)))
+    if right <= left or bottom <= top or edge_width > right - left:
+        return unavailable
+    patches = {
+        "left": class_map[top:bottom, left:left + edge_width],
+        "right": class_map[top:bottom, right - edge_width:right],
+    }
+    if any(patch.size == 0 for patch in patches.values()):
+        return unavailable
+    walkable_id = label_ids["walkable"]
+    return {
+        "status": "available",
+        "left": float(np.mean(patches["left"] == walkable_id)),
+        "right": float(np.mean(patches["right"] == walkable_id)),
+        "edge_width_ratio": edge_ratio,
+        "minimum": minimum,
+    }
+
+
+# 이동 후보 방향의 보행 마스크가 부족할 때 장애물 주의 음성으로 대체
+def direction_voice_action(action, safety):
+    """보행 가능한 회피 방향을 선택하고 양쪽이 막힐 때 주의 문구를 정한다."""
+    if action in ("left", "right") and not safety[action]["allowed"]:
+        other = "right" if action == "left" else "left"
+        action = other if safety[other]["allowed"] else "blocked"
+    if action == "blocked":
+        available = [side for side in ("left", "right") if safety[side]["allowed"]]
+        if len(available) == 1:
+            return available[0]
+        left, right = safety["left"]["blockers"], safety["right"]["blockers"]
+        if left and right and len(set(left + right)) >= 2:
+            return "crowded"
+    return action
 
 
 # 핑크 근거리 ROI 음성 대상 확인
@@ -419,7 +481,7 @@ def walking_action(prediction, image_width, crossing_active=False, stationary_vo
 
 
 class WalkingVoice:
-    """영상 프레임마다 최종 이동 행동이 달라질 때만 음성을 기록한다."""
+    """행동 전환과 지속 혼잡·방향 안내의 반복 시점을 관리한다."""
 
     # 영상별 안내 상태 초기화
     def __init__(self):
@@ -436,8 +498,8 @@ class WalkingVoice:
         self.voice_event_id = 0
         self.missing_hold_s = GUIDANCE.get("walking_missing_hold_ms", 800) / 1000
         self.crowded_until = 0.0
-        self.crowded_redirect_action = None
         self.last_direction_voice_at = {"left": None, "right": None}
+        self.last_crowded_voice_at = None
 
     def _evidence(self, prediction, timestamp):
         """짧은 미검출을 안전한 경로라는 증거로 사용하지 않는다."""
@@ -448,13 +510,32 @@ class WalkingVoice:
             self.last_action = self.last_steps = None
             self.pending_action = self.pending_since = self.clear_since = None
             self.crowded_until = 0.0
-            self.crowded_redirect_action = None
             self.last_direction_voice_at = {"left": None, "right": None}
+            self.last_crowded_voice_at = None
         self.previous_time = timestamp
         self.epoch = prediction.get("state_epoch", 0)
         self.hazards = {key: value for key, value in self.hazards.items()
                         if timestamp - value[0] <= self.missing_hold_s}
-        current = prediction.get("detections", [])
+        observed = prediction.get("detections", [])
+        # 새 ID가 같은 정적 객체를 관측하면 과거 위치를 별도 위험으로 유지하지 않는다.
+        replaced = [key for key, (_, old) in self.hazards.items()
+                    if any(same_static_obstacle(old, item) for item in observed)]
+        for key in replaced:
+            self.hazards.pop(key)
+        # 현재 프레임도 높은 위험도·신뢰도의 관측 하나로 안내한다. 원본 검출은 보존한다.
+        current = []
+        duplicates = 0
+        levels = {"monitor": 0, "caution": 1, "danger": 2}
+        for item in sorted(observed, key=lambda item: (
+                "predicted_moving_conflict" in item.get("reasons", []),
+                not item.get("risk_suppressed_reason"),
+                not item.get("voice_suppressed_reason"), item.get("warning_primary", True),
+                levels.get(item.get("alert_level", item.get("risk_level")), 0),
+                rapid_approach_hazard(item), item.get("confidence", 0)), reverse=True):
+            if any(same_static_obstacle(item, other) for other in current):
+                duplicates += 1
+            else:
+                current.append(item)
         keys = set()
         suppress_stop = (prediction.get("boarding") or {}).get("assumed_stationary", False)
         if suppress_stop:
@@ -474,21 +555,25 @@ class WalkingVoice:
             else:
                 self.hazards.pop(identity, None)
         retained = [dict(item, observed=False) for key, (_, item) in self.hazards.items() if key not in keys]
-        return {**prediction, "detections": current + retained}, len(retained)
+        return {**prediction, "detections": current + retained}, len(retained), duplicates
 
     # 현재 프레임의 신규 위험 안내 기록
     def observe(self, prediction, image_width, output_time_s, crossing_active=False,
                 crosswalk_status=None):
-        """횡단 상태와 음성 후보 조건을 반영해 변경된 회피·정지 음원만 예약한다."""
+        """횡단 상태·이동 안전성·반복 간격을 반영해 행동 음원을 예약한다."""
         prediction.pop("voice_text", None)
         prediction.pop("voice_clip", None)
         prediction.pop("voice_event", None)
-        evidence, retained = self._evidence(prediction, output_time_s)
+        evidence, retained, duplicates = self._evidence(prediction, output_time_s)
         previous_action = self.last_action
         previous_steps = self.last_steps
         display_action = walking_action(evidence, image_width)
         vehicle_only = crossing_active or crosswalk_status == "approach"
-        raw_action = walking_action(evidence, image_width, vehicle_only, True)
+        candidate_action = walking_action(evidence, image_width, vehicle_only, True)
+        safety = direction_safety(evidence, image_width)
+        raw_action = direction_voice_action(candidate_action, safety)
+        unsafe_previous = (previous_action in ("left", "right")
+                           and not safety[previous_action]["allowed"])
         eligible = guidance_items(evidence, "danger", vehicle_only, True)
         if (prediction.get("boarding") or {}).get("assumed_stationary") and eligible:
             # 입력 중에는 측면 위험만 남아도 기존 정지 안내를 유지한다.
@@ -497,20 +582,25 @@ class WalkingVoice:
             eligible, raw_action, image_width,
             previous_steps if raw_action == previous_action else None,
         )
+        if raw_steps is not None:
+            raw_steps = min(raw_steps, (evidence.get("direction_ground") or {}).get("max_steps", 1))
         voice_action = raw_action
         voice_steps = raw_steps
-        redirected_crowded = False
         if raw_action in ("left", "right") and output_time_s < self.crowded_until:
-            redirected_crowded = raw_action != self.crowded_redirect_action
-            self.crowded_redirect_action = raw_action
             voice_action = "crowded"
             voice_steps = None
-        elif raw_action != "crowded":
-            self.crowded_redirect_action = None
+        # 같은 혼잡 장면에서 일반 주의로 문구를 낮췄다가 다시 혼잡으로 바꾸지 않는다.
+        # 확인된 회피 방향·위험 해제·긴급 정지는 기존 전환 규칙을 그대로 따른다.
+        if (raw_action == "blocked" and self.last_action == "crowded" and eligible
+                and (self.clear_since is None or output_time_s - self.clear_since < REPEAT_NONE_S)):
+            voice_action = "crowded"
+            voice_steps = None
         stationary_clear = ((prediction.get("stationarity") or {}).get("status") == "stationary"
                             and raw_action is None)
         if raw_action is None:
             self.pending_action = self.pending_since = None
+            if unsafe_previous:
+                self.last_action = self.last_steps = None
             if self.clear_since is None:
                 self.clear_since = output_time_s
             if (self.last_action is not None
@@ -521,27 +611,28 @@ class WalkingVoice:
         else:
             if self.clear_since is not None and self.last_action is not None:
                 none_duration = output_time_s - self.clear_since
-                same_action = voice_action == self.last_action
                 repeat_ready = none_duration + 1e-6 >= repeat_none_s(self.last_action)
-                # none 전후 행동이 다르면 새 안내로 보고 안정화 시간 없이 즉시 재생한다.
-                if not same_action or repeat_ready:
+                # 짧은 none 뒤에도 반대 방향은 기존 안내로부터 안정화 시간을 확인한다.
+                if repeat_ready:
                     self.last_action = None
                     self.last_steps = None
             self.clear_since = None
             # 같은 방향의 걸음 수 변화도 동일 행동으로 보고 반복 안내하지 않는다.
             if voice_action == self.last_action:
                 voice_steps = self.last_steps
-            candidate = (voice_action, voice_steps)
-            previous = (self.last_action, self.last_steps)
-            if voice_action == "stop" or self.last_action is None:
+            # 걸음 수는 방향 확인 타이머를 초기화하지 않는다.
+            candidate = voice_action
+            previous = self.last_action
+            if (voice_action == "stop" or self.last_action is None
+                    or unsafe_previous and voice_action in ("blocked", "crowded")):
                 self.pending_action = self.pending_since = None
             elif candidate != previous:
                 if self.pending_action != candidate:
                     self.pending_action, self.pending_since = candidate, output_time_s
                 confirmation = transition_confirm_s(self.last_action, voice_action)
                 if output_time_s - self.pending_since + 1e-6 < confirmation:
-                    voice_action = self.last_action
-                    voice_steps = self.last_steps
+                    voice_action = "blocked" if unsafe_previous else self.last_action
+                    voice_steps = None if unsafe_previous else self.last_steps
                 else:
                     self.pending_action = self.pending_since = None
             else:
@@ -555,16 +646,14 @@ class WalkingVoice:
         eligible_ids = {id(item) for item in eligible}
         hazard_ids = {f"{item.get('class_name')}:{item.get('hazard_id') or item.get('event_id') or item.get('track_id')}"
                       for item in eligible}
-        prediction["voice_diagnostics"] = {"raw_action": raw_action, "action": voice_action,
+        prediction["voice_diagnostics"] = {"candidate_action": candidate_action,
+                                            "raw_action": raw_action, "action": voice_action,
                                             "retained_hazards": retained,
+                                            "duplicate_hazards": duplicates,
                                             "crowded_until_s": self.crowded_until,
-                                            "crowded_redirect_action": self.crowded_redirect_action,
-                                            "pending_action": (self.pending_action[0]
-                                                if isinstance(self.pending_action, tuple)
-                                                else self.pending_action),
-                                            "pending_steps": (self.pending_action[1]
-                                                if isinstance(self.pending_action, tuple)
-                                                else None),
+                                            "direction_safety": safety,
+                                            "pending_action": self.pending_action,
+                                            "pending_steps": raw_steps if self.pending_action else None,
                                             "objects": [{"detection_index": item.get("detection_index"),
                                                 "hazard_id": item.get("hazard_id"),
                                                 "voice_eligible": id(item) in eligible_ids,
@@ -573,17 +662,21 @@ class WalkingVoice:
                                                 "risk_suppressed_reason": item.get("risk_suppressed_reason")}
                                                 for item in evidence.get("detections", [])]}
         if voice_action is None:
-            if (stationary_clear or vehicle_only) and previous_action is not None:
+            if (stationary_clear or vehicle_only or unsafe_previous) and previous_action is not None:
                 self.events.append((output_time_s, None))
             return None
         message = ACTION_MESSAGES[(voice_action, voice_steps)] if voice_steps else ACTION_MESSAGES[voice_action]
         last_direction_at = self.last_direction_voice_at.get(voice_action)
         direction_repeat = (voice_action in ("left", "right")
+                            and voice_action == raw_action
                             and last_direction_at is not None
                             and output_time_s - last_direction_at + 1e-6
                             >= SAME_DIRECTION_REPEAT_S)
+        crowded_repeat = (voice_action == "crowded" and raw_action is not None
+                          and bool(eligible) and self.last_crowded_voice_at is not None
+                          and output_time_s - self.last_crowded_voice_at + 1e-6 >= CROWDED_REPEAT_S)
         changed = ((voice_action, voice_steps) != (self.last_action, self.last_steps)
-                   or redirected_crowded or direction_repeat)
+                   or direction_repeat or crowded_repeat)
         if changed:
             self.voice_event_id += 1
         prediction["voice_event"] = {"action": voice_action, "text": message[0],
@@ -594,13 +687,15 @@ class WalkingVoice:
                                      "urgency": "emergency" if voice_action == "stop" else "walking"}
         if not changed:
             return None
+        entering_crowded = voice_action == "crowded" and self.last_action != "crowded"
         self.last_action = voice_action
         self.last_steps = voice_steps
         if voice_action in ("left", "right"):
             self.last_direction_voice_at[voice_action] = output_time_s
-        if raw_action == "crowded":
+        if voice_action == "crowded":
+            self.last_crowded_voice_at = output_time_s
+        if entering_crowded:
             self.crowded_until = output_time_s + CROWDED_REDIRECT_S
-            self.crowded_redirect_action = None
         prediction["voice_text"] = message[0]
         self.events.append((output_time_s, message[1]))
         prediction["voice_clip"] = message[1]

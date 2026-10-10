@@ -11,13 +11,13 @@ from src.alert_policy import AlertPolicy
 from test_risk import detection,FixedTracker,engine,FRAME
 
 class RevisionTests(unittest.TestCase):
-    def test_reported_pole_remains_candidate_not_danger(self):
+    def test_reported_pole_inside_immediate_roi_is_danger(self):
         frame=np.zeros((1920,1080,3),np.uint8)
         box=[483.43176,435.45465,557.04510,1489.24927]
         item=engine(config={"ttc_alerts":True}).update(frame,[detection(box,"pole",20)],0)["detections"][0]
-        self.assertEqual(item["risk_level"],"caution")
+        self.assertEqual(item["risk_level"],"danger")
         self.assertEqual(item["proximity"]["band"],"middle")
-        self.assertNotIn("near_path_occupied",item["reasons"])
+        self.assertIn("near_path_occupied",item["reasons"])
 
     def test_reported_approaching_person_keeps_near_risk(self):
         frame=np.zeros((1920,1080,3),np.uint8)
@@ -30,7 +30,7 @@ class RevisionTests(unittest.TestCase):
             self.assertEqual(item["alert_level"],"danger")
 
     def test_far_static_object_and_immediately_near_static_object(self):
-        for bottom,wanted in ((60,"monitor"),(77,"caution"),(92,"danger")):
+        for bottom,wanted in ((60,"monitor"),(77,"danger"),(92,"danger")):
             d=detection((49,10,51,bottom),"pole",20)
             item=engine(None).update(FRAME,[d],0)["detections"][0]
             self.assertEqual(item["risk_level"],wanted)

@@ -97,6 +97,19 @@ class RiskTests(unittest.TestCase):
             self.assertEqual(item["risk_level"], "danger" if stable else "caution")
             self.assertEqual(item["motion"]["time_to_near_s"] is not None, stable)
 
+    # 정적 장애물의 핑크 ROI 즉시 위험 승격 확인
+    def test_static_obstacle_inside_immediate_roi_is_immediately_danger(self):
+        """볼라드도 일반 객체처럼 핑크 ROI와 중앙 조건을 만족하면 즉시 위험이다."""
+        result = engine().update(
+            FRAME, [detection((45, 50, 55, 77), name="bollard", cid=1)], 0)
+        item = result["detections"][0]
+        self.assertLess(item["geometry"]["point"][1], .78)
+        self.assertGreaterEqual(item["geometry"]["immediate_overlap"], .2)
+        self.assertGreaterEqual(item["geometry"]["central_immediate_overlap"], .2)
+        self.assertEqual(item["risk_level"], "danger")
+        self.assertIn("near_path_occupied", item["reasons"])
+        self.assertNotIn("static_near_contact", item["reasons"])
+
     def test_lateral_departure_does_not_promote_short_ttc(self):
         e = engine(config={"ttc_alerts": True, "wide_roi_priority_enabled": True,
                            "corridor_polygon": [[.01,.3],[.99,.3],[.99,1],[.01,1]],
@@ -219,11 +232,11 @@ class RiskTests(unittest.TestCase):
         self.assertFalse(np.array_equal(rendered[:86], FRAME[:86]))
 
     def test_direction_boundaries_split_left_center_and_right(self):
-        """저장 영상에 설정된 30%·70% 세로 점선을 전체 높이로 표시한다."""
+        """저장 영상에 설정된 35%·65% 세로 점선을 전체 높이로 표시한다."""
         frame = np.zeros((100, 200, 3), np.uint8)
         rendered = draw_direction_boundaries(frame)
-        self.assertTrue(np.any(rendered[:, 60]))
-        self.assertTrue(np.any(rendered[:, 139]))
+        self.assertTrue(np.any(rendered[:, 70]))
+        self.assertTrue(np.any(rendered[:, 129]))
         self.assertFalse(np.any(rendered[:, 100]))
 
     # 처음 핑크 ROI에서 포착된 객체의 경고 복원 확인

@@ -41,11 +41,11 @@ window.GOverlay = (() => {
   }
 
   // 왼쪽·가운데·오른쪽 방향 구역 경계 표시
-  /** 음성 판단과 같은 30%·70% 경계를 화면 전체 높이의 점선으로 표시한다. */
+  /** 음성 판단과 같은 35%·65% 경계를 화면 전체 높이의 점선으로 표시한다. */
   function directionBoundaries() {
     const guidance = window.GConfig?.get?.().audio?.guidance || {};
-    const boundaries = [guidance.walking_left_max_ratio ?? .30,
-      guidance.walking_right_min_ratio ?? .70];
+    const boundaries = [guidance.walking_left_max_ratio ?? .35,
+      guidance.walking_right_min_ratio ?? .65];
     ctx.save();
     ctx.strokeStyle = "rgba(255, 255, 255, 0.65)";
     ctx.lineWidth = Math.max(1, canvas.width / 480);
@@ -305,9 +305,9 @@ window.GOverlay = (() => {
   }
 
   // 현재 장애물 이동 행동과 실제 음성 재생 상태 표시
-  /** 모바일 화면 왼쪽 위에 판단 행동과 실제 재생 중인 음성만 표시한다. */
+  /** 안전성·전환 확인을 마친 행동과 실제 재생 중인 음성을 표시한다. */
   function actionStatus(event) {
-    const action = event?.last_action ?? "none";
+    const action = (event && "voice_action" in event ? event.voice_action : event?.last_action) ?? "none";
     const voice = event?.voice_playback_action ?? "none";
     const motion = event?.stationarity?.status ?? "unavailable";
     const lines = [`ACTION: ${action}`, `VOICE: ${voice}`, `MOTION: ${motion}`];

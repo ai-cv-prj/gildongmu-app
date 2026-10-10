@@ -390,7 +390,7 @@
   }
   function dialogue(t) {
     if(t>=27.65 || t<2.25) return {speaker:'길동무',text:'안내 시작'};
-    if(t<6.4) return {speaker:'길동무',text:'왼쪽으로 한 걸음'};
+    if(t<6.4) return {speaker:'길동무',text:'왼쪽 한 걸음'};
     if(t<10.15) return {speaker:'길동무',text:'빨간불입니다'};
     if(t<13.8) return {speaker:'길동무',text:'초록불입니다'};
     if(t<15.8) return {speaker:'길동무',text:'버스 번호 말해 주세요'};

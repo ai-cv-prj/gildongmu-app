@@ -57,7 +57,8 @@ context.window.GOverlay.render({
 }, state => { drawState = state; });
 
 assert.ok(labels.includes("person | T12 · E34"));
-assert.ok(labels.includes("ACTION: left"));
+assert.ok(labels.includes("ACTION: right"));
+assert.ok(!labels.includes("ACTION: left"));
 assert.ok(labels.includes("VOICE: right"));
 assert.ok(labels.includes("MOTION: stationary"));
 assert.ok(labels.includes("CROSSWALK: crossing"));
@@ -65,10 +66,10 @@ assert.ok(labels.includes("WALKWAY: inside"));
 assert.ok(strokeColors.includes("#50e65a"));
 assert.ok(labels.includes("정류장 후보 1/3"));
 assert.equal(dashedLines.length, 2);
-assert.ok(Math.abs(dashedLines[0][0][0] - 108) < 1e-6);
-assert.ok(Math.abs(dashedLines[0][1][0] - 108) < 1e-6);
-assert.ok(Math.abs(dashedLines[1][0][0] - 252) < 1e-6);
-assert.ok(Math.abs(dashedLines[1][1][0] - 252) < 1e-6);
+assert.ok(Math.abs(dashedLines[0][0][0] - 126) < 1e-6);
+assert.ok(Math.abs(dashedLines[0][1][0] - 126) < 1e-6);
+assert.ok(Math.abs(dashedLines[1][0][0] - 234) < 1e-6);
+assert.ok(Math.abs(dashedLines[1][1][0] - 234) < 1e-6);
 assert.equal(dashedLines[0][0][1], 0);
 assert.equal(dashedLines[0][1][1], 640);
 const stopBanner = filledRects.find(rect => rect.color === "#08131feb");
@@ -82,6 +83,7 @@ context.window.GOverlay.render({
   walking: { event: { roi: {}, last_action: "stop", voice_action: null } },
 });
 assert.ok(labels.includes("VOICE: none"));
+assert.ok(labels.includes("ACTION: none"));
 
 labels.length = rectangles.length = 0;
 context.window.GOverlay.render({

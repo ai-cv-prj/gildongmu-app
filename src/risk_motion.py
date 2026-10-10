@@ -286,6 +286,7 @@ class MotionHistory:
                   "time_to_corridor_s": None, "time_to_path_s": None, "time_to_near_s": None,
                   "ttc_scale_s": None, "history_s": 0.0,
                   "relative_expansion_per_s": None, "approach_state": "unknown",
+                  "receding_consistent": False,
                   "ttc_invalid_reason": "insufficient_history",
                   "ground_approach": {"quality": "insufficient", "time_to_near_s": None}}
         track_id = detection["track_id"]
@@ -363,6 +364,12 @@ class MotionHistory:
             result["relative_expansion_per_s"] = float(expansion)
             threshold = self.cfg["min_expansion_rate"]
             result["approach_state"] = "approaching" if expansion >= threshold else ("receding" if expansion <= -threshold else "steady")
+            # 회귀 기울기의 지연 때문에 재접근 첫 관측까지 완화하지 않도록
+            # 최근 세 관측의 발 위치와 크기도 모두 감소해야 한다.
+            recent_positions = list(history)[-3:]
+            result["receding_consistent"] = (result["approach_state"] == "receding"
+                and all(b[3] < a[3] and b[4] < a[4]
+                        for a, b in zip(recent_positions, recent_positions[1:])))
             if expansion >= threshold:
                 result["ttc_scale_s"] = float(1 / expansion)
                 result["ttc_invalid_reason"] = None

@@ -319,6 +319,35 @@ class TrackingTests(unittest.TestCase):
         self.assertEqual(result['association']['status'], 'tracked')
         self.assertEqual(pipe.selector.streak, 0)
 
+    def test_transient_second_signal_releases_check_after_one_second(self):
+        # 한 프레임만 잡힌 다른 신호등 때문에 처음 대상의 안내가 계속 멈추지 않아야 한다.
+        pipe = fake_pipeline([(NEAR, .8, 0)])
+        first = pipe.predict(FRAME, frame_id=1, captured_at_ms=0)
+        old_id = first['detections'][0]['track_id']
+        pipe.detector = fake_pipeline([(NEAR, .8, 0), (FAR, .7, 0)]).detector
+        self.assertIsNone(pipe.predict(FRAME, frame_id=2, captured_at_ms=200)['selected_detection_index'])
+        pipe.detector = fake_pipeline([(NEAR, .8, 0)]).detector
+        for fid, timestamp in enumerate((400, 600, 800, 1000), 3):
+            waiting = pipe.predict(FRAME, frame_id=fid, captured_at_ms=timestamp)
+            self.assertIsNone(waiting['selected_detection_index'])
+            self.assertEqual(waiting['signal_state'], 'unknown')
+        released = pipe.predict(FRAME, frame_id=7, captured_at_ms=1200)
+        self.assertEqual(released['selected_detection_index'], 0)
+        self.assertEqual(released['detections'][0]['track_id'], old_id)
+        self.assertEqual(released['association']['status'], 'tracked')
+        self.assertTrue(released['association']['tracking']['crosswalk_check_released'])
+        self.assertEqual(released['signal_state'], 'green')
+        self.assertFalse(pipe.selector.target_requires_crosswalk)
+
+    def test_persistent_second_signal_keeps_crosswalk_check(self):
+        pipe = fake_pipeline([(NEAR, .8, 0)])
+        pipe.predict(FRAME, frame_id=1, captured_at_ms=0)
+        pipe.detector = fake_pipeline([(NEAR, .8, 0), (FAR, .7, 0)]).detector
+        for fid in range(2, 12):
+            result = pipe.predict(FRAME, frame_id=fid, captured_at_ms=(fid - 1) * 200)
+            self.assertIsNone(result['selected_detection_index'])
+        self.assertTrue(pipe.selector.target_requires_crosswalk)
+
     def test_provisional_confirmation_respects_configured_frame_count(self):
         pipe = fake_pipeline([(NEAR, .8, 0)], stable=2)
         pipe.predict(FRAME)
@@ -359,6 +388,21 @@ class GeometryMotionTests(unittest.TestCase):
                            (painted_crossing(), [200, 180, 300, 640]),
                            (np.random.default_rng(27).integers(0, 170, (640, 480, 3), dtype=np.uint8), [0, 180, 480, 640])]:
             self.assertIsNone(estimate_vanishing_point(frame, box, cv2))
+
+    def test_wide_frontal_crossing_uses_screen_center(self):
+        # 화면 좌우로 잘린 수평 줄무늬는 끝점 대신 화면 중앙을 진행 방향으로 쓴다.
+        frame = np.full((640, 360, 3), 60, dtype=np.uint8)
+        for y in (300, 360, 430, 510, 600):
+            frame[y - 10:y + 10] = 240
+        point = estimate_vanishing_point(frame, [0, 260, 360, 640], cv2)
+        self.assertEqual(point[0], 180)
+        self.assertLess(point[1], 260)
+
+    def test_tilted_clipped_stripes_stay_unknown(self):
+        frame = np.full((640, 360, 3), 60, dtype=np.uint8)
+        for y in (300, 360, 430, 510, 600):
+            cv2.line(frame, (0, y), (359, y - 60), (240, 240, 240), 20)
+        self.assertIsNone(estimate_vanishing_point(frame, [0, 200, 360, 640], cv2))
 
     def test_motion_compensates_global_shift_but_rejects_local_movement(self):
         image = scene()

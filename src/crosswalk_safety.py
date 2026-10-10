@@ -64,6 +64,8 @@ DEFAULT_CROSSWALK_SAFETY = {
     "obstacle_surrounding_max_side_width_ratio": 0.02,
     "obstacle_surrounding_max_bottom_height_ratio": 0.02,
     "obstacle_surrounding_min_region_pixels": 4,
+    "walking_direction_edge_width_ratio": 0.20,
+    "walking_direction_min_walkable_ratio": 0.30,
 }
 
 
@@ -104,6 +106,8 @@ def crosswalk_safety_config(value=None):
         "obstacle_surrounding_bottom_height_ratio",
         "obstacle_surrounding_max_side_width_ratio",
         "obstacle_surrounding_max_bottom_height_ratio",
+        "walking_direction_edge_width_ratio",
+        "walking_direction_min_walkable_ratio",
     )
     for key in unit_keys:
         item = cfg[key]
@@ -497,7 +501,7 @@ class CrosswalkSafetyEngine:
                 self._clear_pending()
                 self._transition(f"align_{move}")
                 result.update(status=self.phase, direction=move, repeat=True,
-                              voice_text=f"{korean}으로 이동!",
+                              voice_text=f"횡단보도 앞, {korean} 이동",
                               voice_clip=f"crosswalk-align-{move}.mp3",
                               event_id=self.event_id, reasons=["entry_alignment"])
             else:
@@ -534,8 +538,8 @@ class CrosswalkSafetyEngine:
                 move = ("right" if self.phase == "outside_left" else
                         "left" if self.phase == "outside_right" else None)
                 korean = "오른쪽" if move == "right" else "왼쪽" if move == "left" else None
-                text = (f"횡단보도 이탈 {korean} 이동!"
-                        if korean else "횡단보도 이탈!")
+                text = (f"횡단보도 이탈, {korean} 이동"
+                        if korean else "횡단보도 이탈")
                 result.update(direction=move, repeat=True,
                               voice_text=text,
                               voice_clip=f"crosswalk-exit-{move}.mp3")
@@ -565,7 +569,7 @@ class CrosswalkSafetyEngine:
                     move = "right" if self.phase == "outside_left" else "left"
                     korean = "오른쪽" if move == "right" else "왼쪽"
                     result.update(direction=move, repeat=True,
-                                  voice_text=f"횡단보도 이탈 {korean} 이동!",
+                                  voice_text=f"횡단보도 이탈, {korean} 이동",
                                   voice_clip=f"crosswalk-exit-{move}.mp3")
                 return result
             hold_pending_exit = bool(
@@ -606,7 +610,7 @@ class CrosswalkSafetyEngine:
                 move = "right" if self.phase == "outside_left" else "left"
                 korean = "오른쪽" if move == "right" else "왼쪽"
                 result.update(direction=move, repeat=True,
-                              voice_text=f"횡단보도 이탈 {korean} 이동!",
+                              voice_text=f"횡단보도 이탈, {korean} 이동",
                               voice_clip=f"crosswalk-exit-{move}.mp3")
             return result
 
@@ -616,7 +620,7 @@ class CrosswalkSafetyEngine:
                 move = "right" if self.phase == "outside_left" else "left"
                 korean = "오른쪽" if move == "right" else "왼쪽"
                 result.update(status=self.phase, crossing_active=True, direction=move,
-                              voice_text=f"횡단보도 이탈 {korean} 이동!",
+                              voice_text=f"횡단보도 이탈, {korean} 이동",
                               voice_clip=f"crosswalk-exit-{move}.mp3", repeat=True,
                               event_id=self.event_id,
                               reasons=["return_confirming"])

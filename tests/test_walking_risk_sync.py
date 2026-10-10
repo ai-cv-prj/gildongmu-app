@@ -64,10 +64,10 @@ class WalkingRiskSyncTests(unittest.TestCase):
         self.assertEqual(SETTINGS["mode"], "all")
         cfg = risk_config(SETTINGS["risk"])
         self.assertEqual(cfg["immediate_polygon"],
-                         [[.02, .60], [.98, .60], [.98, 1.], [.02, 1.]])
+                         [[.02, .65], [.98, .65], [.98, 1.], [.02, 1.]])
         self.assertEqual(cfg["corridor_polygon"],
-                         [[.38, .30], [.62, .30], [.98, .60],
-                          [.98, 1.], [.02, 1.], [.02, .60]])
+                         [[.38, .30], [.62, .30], [.98, .65],
+                          [.98, 1.], [.02, 1.], [.02, .65]])
 
     # 넓은 하단 ROI의 측면·중앙 위험도 검증
     def test_wide_side_is_caution_and_center_is_danger(self):

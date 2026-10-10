@@ -93,10 +93,11 @@ def prioritize_voice_events(walking_events, traffic_events, crosswalk_events,
     candidates = [(time_s, clip, 0 if clip in EMERGENCY_WALKING_CLIPS else 4,
                    "walking" if clip else "walking_stop")
                   for time_s, clip in walking_events]
+    # 같은 색상 재안내는 보행 안내를 끊지 않도록 가장 낮은 신호 우선순위를 쓴다.
     candidates += [
-        (time_s, clip, 2 if clip in RED_TRAFFIC_CLIPS
+        (time_s, clip, 6 if "repeat" in flags else 2 if clip in RED_TRAFFIC_CLIPS
          else 5 if clip in TRAFFIC_CHANGE_CLIPS else 6, "traffic" if clip else "traffic_stop")
-        for time_s, clip in traffic_events
+        for time_s, clip, *flags in traffic_events
     ]
     candidates += list(crosswalk_events)
     candidates += list(walking_surface_events)

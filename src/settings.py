@@ -136,7 +136,7 @@ def load_audio_settings(config_path=DEFAULT_AUDIO_CONFIG):
     if number(guidance, "traffic_crosswalk_roi_min_fraction", 0, 1) <= 0:
         raise ValueError("traffic_crosswalk_roi_min_fraction은 0보다 커야 합니다.")
     number(guidance, "stable_frames", 1, 1000, integer=True)
-    for key in ("stable_ms", "max_age_ms", "missing_ms"):
+    for key in ("stable_ms", "max_age_ms", "missing_ms", "traffic_repeat_ms"):
         number(guidance, key, 1, 300000, integer=True)
     left = number(guidance, "walking_left_max_ratio", 0, 1)
     right = number(guidance, "walking_right_min_ratio", 0, 1)
@@ -151,6 +151,7 @@ def load_audio_settings(config_path=DEFAULT_AUDIO_CONFIG):
         "walking_lateral_confirm_ms",
         "walking_from_stop_confirm_ms", "walking_same_direction_repeat_ms",
         "walking_crowded_redirect_ms",
+        "walking_crowded_repeat_ms",
         "walking_repeat_none_ms",
         "walking_stop_repeat_none_ms", "walking_missing_hold_ms",
     ):

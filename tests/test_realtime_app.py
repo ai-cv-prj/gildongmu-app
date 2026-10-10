@@ -4,6 +4,7 @@ file_path: tests/test_realtime_app.py
 휴대폰 테스트 API의 세션 경계와 통합 응답을 확인한다.
 """
 
+import base64
 import io
 import json
 import hashlib
@@ -19,7 +20,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from backend.app import ClientTimingRequest, RecordingEventRequest, create_app
-from backend.response import normalize_detections
+from backend.response import make_response, normalize_detections
 from backend.session import SessionError, SessionManager
 from src.video_audio import ffmpeg_executable
 from src.settings import load_app_config, load_paths
@@ -50,7 +51,7 @@ class FakeModels:
                     "immediate_polygon": [[0.2, 0.7], [0.8, 0.7], [0.8, 1], [0.2, 1]]},
             "camera_view": {"status": "clear"},
             "last_action": "left",
-            "voice_text": "왼쪽으로 한 걸음",
+            "voice_text": "왼쪽 한 걸음",
             "stop_proximity": {"status": "candidate", "nearby": False,
                                "newly_nearby": False, "observations": 1,
                                "required_observations": 3, "confidence": 0.7,
@@ -93,6 +94,24 @@ def test_normalized_detection_contains_tracking_and_event_ids():
     assert result["event_id"] == 34
     assert result["hazard_id"] == "track:12"
     assert result["voice_suppressed_reason"] == "non_green_signal_crosswalk_obstacle"
+
+
+def test_stop_response_hides_walkable_mask_but_keeps_crosswalk():
+    from backend.inference import RealtimeInference
+
+    frame = np.zeros((2, 2, 3), dtype=np.uint8)
+    class_map = np.array([[1, 2], [0, 1]], dtype=np.uint8)
+    risk = RealtimeInference.stopped_risk()
+    risk["boarding"] = {"status": "submitted", "obstacle_detection_enabled": False}
+    signal = {"detections": [], "crosswalks": [], "signal_state": "unknown",
+              "selected_detection_index": None, "candidate_detection_index": None}
+    result = make_response("session", 1, 1000, frame, risk, signal, {}, {},
+                           class_map, {"walkable": 1, "crosswalk": 2}, 0)
+    encoded = base64.b64decode(result["walking"]["mask_png"])
+    mask = cv2.imdecode(np.frombuffer(encoded, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+    assert mask[0, 0, 3] == 0
+    assert mask[1, 1, 3] == 0
+    assert mask[0, 1, 3] == 140
 
 
 # 웹 테스트 클라이언트 없이 세션 응답 계약 확인
@@ -204,7 +223,7 @@ def test_mobile_session_flow(tmp_path, recording_fps):
                          files={"image": ("frame.jpg", io.BytesIO(jpeg.tobytes()), "image/jpeg")})
     assert result.status_code == 200
     body = result.json()
-    assert body["walking"]["event"]["voice_text"] == "왼쪽으로 한 걸음"
+    assert body["walking"]["event"]["voice_text"] == "왼쪽 한 걸음"
     assert body["walking"]["event"]["last_action"] == "left"
     assert body["traffic"]["event"]["signal_state"] == "red"
     assert body["crosswalk"]["event"]["status"] == "crossing"

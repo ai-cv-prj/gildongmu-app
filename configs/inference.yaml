@@ -120,6 +120,10 @@ crosswalk_safety:
   obstacle_surrounding_max_bottom_height_ratio: 0.02
   obstacle_surrounding_min_region_pixels: 4
 
+  # 좌우 이동 음성은 핑크 ROI의 해당 끝 30%에서 보행 마스크가 30% 이상일 때 유지한다.
+  walking_direction_edge_width_ratio: 0.30
+  walking_direction_min_walkable_ratio: 0.30
+
 # 보행로 이탈 안내
 # 횡단보도 판정과 같은 가상 발 영역을 사용하되 상태와 음성은 따로 관리한다.
 walking_surface:
@@ -147,13 +151,13 @@ risk:
   corridor_polygon:
     - [0.38, 0.30]
     - [0.62, 0.30]
-    - [0.98, 0.60]
+    - [0.98, 0.65]
     - [0.98, 1.00]
     - [0.02, 1.00]
-    - [0.02, 0.60]
+    - [0.02, 0.65]
   immediate_polygon:
-    - [0.02, 0.60]
-    - [0.98, 0.60]
+    - [0.02, 0.65]
+    - [0.98, 0.65]
     - [0.98, 1.00]
     - [0.02, 1.00]
 
