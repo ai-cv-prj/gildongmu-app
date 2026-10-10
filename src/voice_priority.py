@@ -33,10 +33,15 @@ class CrosswalkVoice:
         self.priority = priority
         self.active = None
         self.intervals = []
+        self.one_shots = []
 
     # 한 프레임의 이탈 상태 관측
     def observe(self, event, time_s, frame_duration_s):
         """확정 이탈이면 구간을 연장하고 복귀·불확실이면 해당 시각에 닫는다."""
+        if event and event.get("voice_clip") and not event.get("repeat"):
+            self._close(time_s)
+            self.one_shots.append((time_s, event["voice_clip"], self.priority, self.source))
+            return
         clip = event.get("voice_clip") if event and event.get("repeat") else None
         if clip:
             if self.active is None or self.active["clip"] != clip:
@@ -83,7 +88,7 @@ class CrosswalkVoice:
             while cursor < end - 1e-9:
                 events.append((cursor, clip, self.priority, self.source))
                 cursor += step
-        return events
+        return sorted(events + self.one_shots, key=lambda item: item[0])
 
 
 # 저장 영상의 모든 안내를 전역 우선순위로 병합

@@ -115,6 +115,17 @@ coordinator.acceptCrosswalk(edge, now + 200);
 coordinator.acceptCrosswalk(edge, now + 300);
 assert.equal(spoken.at(-1), "횡단보도 앞, 오른쪽 이동");
 
+// 정상 횡단 완료는 한 번 안내하고 다음 프레임에서도 재생 중인 문장을 유지한다.
+coordinator.acceptCrosswalk({ status: "finished", repeat: false,
+  voice_text: "횡단 완료" }, now + 210);
+assert.equal(spoken.at(-1), "횡단 완료");
+const finishedCount = spoken.filter(text => text === "횡단 완료").length;
+const finishedCancelCount = cancelCount;
+coordinator.acceptCrosswalk({ status: "search", repeat: false }, now + 220);
+assert.equal(cancelCount, finishedCancelCount);
+onEnd();
+assert.equal(spoken.filter(text => text === "횡단 완료").length, finishedCount);
+
 // 오래된 이탈 응답은 틱에서 반복을 중단한다.
 coordinator.acceptCrosswalk({ status: "outside_right", repeat: true,
   voice_text: "횡단보도 이탈, 왼쪽 이동" }, now + 300);
