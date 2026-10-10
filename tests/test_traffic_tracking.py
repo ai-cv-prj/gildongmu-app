@@ -339,6 +339,21 @@ class TrackingTests(unittest.TestCase):
         self.assertEqual(released['signal_state'], 'green')
         self.assertFalse(pipe.selector.target_requires_crosswalk)
 
+    def test_lost_target_under_check_reselects_lone_signal_after_one_second(self):
+        pipe = fake_pipeline([(NEAR, .8, 0)])
+        pipe.predict(FRAME, frame_id=1, captured_at_ms=0)
+        pipe.detector = fake_pipeline([(NEAR, .8, 0), (FAR, .7, 0)]).detector
+        pipe.predict(FRAME, frame_id=2, captured_at_ms=200)
+        self.assertTrue(pipe.selector.target_requires_crosswalk)
+        # 확인 중이던 대상이 사라지고 다른 신호만 남으면 1초 전에는 기다린다.
+        pipe.detector = fake_pipeline([(FAR, .7, 0)]).detector
+        waiting = pipe.predict(FRAME, frame_id=3, captured_at_ms=900)
+        self.assertIsNone(waiting['selected_detection_index'])
+        result = pipe.predict(FRAME, frame_id=4, captured_at_ms=1300)
+        self.assertEqual(result['selected_detection_index'], 0)
+        self.assertEqual(result['detections'][0]['xyxy'], FAR)
+        self.assertEqual(result['association']['selection_origin'], 'single_signal')
+
     def test_persistent_second_signal_keeps_crosswalk_check(self):
         pipe = fake_pipeline([(NEAR, .8, 0)])
         pipe.predict(FRAME, frame_id=1, captured_at_ms=0)
