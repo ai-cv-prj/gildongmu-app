@@ -29,6 +29,8 @@ traffic:
   crosswalk_min_confidence: 0.50
   classifier_min_confidence: 0.60
   association_stable_frames: 3
+  # 가장 또렷한 신호등 신뢰도의 70%보다 흐린 검출은 대상 선택에서만 뺀다(화면 표시는 유지).
+  selection_relative_confidence: 0.7
 
 # 화면 크기·위치와 시간 구간의 관측으로 근접을 추정한다. 실제 거리·충돌 안전이 아니다.
 stop_proximity:

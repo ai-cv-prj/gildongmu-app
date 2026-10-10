@@ -138,8 +138,10 @@ def load_audio_settings(config_path=DEFAULT_AUDIO_CONFIG):
     stable_frames = number(guidance, "stable_frames", 1, 1000, integer=True)
     if number(guidance, "stable_window_frames", 1, 1000, integer=True) < stable_frames:
         raise ValueError("stable_window_frames는 stable_frames 이상이어야 합니다.")
+    number(guidance, "traffic_vote_min_confidence", 0, 1)
     for key in ("stable_ms", "max_age_ms", "missing_ms", "traffic_repeat_ms",
-                "traffic_crossing_hold_ms", "traffic_color_memory_ms"):
+                "traffic_crossing_hold_ms", "traffic_color_memory_ms", "stable_window_ms",
+                "traffic_red_change_stable_ms"):
         number(guidance, key, 1, 300000, integer=True)
     left = number(guidance, "walking_left_max_ratio", 0, 1)
     right = number(guidance, "walking_right_min_ratio", 0, 1)

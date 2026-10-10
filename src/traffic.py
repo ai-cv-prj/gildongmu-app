@@ -22,6 +22,8 @@ DEFAULTS = {
     "crosswalk_min_confidence": 0.50,
     "classifier_min_confidence": 0.60,
     "association_stable_frames": 3,
+    # 가장 확실한 신호등 신뢰도의 이 비율보다 낮은 검출은 대상 선택에서 뺀다. 0이면 끈다.
+    "selection_relative_confidence": 0.0,
 }
 
 
@@ -32,7 +34,8 @@ def validate_traffic_config(config):
     for key in ("weights", "classifier_weights"):
         if not isinstance(config.get(key), str) or not config[key].strip():
             raise ValueError(f"traffic.{key}에 로컬 가중치 경로를 지정하세요.")
-    for key in ("conf", "crosswalk_min_confidence", "classifier_min_confidence"):
+    for key in ("conf", "crosswalk_min_confidence", "classifier_min_confidence",
+                "selection_relative_confidence"):
         value = config.get(key, DEFAULTS[key])
         if isinstance(value, bool) or not isinstance(value, (float, int)) or not 0 <= value <= 1:
             raise ValueError(f"traffic.{key}는 0~1이어야 합니다.")
@@ -163,7 +166,18 @@ class TrafficSignalPipeline:
         )
         signals = [signal for signal in signals
                    if signal["confidence"] >= self.config["conf"] or signal["track_id"] is not None]
-        decision = self.selector.select(frame, signals, crosswalks, cv2, context)
+        # 또렷한 신호등 옆의 흐린 검출이 복수 신호 확인을 일으켜 대상을 놓치지 않도록
+        # 선택에는 상대적으로 확실한 검출만 쓰고, 화면 표시는 모든 검출을 유지한다.
+        floor = self.config["selection_relative_confidence"] * max(
+            (signal["confidence"] for signal in signals), default=0)
+        selectable = [index for index, signal in enumerate(signals) if signal["confidence"] >= floor]
+        decision = self.selector.select(frame, [signals[index] for index in selectable],
+                                        crosswalks, cv2, context)
+        for key in ("signal_index", "candidate_signal_index"):
+            if decision.get(key) is not None:
+                decision[key] = selectable[decision[key]]
+        for candidate in decision.get("candidates", []):
+            candidate["signal_index"] = selectable[candidate["signal_index"]]
         selected_index = decision.get("signal_index")
         candidate_index = decision.get("candidate_signal_index")
         visible, state = [], "unknown"

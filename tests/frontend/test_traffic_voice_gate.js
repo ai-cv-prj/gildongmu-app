@@ -31,13 +31,13 @@ function harness() {
     requests, cleared,
     // 현재 시각의 신호 결과 전달
     /** 같은 대상 신호와 서버의 ROI 허용 결과를 새 프레임으로 전달한다. */
-    send(color, time, allowed, { crossing = false, target = 1 } = {}) {
+    send(color, time, allowed, { crossing = false, target = 1, confidence } = {}) {
       now = time;
       const event = { type: "traffic_signal", signal_state: color || "unknown",
         selected_detection_index: color ? 0 : null };
       if (allowed !== undefined) event.voice_gate = { allowed };
       guidance.accept({ session_id: "session", frame_id: ++frame,
-        detections: color ? [{ track_id: target }] : [], event, crossing_active: crossing }, now);
+        detections: color ? [{ track_id: target, confidence }] : [], event, crossing_active: crossing }, now);
     },
     // 새 프레임 없이 시간 경과
     /** 소실 안내와 오래된 횡단보도 근거의 만료를 확인한다. */
@@ -161,4 +161,24 @@ test("빨간불을 보던 중 다른 신호등의 초록은 대기 안내한다"
   for (const t of [0, 200, 400]) h.send("red", t, true);
   for (const t of [600, 800, 1000]) h.send("green", t, true, { target: 2 });
   assert.deepEqual(h.requests.map(item => item.text), ["빨간불", "초록불, 다음 신호까지 대기"]);
+});
+
+test("초록 도중 흐린 붉은 오검출과 오래된 빨강 관측으로 빨간불 전환을 안내하지 않는다", () => {
+  const h = harness();
+  for (const t of [0, 250, 500, 750, 1000]) h.send("green", t, true, { confidence: .75 });
+  for (const [color, t, confidence] of [["red", 1250, .47], ["red", 1500, .34], ["green", 2000, .78],
+    ["red", 2250, .2], ["red", 2500, .17], ["red", 2750, .21], ["green", 3250, .77], ["red", 4250, .52]]) {
+    h.send(color, t, true, { confidence });
+  }
+  assert.deepEqual(h.requests.map(item => item.text), ["초록불, 다음 신호까지 대기"]);
+});
+
+test("초록에서 빨강으로의 전환은 800ms 이상 빨강을 확인한 뒤 안내한다", () => {
+  const h = harness();
+  for (const t of [0, 200, 400]) h.send("red", t, true);
+  for (const t of [600, 800, 1000]) h.send("green", t, true);
+  for (const t of [1200, 1400, 1600]) h.send("red", t, true);
+  assert.deepEqual(h.requests.map(item => item.text), ["빨간불", "초록불로 바뀜"]);
+  for (const t of [1800, 2000]) h.send("red", t, true);
+  assert.deepEqual(h.requests.map(item => item.text), ["빨간불", "초록불로 바뀜", "빨간불로 바뀜"]);
 });

@@ -6,7 +6,10 @@
 (() => {
   function create({ coordinator, onChange = () => {}, now = () => performance.now() }) {
     const audio = window.GConfig.get().audio;
-    const limits = audio.guidance;
+    // 서버를 재시작하기 전 이전 설정을 받은 경우에도 새 신호 규칙이 기본값으로 동작하게 한다.
+    const limits = { stable_window_frames: 5, stable_window_ms: 1500, traffic_vote_min_confidence: 0.25,
+      traffic_red_change_stable_ms: 800,
+      traffic_crossing_hold_ms: 5000, traffic_color_memory_ms: 5000, ...audio.guidance };
     let active = false, sessionId = null, mock = false;
     let startedAt = 0, lastFrame = null, lastCapture = null, lastValid = null;
     // samples는 현재 대상의 최근 색상 관측이며, 인식불가 프레임은 넣지 않는다.
@@ -181,8 +184,10 @@
       const index = event.selected_detection_index;
       const selected = Number.isInteger(index) && index >= 0 ? res.detections?.[index] : null;
       // 인식불가 프레임은 색상 다수결에서 건너뛰고, 긴 공백은 tick의 소실 기준으로 정리한다.
+      // 추적 유지용으로만 남은 흐린 검출(예: 붉은 표지판 오검출)도 색상 근거로 쓰지 않는다.
       if (event.type !== "traffic_signal" || !selected || !Number.isInteger(selected.track_id) ||
-          !["red", "green"].includes(event.signal_state)) return;
+          !["red", "green"].includes(event.signal_state)
+          || selected.confidence < limits.traffic_vote_min_confidence) return;
       lastValid = capturedAt;
       if (target !== selected.track_id) {
         resetEvidence();
@@ -192,11 +197,17 @@
       const next = event.signal_state;
       // 최근 관측 중 같은 색이 기준 개수 이상이면 순간 오인식이 섞여도 색상을 확정한다.
       samples.push({ color: next, at: capturedAt });
-      if (samples.length > limits.stable_window_frames) samples.shift();
+      // 오래된 관측은 빼되, 프레임이 느린 기기를 위해 최근 확정 개수만큼은 시간과 관계없이 남긴다.
+      samples = samples.filter((item, i) => capturedAt - item.at <= limits.stable_window_ms
+        || i >= samples.length - limits.stable_frames).slice(-limits.stable_window_frames);
       const votes = samples.filter(item => item.color === next);
-      if (votes.length < limits.stable_frames || capturedAt - votes[0].at < limits.stable_ms) return;
       const memory = remembered && capturedAt - remembered.at <= limits.traffic_color_memory_ms
         ? remembered : null;
+      // 초록에서 빨강으로의 전환은 붉은 표지판 같은 짧은 오검출과 구분하도록 더 오래 확인한다.
+      const fromGreen = next === "red"
+        && (color ?? (memory?.target === target ? memory.color : null)) === "green";
+      if (votes.length < limits.stable_frames || capturedAt - votes[0].at
+          < (fromGreen ? limits.traffic_red_change_stable_ms : limits.stable_ms)) return;
       remembered = { target, color: next, at: capturedAt };
       if (color === next) {
         if (retryText !== null) {

@@ -10,6 +10,9 @@ from src.settings import load_audio_settings
 AUDIO_SETTINGS = load_audio_settings()
 STABLE_FRAMES = AUDIO_SETTINGS["guidance"]["stable_frames"]
 STABLE_WINDOW_FRAMES = AUDIO_SETTINGS["guidance"]["stable_window_frames"]
+STABLE_WINDOW_SECONDS = AUDIO_SETTINGS["guidance"]["stable_window_ms"] / 1000
+VOTE_MIN_CONFIDENCE = AUDIO_SETTINGS["guidance"]["traffic_vote_min_confidence"]
+RED_CHANGE_STABLE_SECONDS = AUDIO_SETTINGS["guidance"]["traffic_red_change_stable_ms"] / 1000
 STABLE_SECONDS = AUDIO_SETTINGS["guidance"]["stable_ms"] / 1000
 MAX_GAP_SECONDS = AUDIO_SETTINGS["video_max_gap_ms"] / 1000
 MISSING_SECONDS = AUDIO_SETTINGS["guidance"]["missing_ms"] / 1000
@@ -94,7 +97,7 @@ class TrafficVoice:
 
     # 한 프레임의 신호 상태 관측
     def observe(self, result, frame_id, time_s, crossing_active=False):
-        """테스트앱과 같은 3프레임·400ms, 소실·반복 억제 규칙을 적용한다."""
+        """실시간 앱과 같은 색상 다수결·400ms 확정, 소실·반복 억제 규칙을 적용한다."""
         if (result.get("voice_gate") or {}).get("allowed") is not True:
             if self.gate_lost_time is None:
                 self.gate_lost_time = time_s
@@ -131,7 +134,10 @@ class TrafficVoice:
         target = selected.get("track_id") if selected else None
         next_color = result.get("signal_state")
         # 인식불가 프레임은 색상 다수결에서 건너뛰고, 긴 공백은 위의 최대 간격 기준으로 정리한다.
-        if type(target) is not int or next_color not in ("red", "green"):
+        # 추적 유지용으로만 남은 흐린 검출(예: 붉은 표지판 오검출)도 색상 근거로 쓰지 않는다.
+        if (type(target) is not int or next_color not in ("red", "green")
+                or (selected.get("confidence") is not None
+                    and selected["confidence"] < VOTE_MIN_CONFIDENCE)):
             return
         self.last_valid = time_s
         if self.target != target:
@@ -139,12 +145,21 @@ class TrafficVoice:
             self.target = target
         # 최근 관측 중 같은 색이 기준 개수 이상이면 순간 오인식이 섞여도 색상을 확정한다.
         self.samples.append((next_color, time_s))
-        del self.samples[:-STABLE_WINDOW_FRAMES]
+        # 오래된 관측은 빼되, 프레임이 느린 경우를 위해 최근 확정 개수만큼은 시간과 관계없이 남긴다.
+        recent = len(self.samples) - STABLE_FRAMES
+        self.samples = [sample for i, sample in enumerate(self.samples)
+                        if time_s - sample[1] <= STABLE_WINDOW_SECONDS + 1e-9
+                        or i >= recent][-STABLE_WINDOW_FRAMES:]
         votes = [at for color, at in self.samples if color == next_color]
-        if len(votes) < STABLE_FRAMES or time_s - votes[0] < STABLE_SECONDS - 1e-9:
-            return
         memory = (self.remembered if self.remembered is not None
                   and time_s - self.remembered[2] <= COLOR_MEMORY_SECONDS + 1e-9 else None)
+        # 초록에서 빨강으로의 전환은 붉은 표지판 같은 짧은 오검출과 구분하도록 더 오래 확인한다.
+        known = self.color if self.color is not None else (
+            memory[1] if memory is not None and memory[0] == target else None)
+        required = (RED_CHANGE_STABLE_SECONDS if next_color == "red" and known == "green"
+                    else STABLE_SECONDS)
+        if len(votes) < STABLE_FRAMES or time_s - votes[0] < required - 1e-9:
+            return
         self.remembered = (target, next_color, time_s)
         if self.color == next_color:
             self._repeat(time_s)

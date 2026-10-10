@@ -16,6 +16,12 @@ audio:
     stable_frames: 3
     # 최근 이 개수의 색상 관측 중 stable_frames 이상이 같은 색이면 확정한다. 인식불가는 세지 않는다.
     stable_window_frames: 5
+    # 이 시간보다 오래된 색상 관측은 다수결에서 뺀다. 단 최근 stable_frames개는 시간과 관계없이 유지한다.
+    stable_window_ms: 1500
+    # 신호등 검출 신뢰도가 이보다 낮은 프레임은 색상 근거로 쓰지 않는다. 검출 기준(traffic.conf)과 같다.
+    traffic_vote_min_confidence: 0.25
+    # 확정된 초록에서 빨강으로 바뀔 때는 이 시간 이상 빨강을 확인한다(붉은 표지판 등 짧은 오검출 방지).
+    traffic_red_change_stable_ms: 800
     max_age_ms: 1500
     missing_ms: 2000
     # 같은 대상·색상이 계속 확인되면 마지막 신호 안내 후 이 시간이 지나 다시 읽는다.

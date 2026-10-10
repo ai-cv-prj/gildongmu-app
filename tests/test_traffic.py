@@ -66,6 +66,18 @@ class TrafficTests(unittest.TestCase):
         self.assertEqual(result["signal_state"], "green")
         pipeline._classify.assert_called_once()
 
+    def test_weak_second_signal_is_ignored_only_for_selection(self):
+        items = [(NEAR, 0.85, 0), (FAR, 0.4, 0)]
+        default = fake_pipeline(items).predict(FRAME)
+        self.assertEqual(default["signal_state"], "unknown")
+        pipeline = fake_pipeline(items)
+        pipeline.config["selection_relative_confidence"] = 0.7
+        result = pipeline.predict(FRAME)
+        self.assertEqual(result["association"]["status"], "single_signal")
+        self.assertEqual(result["signal_state"], "green")
+        self.assertEqual([d["selection_status"] for d in result["detections"]], ["selected", "unselected"])
+        self.assertEqual(result["detections"][0]["xyxy"], NEAR)
+
     def test_multiple_without_crosswalk_does_not_guess(self):
         pipeline = fake_pipeline([(NEAR, 0.9, 0), (FAR, 0.9, 0)])
         result = pipeline.predict(FRAME)

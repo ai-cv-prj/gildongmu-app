@@ -188,6 +188,21 @@ def test_other_signal_green_after_red_is_unverified():
     assert [clip for _, clip in voice.events] == ["red.mp3", "green-initial-wait.mp3"]
 
 
+# 흐린 붉은 오검출과 오래된 관측의 빨간불 전환 억제 확인
+def test_weak_red_detections_do_not_flip_green():
+    """초록 도중 흐린 붉은 오검출과 오래된 빨강 관측만으로 빨간불 전환을 안내하지 않는다."""
+    voice = TrafficVoice()
+    frames = [("green", 0, .75), ("green", .25, .75), ("green", .5, .75), ("green", .75, .75),
+              ("green", 1.0, .75), ("red", 1.25, .47), ("red", 1.5, .34), ("green", 2.0, .78),
+              ("red", 2.25, .2), ("red", 2.5, .17), ("red", 2.75, .21), ("green", 3.25, .77),
+              ("red", 4.25, .52)]
+    for index, (color, time_s, confidence) in enumerate(frames):
+        result = signal(color)
+        result["detections"][0]["confidence"] = confidence
+        voice.observe(result, index + 1, time_s)
+    assert [clip for _, clip in voice.events] == ["green-initial-wait.mp3"]
+
+
 # ROI 밖 신호색 변화를 재진입 전환으로 오인하지 않기
 def test_color_changes_outside_roi_are_not_announced():
     """차단 중 색상 변화와 소실 안내를 생성하지 않고 재진입 시 최초 안내를 사용한다."""
