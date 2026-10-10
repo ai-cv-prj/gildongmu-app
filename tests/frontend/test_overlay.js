@@ -166,8 +166,8 @@ function renderBusScene({ capturedAt = 10950, mainCapturedAt = 10950, busMode = 
       detections: detections || [
         { class_id: 0, class_name: "bus", track_id: 12,
           box: { x1: .1, y1: .3, x2: .6, y2: .8 }, extra: { route_number: "7011" } },
-        { class_id: 1, class_name: "route_number", track_id: 12,
-          box: { x1: .2, y1: .35, x2: .4, y2: .4 }, extra: { text: "7011" } },
+        { class_id: 1, class_name: "route_number", track_id: 12, confidence: .995,
+          box: { x1: .2, y1: .35, x2: .4, y2: .4 }, extra: { text: "7011", token_score: .742 } },
       ] },
   }, state => { drawState = state; });
 }
@@ -177,7 +177,9 @@ assert.ok(labels.includes("버스 번호 확인 중"));
 assert.ok(!labels.includes("번호를 읽고 있어요"));
 assert.ok(!labels.includes("찾는 번호 7011"));
 assert.ok(labels.includes("버스 번호 확인중"));
-assert.equal(labels.length, 2, "only the status line and vehicle label are drawn");
+assert.equal(labels.length, 3, "status, vehicle label and current OCR confidence are drawn");
+assert.ok(labels.includes("OCR 74.2%"));
+assert.ok(!labels.some(label => label.includes("OCR 99.5%")), "OCR token score takes priority");
 assert.ok(strokeColors.includes("#7cbdff"));
 assert.equal(textColors.find(item => item.text === "버스 번호 확인중" && item.color === "#7cbdff")?.color, "#7cbdff");
 assert.ok(filledRects.some(rect => rect.color === "#7cbdff"));
@@ -208,7 +210,7 @@ assert.ok(textColors.some(item => item.text === "버스 번호 확인중" && ite
 assert.ok(!labels.includes("7011번 버스 확인함"));
 
 renderBusScene({ recognized: [{ ...match, route_number: "604", is_target: false }] });
-assert.ok(labels.includes("604"));
+assert.ok(labels.includes("604 · OCR 98.0%"));
 assert.ok(!labels.includes("다른 버스 번호"));
 assert.ok(labels.includes("604 다른 버스 확인"));
 assert.ok(!labels.includes("다른 노선 · 목표 7011번"));

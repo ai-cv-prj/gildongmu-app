@@ -17,7 +17,7 @@ from PIL import Image
 
 from .base import InferenceContext, ModelSpec, normalize_box
 from .bus_runtime.evidence import (select_candidates, recover_duplicate_bus_candidate,
-                                   recover_regions)
+                       recover_regions, gate_other_bus_overlap)
 from .bus_runtime.route_evidence import context_boxes, context_rejection, text_rejection
 from .bus_runtime.target import TargetMatcher, exact_route, token_quality
 from .bus_runtime.observed import ObservedRouteMatcher
@@ -167,6 +167,7 @@ class BusPipeline:
             for item in current:
                 item['eligible'] = False
                 item['rejection_reason'] = 'ocr_failed'
+        gate_other_bus_overlap(current, buses)
         return current, errors
 
     def infer(self, frame_bgr: np.ndarray, context: InferenceContext) -> dict[str, Any]:

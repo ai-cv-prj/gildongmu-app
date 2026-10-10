@@ -3,6 +3,7 @@
 Source behavior is preserved; CRAFT fallback is disabled by the app runtime.
 """
 from dataclasses import asdict
+import math
 import re
 from PIL import Image
 from .target import token_quality
@@ -22,6 +23,62 @@ DUPLICATE_BUS_POLICY = {
     'min_token_score': .98,
     'scope': 'route-display detector only; two OCR reads of the same pixels',
 }
+
+OTHER_BUS_MAX_ROI_FRACTION = .05
+
+
+def _pixel_box(value):
+    """Validate the pixel xyxy boxes supplied by the inference pipeline."""
+    try:
+        box = tuple(float(v) for v in value)
+    except (TypeError, ValueError):
+        return None
+    if (len(box) != 4 or not all(math.isfinite(v) for v in box)
+            or box[2] <= box[0] or box[3] <= box[1]):
+        return None
+    return box
+
+
+def gate_other_bus_overlap(current, buses):
+    """Veto risky reads after OCR/context/recovery, preserving raw evidence.
+
+    Each other bus is checked against the number ROI area, not box IoU.
+    An independently confirmed duplicate peer is the same physical bus;
+    only that recorded peer is exempt, while third buses remain checked.
+    This does not change candidate budgets or erase prior matcher evidence.
+    """
+    for item in current:
+        if not item.get('eligible'):
+            continue
+        roi = _pixel_box(item.get('text_box'))
+        reason = None
+        if roi is None:
+            reason = 'visibility_geometry_unavailable'
+        else:
+            a, b, c, d = roi
+            area = (c-a)*(d-b)
+            own_index = item.get('bus_index')
+            peer_index = (item.get('duplicate_bus_partner_index')
+                          if item.get('duplicate_bus_recovered') else None)
+            for index, bus in enumerate(buses):
+                other = _pixel_box(bus.get('bus_box'))
+                if own_index is not None:
+                    own = index == own_index
+                elif item.get('track_id') is not None:
+                    own = item['track_id'] == bus.get('track_id')
+                else:
+                    own = other is not None and other == _pixel_box(item.get('bus_box'))
+                if own or index == peer_index or other is None:
+                    continue
+                x, y, z, w = other
+                intersection = max(0., min(c, z)-max(a, x)) * max(0., min(d, w)-max(b, y))
+                if intersection/area >= OTHER_BUS_MAX_ROI_FRACTION - 1e-9:
+                    reason = 'other_bus_bbox_overlap_risk'
+                    break
+        if reason:
+            item['eligible'] = False
+            item['visibility_rejection_reason'] = reason
+
 
 FALLBACK_EVIDENCE_POLICY = {
     'min_token_score': .98,
@@ -103,6 +160,7 @@ def recover_duplicate_bus_candidate(rgb, current, buses):
             winner['eligible'] = True
             winner['rejection_reason'] = ''
             winner['duplicate_bus_recovered'] = True
+            winner['duplicate_bus_partner_index'] = ri if winner_index == i else li
             used.update((i, j))
             break
 

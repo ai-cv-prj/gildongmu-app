@@ -10,6 +10,12 @@ window.GOverlay = (() => {
   const BUS_COLORS = Object.freeze({ mint: "#21d7bb", checkingBlue: "#7cbdff",
     otherRed: "#ff6172", muted: "#b9c5d5" });
 
+  // OCR 점수만 표시한다. 버스 검출 confidence는 번호 판독 점수와 다르다.
+  function ocrConfidence(score) {
+    return Number.isFinite(score) && score >= 0 && score <= 1
+      ? `OCR ${(score * 100).toFixed(1)}%` : "";
+  }
+
   // 프레임 크기에 맞는 캔버스 준비
   /** 카메라와 같은 비율로 오버레이 좌표를 맞춘다. */
   function size(width, height) {
@@ -79,7 +85,10 @@ window.GOverlay = (() => {
         Number.isInteger(item.track_id) ? `T${item.track_id}` : null,
         Number.isInteger(item.event_id) ? `E${item.event_id}` : null,
       ].filter(Boolean) : [];
-      const name = identifiers.length ? `${baseName} | ${identifiers.join(" · ")}` : baseName;
+      const confidence = kind === "bus" && (item.class_name === "route_number" || item.class_id === 1)
+        ? ocrConfidence(item.extra?.token_score ?? item.confidence) : "";
+      const name = confidence ? `${baseName} · ${confidence}`
+        : identifiers.length ? `${baseName} | ${identifiers.join(" · ")}` : baseName;
       ctx.font = `bold ${Math.max(13, canvas.width / 38)}px system-ui`;
       const textWidth = ctx.measureText(name).width + 12;
       const labelY = Math.max(2, y - 26);
@@ -164,8 +173,26 @@ window.GOverlay = (() => {
         ctx.lineWidth = (isNumber ? 1.5 : 3) * scale;
         rounded(x, y, width, height, (isNumber ? 2 : 6) * scale, null, ctx.strokeStyle);
         // OCR crops remain visible, but only validated evidence labels the whole bus with a number.
-        if (isNumber) continue;
-        const label = match ? String(match.route_number) : "버스 번호 확인 중";
+        if (isNumber) {
+          const confidence = ocrConfidence(item.extra?.token_score ?? item.confidence);
+          if (confidence) {
+            ctx.font = `bold ${12 * scale}px system-ui`;
+            const labelWidth = Math.min(canvas.width - 16 * scale,
+              ctx.measureText(confidence).width + 12 * scale);
+            const labelHeight = 22 * scale;
+            const labelX = Math.max(8 * scale, Math.min(x, canvas.width - labelWidth - 8 * scale));
+            // Below the crop and below the top-clamped vehicle label so its score stays visible.
+            const labelY = Math.min(canvas.height - labelHeight - 8 * scale,
+              Math.max(182 * scale, y + height + 3 * scale));
+            rounded(labelX, labelY, labelWidth, labelHeight, 3 * scale, "#ffffff", null);
+            fittedText(confidence, labelX + 6 * scale, labelY + 15 * scale,
+              12 * scale, labelWidth - 12 * scale, "#08131f");
+          }
+          continue;
+        }
+        const confidence = ocrConfidence(match?.token_score);
+        const label = match ? `${match.route_number}${confidence ? ` · ${confidence}` : ""}`
+          : "버스 번호 확인 중";
         ctx.font = `bold ${match ? 32 * scale : 15 * scale}px system-ui`;
         const labelWidth = Math.min(canvas.width - 16 * scale, ctx.measureText(label).width + 16 * scale);
         const labelHeight = (match ? 44 : 27) * scale;
