@@ -51,6 +51,21 @@ def test_crosswalk_camera_stability_uses_debounced_view_status():
     assert not crosswalk_camera_stable({"camera_view": {"status": "unavailable"}})
 
 
+# 방향 미래 예측 설정 형식 확인
+def test_direction_prediction_setting_requires_boolean():
+    """방향 미래 예측 설정은 명시적인 불리언 값만 허용한다."""
+    assert not crosswalk_safety_config()["walking_direction_prediction_enabled"]
+    with np.testing.assert_raises(ValueError):
+        crosswalk_safety_config({"walking_direction_prediction_enabled": 1})
+
+
+def test_right_ground_check_setting_requires_boolean():
+    """오른쪽 바닥 연결 검사 설정은 명시적인 불리언 값만 허용한다."""
+    assert crosswalk_safety_config()["walking_direction_right_ground_check_enabled"]
+    with np.testing.assert_raises(ValueError):
+        crosswalk_safety_config({"walking_direction_right_ground_check_enabled": 1})
+
+
 # ROI 밖 횡단보도 무음 확인
 def test_crosswalk_outside_roi_never_starts_crossing():
     """핑크 마스크가 보여도 하단 ROI에 5% 미만이면 횡단을 시작하지 않는다."""

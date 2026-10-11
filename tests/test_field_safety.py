@@ -34,6 +34,26 @@ def test_missing_ground_does_not_delay_warning_or_allow_direction():
     assert WalkingVoice().observe(result, 100, 0)[0] == "전방 장애물"
 
 
+def test_only_right_ground_check_can_be_disabled():
+    """오른쪽 연결 실패만 무시하고 왼쪽 연결 실패는 계속 방향을 차단한다."""
+    right_candidate = prediction(danger_item(1, [20, 20, 43, 75]))
+    right_candidate["direction_ground"]["left"] = False
+    right_candidate["direction_ground"]["right"] = False
+    right_candidate["direction_right_ground_check_enabled"] = False
+    assert WalkingVoice().observe(right_candidate, 100, 0)[0] == "오른쪽 한 걸음"
+    assert right_candidate["voice_diagnostics"]["direction_safety"]["right"] == {
+        "allowed": True, "reason": "clear", "blockers": [],
+    }
+
+    left_candidate = prediction(danger_item(2, [57, 20, 80, 75]))
+    left_candidate["direction_ground"]["left"] = False
+    left_candidate["direction_ground"]["right"] = False
+    left_candidate["direction_right_ground_check_enabled"] = False
+    assert WalkingVoice().observe(left_candidate, 100, 0)[0] == "전방 장애물"
+    assert left_candidate["voice_diagnostics"]["direction_safety"]["left"]["reason"] == (
+        "ground_blocked")
+
+
 def test_diagonal_nonwalkable_gap_cannot_join_disconnected_ground():
     mask = np.ones((640, 360), np.uint8)
     for row in range(round(640 * .88), round(640 * .96)):
@@ -43,9 +63,8 @@ def test_diagonal_nonwalkable_gap_cannot_join_disconnected_ground():
     assert not ground["left"] and ground["right"]
 
 
-def test_clip002_left_candidate_uses_clear_right_when_left_route_is_occupied():
-    # 현장 19.49초에는 두 사람 모두 중앙이고, 왼쪽 가까운 공간에 의자도 있었다.
-    # 중앙 동행인 박스만으로 왼쪽 전체를 막던 기존 축약 테스트를 보완한다.
+def test_clip002_left_candidate_ignores_caution_chair():
+    """CAUTION 의자는 비어 있는 왼쪽 회피 공간을 차단하지 않는다."""
     right = danger_item(357, [51, 42, 62, 58], geometry={"immediate_overlap": 0},
                         reasons=["approaching_near_path"], motion={"quality": "valid"})
     left = caution_item(403, [42, 42, 52, 57])
@@ -53,18 +72,32 @@ def test_clip002_left_candidate_uses_clear_right_when_left_route_is_occupied():
     result = prediction(right, left, chair)
     result["roi"] = {"immediate_polygon": [[.02, .6], [.98, .6], [.98, 1], [.02, 1]]}
     assert walking_action(result, 100) == "left"
-    assert WalkingVoice().observe(result, 100, 0)[0] == "오른쪽 한 걸음"
-    assert result["voice_diagnostics"]["direction_safety"]["left"]["blockers"] == [523]
+    assert WalkingVoice().observe(result, 100, 0)[0] == "왼쪽 한 걸음"
+    assert result["voice_diagnostics"]["direction_safety"]["left"]["blockers"] == []
     assert left["risk_level"] == "caution"
 
 
-def test_distant_caution_does_not_block_but_predicted_entry_does():
+def test_predicted_caution_entry_does_not_block_direction():
+    """CAUTION 객체는 이동 경로 진입이 예측돼도 방향을 차단하지 않는다."""
     obstacle = danger_item(1, [20, 20, 40, 70])
     other = caution_item(2, [65, 20, 80, 40],
                          voice_suppressed_reason="low_walkable_surroundings")
     result = prediction(obstacle, other)
     assert direction_safety(result, 100)["right"]["allowed"]
     other["motion"] = {"quality": "valid", "velocity_norm_per_s": [0, .4]}
+    assert direction_safety(result, 100)["right"]["allowed"]
+
+
+def test_direction_prediction_is_disabled_but_can_be_enabled():
+    """미래 위치는 기본적으로 사용하지 않고 설정을 켰을 때만 방향을 차단한다."""
+    obstacle = danger_item(
+        1, [65, 20, 80, 40], motion={
+            "quality": "valid", "velocity_norm_per_s": [0, .4],
+        })
+    result = prediction(obstacle)
+    result["direction_prediction_enabled"] = False
+    assert direction_safety(result, 100)["right"]["allowed"]
+    result["direction_prediction_enabled"] = True
     assert not direction_safety(result, 100)["right"]["allowed"]
 
 
@@ -82,29 +115,41 @@ def test_clip002_center_people_do_not_veto_clear_right_step():
     assert result["voice_diagnostics"]["direction_safety"]["right"]["allowed"]
 
 
-def test_center_person_crossing_into_near_right_uses_blocked_warning():
+def test_caution_person_crossing_into_near_right_keeps_direction():
+    """오른쪽으로 접근하는 CAUTION 사람은 DANGER 방향 안내를 바꾸지 않는다."""
     result = prediction(danger_item(1, [20, 20, 40, 75]),
                         caution_item(2, [45, 30, 60, 60],
                                      motion={"quality": "valid", "velocity_norm_per_s": [.2, .1]}))
     assert walking_action(result, 100) == "right"
-    assert WalkingVoice().observe(result, 100, 0)[0] == "전방 장애물"
-    assert result["voice_diagnostics"]["direction_safety"]["right"]["blockers"] == [2]
+    assert WalkingVoice().observe(result, 100, 0)[0] == "오른쪽 한 걸음"
+    assert result["voice_diagnostics"]["direction_safety"]["right"]["blockers"] == []
 
 
-def test_distant_side_person_does_not_block_until_predicted_near_entry():
+def test_distant_caution_person_never_blocks_direction():
+    """먼 CAUTION 사람은 현재 위치와 예측 위치 모두 방향을 차단하지 않는다."""
     person = caution_item(2, [70, 30, 80, 57],
                           motion={"quality": "valid", "velocity_norm_per_s": [0, .01]})
     result = prediction(danger_item(1, [20, 20, 40, 70]), person)
     assert direction_safety(result, 100)["right"]["allowed"]
     person["motion"]["velocity_norm_per_s"] = [0, .12]
-    assert not direction_safety(result, 100)["right"]["allowed"]
+    assert direction_safety(result, 100)["right"]["allowed"]
 
 
-def test_caution_route_blocker_uses_blocked_without_three_direction_dangers():
+def test_caution_route_blocker_keeps_available_direction():
+    """CAUTION 측면 객체가 있어도 DANGER 분포로 선택한 방향을 유지한다."""
     result = prediction(danger_item(1, [20, 20, 43, 75]),
                         caution_item(2, [70, 20, 85, 75]))
     assert walking_action(result, 100) == "right"
+    assert WalkingVoice().observe(result, 100, 0)[0] == "오른쪽 한 걸음"
+
+
+def test_danger_route_blocker_uses_blocked_warning():
+    """선택한 방향을 DANGER 객체가 점유하면 전방 장애물로 안내한다."""
+    result = prediction(danger_item(1, [20, 20, 43, 75]),
+                        danger_item(2, [70, 20, 85, 75], warning_primary=False))
+    assert walking_action(result, 100) == "right"
     assert WalkingVoice().observe(result, 100, 0)[0] == "전방 장애물"
+    assert result["voice_diagnostics"]["direction_safety"]["right"]["blockers"] == [2]
 
 
 def test_crowd_keeps_one_message_when_distribution_becomes_blocked():
@@ -138,9 +183,11 @@ def test_unsafe_previous_direction_is_retracted_before_opposite_confirmation():
 
 
 def test_unsafe_direction_is_cancelled_even_when_no_voice_candidate_remains():
+    """음성 대상이 아닌 DANGER가 기존 이동 방향을 막으면 안내를 해제한다."""
     voice = WalkingVoice()
     voice.observe(prediction(danger_item(1, [20, 20, 43, 80])), 100, 0)
-    result = prediction(caution_item(1, [60, 20, 80, 80]))
+    result = prediction(danger_item(
+        1, [60, 20, 80, 80], voice_suppressed_reason="low_walkable_surroundings"))
     assert voice.observe(result, 100, .1) is None
     assert result["voice_clear"] is True
     assert voice.events[-1] == (.1, None)

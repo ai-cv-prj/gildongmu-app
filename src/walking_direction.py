@@ -76,17 +76,15 @@ def direction_ground(class_map, label_ids, shape):
 
 
 def direction_safety(prediction, image_width):
-    """음성 대상 여부와 별개로 검출된 객체가 이동 후보를 막는지 확인한다.
+    """DANGER 객체가 이동 후보를 막는지 확인한다.
 
     근거리 ROI의 측면 및 발 높이의 이동 띠를 검사한다. 중앙 사람의 박스나
-    먼 측면 객체만으로 회피 방향을 막지 않는다. 유효한 운동 이력이 있으면
-    0.8초까지의 진입도 검사하지만 새 프레임을 기다리지는 않는다.
+    먼 측면 객체만으로 회피 방향을 막지 않는다. 방향 예측 설정이 켜진 경우에만
+    유효한 운동 이력으로 0.8초까지의 진입도 검사한다.
     """
     ground = prediction.get("direction_ground") or {}
     result = {side: {"allowed": False, "reason": "ground_unavailable", "blockers": []}
               for side in ("left", "right")}
-    if ground.get("status") != "available":
-        return result
     height = ground.get("image_height", 0)
     if height <= 0 or image_width <= 0:
         return result
@@ -98,8 +96,14 @@ def direction_safety(prediction, image_width):
             "left": (.15, GUIDANCE["walking_left_max_ratio"]),
             "right": (GUIDANCE["walking_right_min_ratio"], .85)}.items():
         state = result[side]
-        state.update(allowed=bool(ground.get(side)), reason="clear" if ground.get(side)
-                     else "ground_blocked")
+        ground_check_enabled = (side != "right"
+                                or prediction.get(
+                                    "direction_right_ground_check_enabled", True))
+        ground_allowed = (not ground_check_enabled
+                          or ground.get("status") == "available" and bool(ground.get(side)))
+        ground_reason = ("clear" if ground_allowed else "ground_blocked"
+                         if ground.get("status") == "available" else "ground_unavailable")
+        state.update(allowed=ground_allowed, reason=ground_reason)
         edge = prediction.get("direction_walkability") or {}
         fraction, minimum = edge.get(side), edge.get("minimum")
         if (edge.get("status") == "available"
@@ -108,6 +112,8 @@ def direction_safety(prediction, image_width):
             state.update(allowed=False, reason="edge_not_walkable")
         for index, item in enumerate(prediction.get("detections", [])):
             if item.get("class_name") == "traffic_light":
+                continue
+            if item.get("alert_level", item.get("risk_level")) != "danger":
                 continue
             try:
                 x1, _, x2, bottom = map(float, item["xyxy"])
@@ -123,7 +129,9 @@ def direction_safety(prediction, image_width):
                 vx, vy = velocity
                 if not all(math.isfinite(v) for v in (vx, vy)):
                     vx = vy = 0.0
-            for time in (0, .4, .8):
+            times = ((0, .4, .8)
+                     if prediction.get("direction_prediction_enabled", False) else (0,))
+            for time in times:
                 start, end, foot_y = x1 + vx * time, x2 + vx * time, bottom + vy * time
                 occupied = warning_directions({"xyxy": [start, 0, end, foot_y]}, 1)
                 side_overlap = min(end, right) - max(start, left)

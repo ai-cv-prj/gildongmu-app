@@ -124,6 +124,10 @@ crosswalk_safety:
   # 좌우 이동 음성은 핑크 ROI의 해당 끝 30%에서 보행 마스크가 30% 이상일 때 유지한다.
   walking_direction_edge_width_ratio: 0.30
   walking_direction_min_walkable_ratio: 0.30
+  # 현재 위치만으로 좌우 회피 공간을 판단하고 미래 bbox 예측은 사용하지 않는다.
+  walking_direction_prediction_enabled: false
+  # 오른쪽 회피는 하단 보행 마스크 연결 실패로 차단하지 않는다.
+  walking_direction_right_ground_check_enabled: false
 
 # 보행로 이탈 안내
 # 횡단보도 판정과 같은 가상 발 영역을 사용하되 상태와 음성은 따로 관리한다.
@@ -203,7 +207,8 @@ risk:
   min_history_s: 0.2
   prediction_horizon_s: 0.8
   # 안정적인 추적에서 장애물이 근접 경로에 들어올 때를 미리 위험으로 판단
-  approach_danger_enabled: true
+  # 미래 근거리 도달 예상은 계산만 유지하고 위험도 상승에는 사용하지 않는다.
+  approach_danger_enabled: false
   approach_danger_s: 0.5
   # 차량·자전거만: 안정된 추적에서 경로 교차와 접근이 함께 예측될 때 조기 위험
   moving_conflict_enabled: false
@@ -219,7 +224,8 @@ risk:
   # 프레임 공백과 TTC
   reset_gap_s: 0.5
   hard_reset_gap_s: 2.0
-  ttc_alerts: true
+  # TTC 계산 로직은 유지하되 위험도 상승에는 사용하지 않는다.
+  ttc_alerts: false
   ttc_danger_s: 1.5
   ttc_caution_s: 3.0
   min_expansion_rate: 0.05
@@ -259,7 +265,8 @@ risk:
   side_min_height: 0.18
   side_min_width: 0.12
   full_static_footprint: true
-  relative_entry_enabled: true
+  # 미래 경로 진입 예상은 계산만 유지하고 위험도 상승에는 사용하지 않는다.
+  relative_entry_enabled: false
 
   # ROI 재보정과 지면 범위 적응
   roi_recalibration_enabled: true
@@ -273,8 +280,8 @@ risk:
   label_confidence: 0.60
   label_conflict_hold_s: 0.80
 
-  # 넓은 ROI의 중앙·측면 위험 기준
-  wide_roi_priority_enabled: true
+  # 핑크 ROI와 20% 이상 겹친 모든 객체를 중앙·측면 구분 없이 위험으로 판단한다.
+  wide_roi_priority_enabled: false
   central_danger_left: 0.20
   central_danger_right: 0.80
   side_danger_y: 0.90
