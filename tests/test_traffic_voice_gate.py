@@ -203,6 +203,43 @@ def test_weak_red_detections_do_not_flip_green():
     assert [clip for _, clip in voice.events] == ["green-initial-wait.mp3"]
 
 
+# 최초 초록 대기 상태 유지 확인
+@pytest.mark.parametrize("target", [1, 2])
+def test_initial_wait_survives_loss_and_reacquisition(target):
+    """최초 초록의 대기 상태는 소실 뒤 같은 ID·다른 ID로 다시 잡아도 전환 확인 전까지 유지한다."""
+    voice = TrafficVoice()
+    frame, time_s = 1, 0.0
+    def feed(color, until, tgt=1):
+        nonlocal frame, time_s
+        while time_s < until - 1e-9:
+            voice.observe(signal(color, target=tgt) if color else signal(target=None), frame, time_s)
+            frame, time_s = frame + 1, round(time_s + .25, 2)
+    feed("green", .75)
+    feed(None, 3.0)
+    feed("green", 3.75, target)
+    feed("red", 5.0, target)
+    feed("green", 5.75, target)
+    clips = [clip for _, clip in voice.events]
+    assert clips[0] == "green-initial-wait.mp3" and "missing.mp3" in clips
+    after = clips[clips.index("missing.mp3") + 1:]
+    assert after[0] == "green-initial-wait.mp3"
+    assert after[-1] == "green-changed.mp3"
+
+
+# 프레임 속도와 무관한 신호 확정 확인
+@pytest.mark.parametrize("fps", [4, 5, 10, 15, 30])
+def test_first_signal_and_changes_at_any_frame_rate(fps):
+    """실제 색이 이어지면 프레임 속도와 관계없이 첫 신호와 빨강·초록 전환을 안내한다."""
+    voice = TrafficVoice()
+    step, time_s, frame = 1 / fps, 0.0, 1
+    for color, duration in (("red", 1.5), ("green", 2.0), ("red", 2.0)):
+        end = time_s + duration
+        while time_s < end - 1e-9:
+            voice.observe(signal(color), frame, round(time_s, 4))
+            frame, time_s = frame + 1, time_s + step
+    assert [clip for _, clip in voice.events] == ["red.mp3", "green-changed.mp3", "red-changed.mp3"]
+
+
 # ROI 밖 신호색 변화를 재진입 전환으로 오인하지 않기
 def test_color_changes_outside_roi_are_not_announced():
     """차단 중 색상 변화와 소실 안내를 생성하지 않고 재진입 시 최초 안내를 사용한다."""
