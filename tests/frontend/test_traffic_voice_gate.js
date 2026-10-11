@@ -182,3 +182,43 @@ test("초록에서 빨강으로의 전환은 800ms 이상 빨강을 확인한 �
   for (const t of [1800, 2000]) h.send("red", t, true);
   assert.deepEqual(h.requests.map(item => item.text), ["빨간불", "초록불로 바뀜", "빨간불로 바뀜"]);
 });
+
+test("최초 초록의 대기 상태는 같은 ID·다른 ID 재인식으로 해제되지 않는다", () => {
+  for (const target of [1, 2]) {
+    const h = harness();
+    for (const t of [0, 250, 500]) h.send("green", t, true);
+    for (const t of [750, 1250, 1750, 2250, 2750]) { h.send(null, t, true); h.tick(t); }
+    for (const t of [3000, 3250, 3500]) h.send("green", t, true, { target });
+    assert.deepEqual(h.requests.map(item => item.text).filter(text => text.startsWith("초록불")),
+      ["초록불, 다음 신호까지 대기", "초록불, 다음 신호까지 대기"], `target ${target}`);
+    // 빨강→초록 전환을 확인한 뒤에야 일반 초록 안내로 바뀐다.
+    for (const t of [3750, 4000, 4250, 4500, 4750]) h.send("red", t, true, { target });
+    for (const t of [5000, 5250, 5500]) h.send("green", t, true, { target });
+    assert.equal(h.requests.at(-1).text, "초록불로 바뀜");
+  }
+});
+
+test("횡단 중 프레임 수신이 끊겨도 5초 안에 돌아오면 초기 대기로 돌아가지 않는다", () => {
+  for (const [stallMs, expectWait] of [[1500, false], [3000, false], [6000, true]]) {
+    const h = harness();
+    const crossing = { crossing: true };
+    for (const t of [0, 250, 500]) h.send("red", t, true, crossing);
+    for (const t of [750, 1000, 1250]) h.send("green", t, true, crossing);
+    for (let t = 1500; t <= 1250 + stallMs; t += 250) h.tick(t);
+    const back = 1250 + stallMs + 250;
+    for (const t of [back, back + 250, back + 500]) h.send("green", t, true, crossing);
+    const texts = h.requests.map(item => item.text);
+    assert.equal(texts.slice(2).includes("초록불, 다음 신호까지 대기"), expectWait, `stall ${stallMs}ms: ${texts}`);
+  }
+});
+
+test("4·5·10·15·30fps 모두에서 첫 신호와 빨강↔초록 전환을 안내한다", () => {
+  for (const fps of [4, 5, 10, 15, 30]) {
+    const h = harness();
+    const step = 1000 / fps;
+    let t = 0;
+    const run = (color, ms) => { const end = t + ms; for (; t < end; t += step) h.send(color, Math.round(t), true); };
+    run("red", 1500); run("green", 2000); run("red", 2000);
+    assert.deepEqual(h.requests.map(item => item.text), ["빨간불", "초록불로 바뀜", "빨간불로 바뀜"], `${fps}fps`);
+  }
+});

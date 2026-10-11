@@ -36,6 +36,10 @@ class TrafficVoice:
         self.samples = []
         # 대상 추적이 잠깐 끊겨도 직전에 확정한 대상·색상을 기억해 전환과 다른 신호의 초록을 구분한다.
         self.remembered = None
+        # 최근 다수결로 정한 후보 색과 이어진 시각이다. 관측 창 크기와 별도로 안정 시간을 잰다.
+        self.candidate = None
+        # 바뀌는 순간을 보지 못한 초록을 대기 안내했다. 빨강이나 초록 전환을 확인하기 전까지 유지한다.
+        self.waiting_green = False
         self.last_valid = None
         self.last_frame = None
         self.last_capture = None
@@ -61,6 +65,7 @@ class TrafficVoice:
         self.last_announced_target = self.last_announced_color = None
         self.last_announced_time = self.repeat_clip = None
         self.remembered = None
+        self.waiting_green = False
 
     # 횡단 중 짧은 횡단보도 근거 소실 시 신호 음성만 중단
     def _hold(self, time_s):
@@ -79,6 +84,7 @@ class TrafficVoice:
         self.target = None
         self.color = None
         self.samples = []
+        self.candidate = None
 
     # 전역 음성 우선순위에 사용할 신호 이벤트 기록
     def _announce(self, time_s, filename):
@@ -158,7 +164,14 @@ class TrafficVoice:
             memory[1] if memory is not None and memory[0] == target else None)
         required = (RED_CHANGE_STABLE_SECONDS if next_color == "red" and known == "green"
                     else STABLE_SECONDS)
-        if len(votes) < STABLE_FRAMES or time_s - votes[0] < required - 1e-9:
+        if len(votes) < STABLE_FRAMES:
+            return
+        # 다수결을 얻은 색이 이어진 시간은 관측 창과 따로 재야 프레임이 빨라도 안정 시간을 채운다.
+        if (self.candidate is None or self.candidate["color"] != next_color
+                or time_s - self.candidate["last"] > STABLE_WINDOW_SECONDS + 1e-9):
+            self.candidate = {"color": next_color, "since": votes[0]}
+        self.candidate["last"] = time_s
+        if time_s - self.candidate["since"] < required - 1e-9:
             return
         self.remembered = (target, next_color, time_s)
         if self.color == next_color:
@@ -180,9 +193,15 @@ class TrafficVoice:
         if previous is not None and previous != next_color:
             clip = "green-changed.mp3" if next_color == "green" else "red-changed.mp3"
         elif next_color == "green":
-            clip = "green-initial-wait.mp3" if first or unverified_green else "green.mp3"
+            # 신호를 놓쳤다 다시 잡아도 전환을 확인하기 전까지는 대기 안내를 유지한다.
+            clip = ("green-initial-wait.mp3" if first or unverified_green or self.waiting_green
+                    else "green.mp3")
         else:
             clip = "red.mp3"
+        if next_color == "red" or clip == "green-changed.mp3":
+            self.waiting_green = False
+        elif clip == "green-initial-wait.mp3":
+            self.waiting_green = True
         if self.last_announced_target == target and self.last_announced_color == next_color and not recovered:
             return
         self.last_announced_target = target
