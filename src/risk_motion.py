@@ -325,8 +325,7 @@ class MotionHistory:
         matrix = np.column_stack([times, np.ones(len(times))])
         fitted, *_ = np.linalg.lstsq(matrix, samples[:,2:5], rcond=None)
         contact_only_motion = (
-            self.cfg["approach_danger_enabled"]
-            and detection["class_name"] in self.cfg["static_ground_classes"]
+            detection["class_name"] in self.cfg["static_ground_classes"]
             and all(row[7] for row in history)
             and any(row[5] for row in history)
         )
@@ -354,7 +353,7 @@ class MotionHistory:
             result["independent_velocity_norm_per_s"] = list(map(
                 float, np.median(valid_recent, axis=0)))
         # Only a tracked, stable image-space approach may anticipate the near zone.
-        if self.cfg["approach_danger_enabled"] and not geometry["clipped"]:
+        if not geometry["clipped"]:
             result["time_to_near_s"] = self._time_to_near(detection, geometry, vx, vy)
         # TTC uses relative expansion; do not subtract forward ego-motion.
         expansion = dh / geometry["height"]
@@ -376,8 +375,8 @@ class MotionHistory:
             else:
                 result["ttc_invalid_reason"] = "not_expanding"
         # Nine samples (including now) over the configurable short horizon.
-        if ((self.cfg["relative_entry_enabled"] or detection["class_name"] not in self.cfg["static_ground_classes"])
-                and abs(vx) >= self.cfg["min_lateral_speed"] and geometry["corridor_overlap"] < self.cfg["overlap_threshold"]):
+        if (abs(vx) >= self.cfg["min_lateral_speed"]
+                and geometry["corridor_overlap"] < self.cfg["overlap_threshold"]):
             for future in np.linspace(0, self.cfg["prediction_horizon_s"], 9)[1:]:
                 projected = np.asarray(geometry["footprint"]) + [vx*future, vy*future, vx*future, vy*future]
                 polygon = corridor_polygon if corridor_polygon is not None else self.cfg["corridor_polygon"]

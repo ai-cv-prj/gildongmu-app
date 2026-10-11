@@ -24,7 +24,11 @@ class SharedProfileTests(unittest.TestCase):
         cfg=risk_config(CFG)
         self.assertTrue(cfg["surface_risk_enabled"])
         self.assertTrue(cfg["side_proximity_enabled"])
-        self.assertTrue(cfg["ttc_alerts"])
+        self.assertFalse(cfg["ttc_alerts"])
+        self.assertFalse(cfg["approach_danger_enabled"])
+        self.assertFalse(cfg["relative_entry_enabled"])
+        self.assertFalse(cfg["moving_conflict_enabled"])
+        self.assertFalse(cfg["wide_roi_priority_enabled"])
         self.assertLess(min(p[1] for p in cfg["corridor_polygon"]),.372)
         self.assertFalse(any("body" in k or "head_height" in k or "ground_height" in k for k in cfg))
 

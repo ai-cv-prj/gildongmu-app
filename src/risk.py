@@ -47,8 +47,7 @@ def predicted_moving_conflict(detection, geometry, motion, entry_y, cfg):
     Stable track history, closing scale and projected path overlap must agree.
     This is a relative image prediction, not a metric collision time.
     """
-    if (not cfg["moving_conflict_enabled"]
-            or detection["class_name"] not in MOVING_TRAFFIC_CLASSES
+    if (detection["class_name"] not in MOVING_TRAFFIC_CLASSES
             or detection.get("track_id") is None
             or geometry["clipped"] or geometry["point"][1] < entry_y
             or motion["quality"] != "valid"
@@ -287,7 +286,9 @@ class RiskEngine:
                 item["reasons"].append("side_close_candidate")
             if g["edge_contact"]:
                 item["reasons"].append("edge_candidate")
-            if m["time_to_corridor_s"] is not None and g["point"][1] >= entry_y:
+            if (self.config["relative_entry_enabled"]
+                    and m["time_to_corridor_s"] is not None
+                    and g["point"][1] >= entry_y):
                 if item["risk_level"] == "monitor":
                     item["risk_level"] = "caution"
                 item["reasons"].append("lateral_entry")
@@ -321,7 +322,7 @@ class RiskEngine:
                 detection, g, m, entry_y, self.config)
             m["time_to_moving_conflict_s"] = moving_conflict[0] if moving_conflict else None
             m["moving_conflict_basis"] = moving_conflict[1] if moving_conflict else None
-            if moving_conflict is not None:
+            if self.config["moving_conflict_enabled"] and moving_conflict is not None:
                 item["risk_level"] = "danger"
                 item["reasons"].append("predicted_moving_conflict")
             surroundings = surrounding_walkability(g,class_map,label_ids,shape,self.config)

@@ -70,17 +70,17 @@ class WalkingRiskSyncTests(unittest.TestCase):
                           [.98, 1.], [.02, 1.], [.02, .65]])
 
     # 넓은 하단 ROI의 측면·중앙 위험도 검증
-    def test_wide_side_is_caution_and_center_is_danger(self):
-        """같은 깊이에서 측면 접촉은 주의, 중앙 접촉은 위험으로 판정한다."""
+    def test_wide_roi_makes_side_and_center_danger(self):
+        """핑크 ROI에 들어온 객체는 측면과 중앙 모두 위험으로 판정한다."""
         frame = np.zeros((100, 100, 3), np.uint8)
         walkable = np.ones((100, 100), np.uint8)
         side = engine().update(frame, [detection((78, 50, 95, 85))], 0,
                                class_map=walkable, label_ids=LABELS)["detections"][0]
         center = engine().update(frame, [detection((42, 50, 58, 85))], 0,
                                  class_map=walkable, label_ids=LABELS)["detections"][0]
-        self.assertEqual(side["risk_level"], "caution")
+        self.assertEqual(side["risk_level"], "danger")
         self.assertEqual(center["risk_level"], "danger")
-        self.assertIn("near_path_side_candidate", side["reasons"])
+        self.assertIn("near_path_occupied", side["reasons"])
 
     # 촬영 불가 상태의 경고 검증
     def test_obscured_view_suppresses_object_warning(self):

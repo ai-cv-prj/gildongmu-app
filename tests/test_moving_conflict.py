@@ -101,6 +101,7 @@ def test_only_confirmed_crossing_overrides_nonwalkable_road_filter():
         item = result["detections"][0]
         assert item["risk_level"] == wanted
         assert item["alert_level"] == wanted
+        assert item["motion"]["time_to_moving_conflict_s"] is not None
         assert ("predicted_moving_conflict" in item["reasons"]) is enabled
 
 

@@ -74,15 +74,17 @@ class RiskTests(unittest.TestCase):
         self.assertIsNone(result["detections"][0]["motion"]["ttc_scale_s"])
 
     def test_stable_approach_promotes_before_near_zone(self):
-        e = engine(config={"approach_danger_enabled": True, "approach_danger_s": 1.2,
-                           "min_forward_speed": .05})
-        for t, bottom in ((0, .55), (.1, .57), (.2, .59)):
-            result = e.update(FRAME, [detection((40, int((bottom-.3)*100), 60, bottom*100))], t)
-        item = result["detections"][0]
-        self.assertLess(item["geometry"]["point"][1], item["geometry"]["immediate_top_y"])
-        self.assertEqual(item["risk_level"], "danger")
-        self.assertIn("approaching_near_path", item["reasons"])
-        self.assertLess(item["motion"]["time_to_near_s"], 1.2)
+        for enabled in (False, True):
+            e = engine(config={"approach_danger_enabled": enabled, "approach_danger_s": 1.2,
+                               "min_forward_speed": .05})
+            for t, bottom in ((0, .55), (.1, .57), (.2, .59)):
+                result = e.update(
+                    FRAME, [detection((40, int((bottom-.3)*100), 60, bottom*100))], t)
+            item = result["detections"][0]
+            self.assertLess(item["geometry"]["point"][1], item["geometry"]["immediate_top_y"])
+            self.assertEqual(item["risk_level"], "danger" if enabled else "caution")
+            self.assertEqual("approaching_near_path" in item["reasons"], enabled)
+            self.assertLess(item["motion"]["time_to_near_s"], 1.2)
 
     def test_static_approach_promotes_but_unstable_camera_does_not(self):
         config = {"approach_danger_enabled": True, "approach_danger_s": 1.2,
@@ -172,14 +174,16 @@ class RiskTests(unittest.TestCase):
         self.assertEqual(item["risk_level"], "danger")
 
     def test_lateral_entry_outside_roi_without_scale_expansion(self):
-        e=engine()
-        for t in (0,.1,.2):
-            result=e.update(FRAME,[detection((2+50*t,35,12+50*t,65))],t)
-        item=result["detections"][0]
-        self.assertLess(item["geometry"]["corridor_overlap"],.2)
-        self.assertIn("lateral_entry",item["reasons"])
-        self.assertEqual(item["risk_level"],"caution")
-        self.assertIsNone(item["motion"]["ttc_scale_s"])
+        for enabled in (False, True):
+            e=engine(config={"relative_entry_enabled":enabled})
+            for t in (0,.1,.2):
+                result=e.update(FRAME,[detection((2+50*t,35,12+50*t,65))],t)
+            item=result["detections"][0]
+            self.assertLess(item["geometry"]["corridor_overlap"],.2)
+            self.assertIsNotNone(item["motion"]["time_to_path_s"])
+            self.assertEqual("lateral_entry" in item["reasons"],enabled)
+            self.assertEqual(item["risk_level"],"caution" if enabled else "monitor")
+            self.assertIsNone(item["motion"]["ttc_scale_s"])
 
     def test_parallel_outside_path_does_not_raise_lateral_alert(self):
         e=engine()
