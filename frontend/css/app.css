@@ -6,7 +6,6 @@
 button,input,select {font:inherit;touch-action:manipulation;}
 summary {touch-action:manipulation;}
 .touch-selected {outline:4px solid #246BCE;outline-offset:3px;}
-.touch-help {margin:16px 0 0;font-size:clamp(16px,calc(18px * var(--text-scale)),24px);line-height:1.5;text-align:center;}
 button {margin:0;border:0;line-height:1.3;font-weight:750;word-break:keep-all;overflow-wrap:anywhere;box-shadow:var(--button-shadow);}
 button span {color:inherit;}
 h1,h2,p {margin:0;color:inherit;word-break:keep-all;overflow-wrap:anywhere;}
@@ -120,11 +119,21 @@ h1:focus:not(:focus-visible) {outline:none;}
 .icon {width:1.3em;height:1.3em;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;flex:none;}
 .voice-button .icon {width:44px;height:44px;stroke-width:2.4;}
 .content,.settings-content {padding-bottom:max(28px,env(safe-area-inset-bottom));}
-/* Fit the viewport; the video keeps its own proportions inside this area. */
+/* Optional demo display; the normal accessible controls keep their size and layout. */
+.app[data-demo-camera=true]:is([data-screen=walk],[data-screen=signal],[data-screen=search],[data-screen=approach],[data-screen=arrived]) {max-width:none;}
+.app[data-demo-camera=true] .camera-screen {min-height:100svh;min-height:100dvh;}
+.app[data-demo-camera=true] .camera-screen .top-controls {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding:calc(12px + env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) 12px max(12px,env(safe-area-inset-left));}
+.app[data-demo-camera=true] .camera-screen .primary-controls {display:contents;}
+.app[data-demo-camera=true] .camera-screen .top-controls button {min-height:76px;margin:0;padding:10px 8px;border-radius:18px;font-size:24px;}
+.app[data-demo-camera=true] .camera-screen #walk-end {gap:6px;}
+.app[data-demo-camera=true] .camera-screen #walk-end::before {width:24px;height:24px;}
+/* Preserve the full camera image and overlay rather than cropping their edges. */
 .camera {position:relative;flex:1;min-height:240px;width:100%;aspect-ratio:auto!important;overflow:hidden;border:0;border-radius:28px;background:#171813;box-shadow:inset 0 0 0 2px #F3D774;}
 /* The camera runs edge to edge so the preview gets the sheet's full width and height. */
 .camera-screen .content {padding:16px 0 env(safe-area-inset-bottom);gap:16px;}
+.app[data-demo-camera=true] .camera-screen .content {padding:8px 0 env(safe-area-inset-bottom);gap:8px;}
 .camera-screen .main-title {padding:0 24px;}
+.app[data-demo-camera=true] .camera-screen .main-title {font-size:28px;padding:0 max(12px,env(safe-area-inset-right)) 0 max(12px,env(safe-area-inset-left));}
 .camera-screen .camera {border-radius:24px 24px 0 0;}
 .camera video,.camera canvas {position:absolute;inset:0;width:100%;height:100%;object-fit:contain;}
 .camera canvas {pointer-events:none;}
@@ -175,4 +184,11 @@ select,input[type=text] {width:100%;min-width:0;min-height:56px;padding:12px;bor
 .record-button[aria-pressed=true] .record-dot {border-radius:3px;background:#A82929;}
 .diagnostics .secondary-button {background:var(--soft);}
 @media(max-width:360px) {.option {padding-left:56px;padding-right:56px;} .option[data-rate]::before {left:14px;width:34px;} .option[data-size]::before {left:18px;} .option[aria-pressed=true]::after {right:14px;width:32px;height:32px;margin-top:-16px;background-size:22px;} .route-trigger {gap:8px;} .route-trigger[data-empty=true]:not([aria-invalid=true]) {font-size:clamp(28px,calc(28px * var(--text-scale)),32px);} .route-trigger[data-empty=true]:not([aria-invalid=true])::before {width:28px;height:28px;} .top-controls {padding-left:16px;padding-right:16px;} .content,.settings-content {padding-left:16px;padding-right:16px;} .camera-screen .main-title {padding:0 16px;} .primary-controls {gap:10px;}}
+@media (orientation:landscape) and (min-width:600px) and (max-height:600px) {
+  .app[data-demo-camera=true] .camera-screen {display:grid;grid-template-columns:clamp(168px,23vw,220px) minmax(0,1fr);}
+  .app[data-demo-camera=true] .camera-screen .top-controls {position:static;display:flex;flex-direction:column;justify-content:center;padding-right:12px;}
+  .app[data-demo-camera=true] .camera-screen .top-controls button {width:100%;}
+  .app[data-demo-camera=true] .camera-screen .content {border-radius:24px 0 0 24px;}
+  .app[data-demo-camera=true] .camera-screen .camera {min-height:180px;border-radius:16px 0 0 0;}
+}
 @media(prefers-reduced-motion:reduce) {button:active {transform:none;}}

@@ -17,7 +17,7 @@
   function create({ onAction = () => {}, onSubmitRoute = () => {}, onRateChange = () => {},
     onTextScaleChange = () => {}, onStationChange = () => {}, onSpeak = () => {},
     onExplore = onSpeak, onCancelExplore = () => {} } = {}) {
-    let screen = "welcome", paused = false, busy = false;
+    let screen = "welcome", paused = false, busy = false, demoCamera = false;
     let obstacleDetection = true;
     let bus = {}, lastResult = null, currentCue = DEFAULT_CUES.walk;
     let micMode = null, destroyed = false, stationCount = 0, speechSession = false;
@@ -336,6 +336,16 @@
       speech.stop();
       if (button.dataset.action === "open-keypad") {
         if (!busy && !paused && screen === "input") keypad.open(readRoute());
+      } else if (button.dataset.action === "demo-camera") {
+        demoCamera = !demoCamera;
+        $("app").dataset.demoCamera = String(demoCamera);
+        button.setAttribute("aria-pressed", String(demoCamera));
+        resetExploration();
+        announce(demoCamera ? "시연용 카메라 화면을 확대했습니다." : "기본 카메라 화면으로 돌아왔습니다.");
+        if (CAMERA_SCREENS.has(screen)) {
+          window.scrollTo?.({ top: 0, behavior: "instant" });
+          $("camera-left").focus({ preventScroll: true });
+        }
       } else invoke(onAction, button.dataset.action);
     }));
     all("[data-mic]").forEach(button => bind(button, "click", () => {
