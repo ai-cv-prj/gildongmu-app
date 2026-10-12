@@ -252,7 +252,7 @@ class WalkingVoiceTests(unittest.TestCase):
                             self.assertEqual(voice.observe(
                                 prediction(level="monitor"), 100, 1.001 + delay), messages[current])
 
-    # 하단 발자국의 32·36·32 구역 침범 확인
+    # 하단 발자국의 30·40·30 구역 침범 확인
     def test_direction_uses_footprint_overlap_with_intrusion_thresholds(self):
         """최대 겹침 구역과 기준 이상 침범한 인접 구역을 모두 반환한다."""
         self.assertEqual(warning_directions(danger_item(1, [10, 0, 20, 20]), 100), {"left"})
@@ -277,7 +277,7 @@ class WalkingVoiceTests(unittest.TestCase):
     def test_center_occupancy_uses_union_of_overlapping_obstacles(self):
         """겹치는 여러 객체의 가운데 점유 구간을 한 번만 계산한다."""
         items = [danger_item(1, [35, 0, 50, 20]), danger_item(2, [45, 0, 55, 20])]
-        self.assertAlmostEqual(center_occupancy_ratio(items, 100), 5 / 9)
+        self.assertAlmostEqual(center_occupancy_ratio(items, 100), .5)
 
     # 한 걸음·두 걸음 경계와 유지 구간 확인
     def test_movement_steps_uses_center_occupancy_hysteresis(self):
@@ -477,15 +477,15 @@ class WalkingVoiceTests(unittest.TestCase):
     def test_direction_edge_walkability_uses_pink_roi_outer_regions(self):
         """화면 전체가 아니라 핑크 ROI 좌우 끝 영역에서만 초록 마스크를 계산한다."""
         class_map = np.zeros((100, 100), np.uint8)
-        class_map[65:75, 2:21] = 1
-        class_map[65:76, 79:98] = 1
+        class_map[60:70, 2:21] = 1
+        class_map[60:71, 79:98] = 1
         result = direction_edge_walkability(
             class_map, {"walkable": 1}, class_map.shape,
-            {"immediate_polygon": [[.02, .65], [.98, .65], [.98, 1], [.02, 1]]},
+            {"immediate_polygon": [[.02, .60], [.98, .60], [.98, 1], [.02, 1]]},
             .20, .30)
         self.assertEqual(result["status"], "available")
-        self.assertAlmostEqual(result["left"], 10 / 35)
-        self.assertAlmostEqual(result["right"], 11 / 35)
+        self.assertAlmostEqual(result["left"], 10 / 40)
+        self.assertAlmostEqual(result["right"], 11 / 40)
 
     # 목표 방향의 보행 마스크 부족 시 장애물 주의 음성 대체 확인
     def test_direction_voice_uses_blocked_clip_below_walkable_threshold(self):
