@@ -79,8 +79,8 @@ def direction_safety(prediction, image_width):
     """DANGER 객체가 이동 후보를 막는지 확인한다.
 
     근거리 ROI의 측면 및 발 높이의 이동 띠를 검사한다. 중앙 사람의 박스나
-    먼 측면 객체만으로 회피 방향을 막지 않는다. 방향 예측 설정이 켜진 경우에만
-    유효한 운동 이력으로 0.8초까지의 진입도 검사한다.
+    먼 측면 객체만으로 회피 방향을 막지 않는다. 하단 지면 연결 검사와
+    방향 예측은 각 설정이 켜진 경우에만 차단 근거로 사용한다.
     """
     ground = prediction.get("direction_ground") or {}
     result = {side: {"allowed": False, "reason": "ground_unavailable", "blockers": []}
@@ -96,9 +96,8 @@ def direction_safety(prediction, image_width):
             "left": (.15, GUIDANCE["walking_left_max_ratio"]),
             "right": (GUIDANCE["walking_right_min_ratio"], .85)}.items():
         state = result[side]
-        ground_check_enabled = (side != "right"
-                                or prediction.get(
-                                    "direction_right_ground_check_enabled", True))
+        ground_check_enabled = prediction.get(
+            "direction_ground_check_enabled", True)
         ground_allowed = (not ground_check_enabled
                           or ground.get("status") == "available" and bool(ground.get(side)))
         ground_reason = ("clear" if ground_allowed else "ground_blocked"

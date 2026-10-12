@@ -59,11 +59,11 @@ def test_direction_prediction_setting_requires_boolean():
         crosswalk_safety_config({"walking_direction_prediction_enabled": 1})
 
 
-def test_right_ground_check_setting_requires_boolean():
-    """오른쪽 바닥 연결 검사 설정은 명시적인 불리언 값만 허용한다."""
-    assert crosswalk_safety_config()["walking_direction_right_ground_check_enabled"]
+def test_ground_check_setting_requires_boolean():
+    """좌우 바닥 연결 검사 설정은 명시적인 불리언 값만 허용한다."""
+    assert crosswalk_safety_config()["walking_direction_ground_check_enabled"]
     with np.testing.assert_raises(ValueError):
-        crosswalk_safety_config({"walking_direction_right_ground_check_enabled": 1})
+        crosswalk_safety_config({"walking_direction_ground_check_enabled": 1})
 
 
 # ROI 밖 횡단보도 무음 확인
