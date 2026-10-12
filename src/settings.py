@@ -53,7 +53,7 @@ def number(config, key, minimum, maximum, integer=False):
 def load_paths(config_path=DEFAULT_PATHS_CONFIG):
     """필수 경로의 빈 값과 형식을 확인하고 원래 경로 문자열을 반환한다."""
     config = read_yaml(config_path)
-    required = ("sample_dir", "output_dir", "session_dir", "frontend_dir", "voice_dir",
+    required = ("session_dir", "frontend_dir", "voice_dir",
                 "mask2former_weights", "yolo_weights", "traffic_weights", "traffic_classifier_weights")
     for key in required:
         if not isinstance(config.get(key), str) or not config[key].strip():

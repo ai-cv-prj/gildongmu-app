@@ -70,6 +70,19 @@ labelling/
 /tests/
 /pytest.ini
 
+# 앱과 별도로 실행하던 결과 허브·영상 분석 도구
+/result_hub/
+/Dockerfile.hub
+/compose.hub.yaml
+/requirements-hub.txt
+/configs/hub.env.example
+/docs/result_hub.md
+/scripts/init_hub_admin.py
+/scripts/init_hub_env.py
+/scripts/sync_results.py
+/scripts/run_video_inference.py
+/scripts/run_bus_video_inference.py
+
 # 로컬 도구 설정 및 인증 정보
 /.codex/
 /.aws/

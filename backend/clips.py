@@ -18,7 +18,7 @@ import cv2
 import numpy as np
 
 from backend.session import SINGLE_CLIP_POLICY, SessionError
-from src.video_audio import ffmpeg_executable
+from src.media import ffmpeg_executable
 
 
 log = logging.getLogger(__name__)

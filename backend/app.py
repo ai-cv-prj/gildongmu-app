@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from backend.session import SessionError, SessionManager
 from backend.clips import ClipError, ClipStore, MAX_CHUNK_BYTES
 from backend.logger import configure_app_logging
-from backend.client_errors import ClientErrorStore, ClientFetchErrors, hub_source_id
+from backend.client_errors import ClientErrorStore, ClientFetchErrors
 from backend.diagnostics import MAX_EVENT_BYTES, RequestCorrelationMiddleware, sanitize_events
 from backend.boarding import BoardingError
 from backend.bus.arrival import BusArrivalError, BusArrivalService
@@ -33,7 +33,7 @@ from src.settings import (
     DEFAULT_APP_CONFIG, DEFAULT_AUDIO_CONFIG, DEFAULT_PATHS_CONFIG,
     browser_settings, load_app_config, load_audio_settings, load_paths, resolve_path,
 )
-from src.video_audio import ffmpeg_executable
+from src.media import ffmpeg_executable
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -150,8 +150,7 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
         manager = SessionManager(resolve_path(paths["session_dir"]), session_settings=settings["session"],
                                  bus_config=bus_settings)
     sessions = manager
-    source_id = hub_source_id()
-    client_errors = ClientErrorStore(sessions.output_dir, source_id)
+    client_errors = ClientErrorStore(sessions.output_dir)
     clip_store = ClipStore(sessions, max_jpeg_bytes=upload["max_jpeg_bytes"],
                            recording_fps=recording_settings["fps"])
     exporter = ThreadPoolExecutor(max_workers=1, thread_name_prefix="clip-export")
@@ -202,8 +201,6 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
         response = await call_next(request)
         if request.url.path == "/" or request.url.path.startswith("/static/"):
             response.headers["Cache-Control"] = "no-store"
-        if source_id:
-            response.headers["X-Hub-Source-ID"] = source_id
         request_id = request.headers.get("X-Client-Request-ID", "")
         if request_id and len(request_id) <= 80 and request_id.replace("-", "").isalnum():
             response.headers["X-Client-Request-ID"] = request_id

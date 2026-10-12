@@ -10,7 +10,7 @@ from src.crosswalk_safety import (
     CrosswalkSafetyEngine, crosswalk_camera_stable, crosswalk_safety_config,
 )
 from src.obstacle import ObstacleDetector, validate_yolo_config
-from src.pipeline import load_config, resolve_path
+from src.inference_config import load_config, resolve_path
 from src.risk import RiskEngine
 from src.risk_config import risk_config, tracking_config
 from src.sidewalk import SidewalkSegmenter

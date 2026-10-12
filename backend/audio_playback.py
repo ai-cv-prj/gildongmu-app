@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 from threading import BoundedSemaphore, Lock
 
-from src.video_audio import ffmpeg_executable
+from src.media import ffmpeg_executable
 
 
 _GUIDANCE_CLIPS = frozenset({

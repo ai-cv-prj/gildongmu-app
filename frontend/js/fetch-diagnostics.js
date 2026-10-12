@@ -4,7 +4,7 @@
   const KEY = "gildongmu-fetch-errors-v1", MAX_RECORDS = 100;
   function create({ transport = window.fetch.bind(window), storage = null,
     now = () => Date.now(), monotonic = () => performance.now() } = {}) {
-    let records = [], dropped = 0, sourceId = null, lastSuccess = null;
+    let records = [], dropped = 0, lastSuccess = null;
     let contextProvider = () => ({}), task = null, timer = null, storageAvailable = Boolean(storage);
     const listeners = new Set(), responses = new WeakMap();
     const id = () => window.crypto?.randomUUID?.() || `${now()}-${Math.random().toString(16).slice(2)}`;
@@ -24,13 +24,6 @@
       catch (_) { storageAvailable = false; }
       publish();
     }
-    function configure(value) {
-      if (!value) return;
-      sourceId = short(value, 80);
-      let changed = false;
-      for (const entry of records) if (!entry.record.source_id) { entry.record.source_id = sourceId; changed = true; }
-      if (changed) save();
-    }
     function schedule() {
       if (timer !== null) return;
       timer = setTimeout(() => { timer = null; void flush(); }, 1000);
@@ -40,7 +33,7 @@
       let context = {};
       try { context = contextProvider() || {}; } catch (_) {}
       const record = { event_id: id(), request_id: info.request_id, occurred_at_ms: now(),
-        source_id: sourceId, session_id: info.session_id || short(context.session_id, 80),
+        source_id: null, session_id: info.session_id || short(context.session_id, 80),
         frame_id: info.frame_id, captured_at_ms: info.captured_at_ms, clip_id: info.clip_id,
         path: info.path, method: info.method, phase, attempt: info.attempt,
         error_name: short(error?.name || "Error", 80), message: short(String(error?.message || error), 500),
@@ -74,7 +67,6 @@
       headers.set("X-Client-Request-ID", info.request_id);
       try {
         const response = await transport(input, { ...options, headers });
-        configure(response.headers?.get?.("X-Hub-Source-ID"));
         responses.set(response, info);
         return response;
       } catch (error) { report(error, info, "fetch"); throw error; }
@@ -105,7 +97,6 @@
           if (!response.ok) return;
           const body = await response.json();
           if (!Array.isArray(body.saved_ids)) return;
-          configure(response.headers?.get?.("X-Hub-Source-ID"));
           const acknowledged = new Set(body.saved_ids);
           let progress = false;
           for (const entry of pending) if (acknowledged.has(entry.record.event_id)) {
@@ -119,7 +110,7 @@
       return task;
     }
     function exportData() {
-      return { format_version: 1, exported_at_ms: now(), source_id: sourceId, dropped_records: dropped,
+      return { format_version: 1, exported_at_ms: now(), source_id: null, dropped_records: dropped,
         records: records.map(entry => ({ ...entry.record, delivered: !entry.pending })) };
     }
     function download() {

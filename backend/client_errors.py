@@ -1,24 +1,15 @@
 """Persist browser fetch failures independently of live inference sessions."""
 import json
 import logging
-import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
-from dotenv import dotenv_values
 from pydantic import BaseModel, ConfigDict, Field
 
 
 log = logging.getLogger(__name__)
-
-
-def hub_source_id():
-    value = os.getenv("HUB_SOURCE_ID")
-    if value is None:
-        value = dotenv_values(Path(__file__).resolve().parents[1] / ".env").get("HUB_SOURCE_ID")
-    return (value or "").strip()[:80] or None
 
 
 class ClientFetchError(BaseModel):
@@ -55,9 +46,8 @@ class ClientFetchErrors(BaseModel):
 
 
 class ClientErrorStore:
-    def __init__(self, output_dir, source_id):
+    def __init__(self, output_dir):
         self.directory = Path(output_dir) / "logs"
-        self.source_id = source_id
         self.lock = threading.Lock()
         self.current_path = None
         self.seen = set()
@@ -81,12 +71,12 @@ class ClientErrorStore:
                     if record.event_id in self.seen:
                         continue
                     stored = {**record.model_dump(), "client_source_id": record.source_id,
-                              "source_id": self.source_id, "server_at": now.isoformat()}
+                              "source_id": None, "server_at": now.isoformat()}
                     file.write(json.dumps(stored, ensure_ascii=False, allow_nan=False) + "\n")
                     file.flush()
                     self.seen.add(record.event_id)
-                    log.warning("client fetch failed source=%r event=%s request=%s session=%s "
-                                "phase=%s path=%s error=%r", self.source_id, record.event_id,
+                    log.warning("client fetch failed event=%s request=%s session=%s "
+                                "phase=%s path=%s error=%r", record.event_id,
                                 record.request_id, record.session_id, record.phase, record.path,
                                 record.message)
         return [record.event_id for record in records]

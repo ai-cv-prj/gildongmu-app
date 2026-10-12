@@ -1,11 +1,5 @@
 # 프로젝트 루트 기준 경로.  
 
-# 샘플 입력 영상
-sample_dir: data/samples/input
-
-# 샘플 추론 결과
-output_dir: data/samples/output
-
 # 날짜별 촬영·추론 기록
 session_dir: test-result
 
