@@ -31,13 +31,13 @@ function harness() {
     requests, cleared,
     // 현재 시각의 신호 결과 전달
     /** 같은 대상 신호와 서버의 ROI 허용 결과를 새 프레임으로 전달한다. */
-    send(color, time, allowed, { crossing = false, target = 1, confidence } = {}) {
+    send(color, time, allowed, { crossing = false, target = 1, confidence, box } = {}) {
       now = time;
       const event = { type: "traffic_signal", signal_state: color || "unknown",
         selected_detection_index: color ? 0 : null };
       if (allowed !== undefined) event.voice_gate = { allowed };
       guidance.accept({ session_id: "session", frame_id: ++frame,
-        detections: color ? [{ track_id: target, confidence }] : [], event, crossing_active: crossing }, now);
+        detections: color ? [{ track_id: target, confidence, xyxy: box }] : [], event, crossing_active: crossing }, now);
     },
     // 새 프레임 없이 시간 경과
     /** 소실 안내와 오래된 횡단보도 근거의 만료를 확인한다. */
@@ -106,7 +106,7 @@ test("초록불로 바뀐 뒤 건너는 중 짧게 끊기면 다른 대상의 �
 });
 
 test("횡단이 끝났거나 근거가 오래 끊기면 다시 잡은 초록불을 처음처럼 안내한다", () => {
-  for (const [crossing, lostMs] of [[false, 200], [true, 5000]]) {
+  for (const [crossing, lostMs] of [[false, 2000], [true, 5000]]) {
     const h = harness();
     for (const t of [0, 200, 400]) h.send("red", t, true, { crossing: true });
     for (const t of [600, 800, 1000]) h.send("green", t, true, { crossing: true });
@@ -221,4 +221,81 @@ test("4·5·10·15·30fps 모두에서 첫 신호와 빨강↔초록 전환을 �
     run("red", 1500); run("green", 2000); run("red", 2000);
     assert.deepEqual(h.requests.map(item => item.text), ["빨간불", "초록불로 바뀜", "빨간불로 바뀜"], `${fps}fps`);
   }
+});
+
+test("수신 중단 뒤 복귀 첫 프레임의 일시적 미인식으로 횡단 이력을 지우지 않는다", () => {
+  const h = harness();
+  const crossing = { crossing: true };
+  for (const t of [0, 250, 500]) h.send("red", t, true, crossing);
+  for (const t of [750, 1000, 1250]) h.send("green", t, true, crossing);
+  for (let t = 1500; t <= 4250; t += 250) h.tick(t);
+  // 서버는 2초 넘는 공백 뒤 횡단 상태를 초기화하고, 첫 프레임은 횡단보도도 놓친다.
+  h.send(null, 4500, false, { crossing: false });
+  for (const t of [4750, 5000, 5250]) h.send("green", t, true, crossing);
+  assert.equal(h.requests.map(item => item.text).includes("초록불, 다음 신호까지 대기"), false,
+    h.requests.map(item => item.text).join(" / "));
+});
+
+test("수신 중단 뒤 미인식이 마지막 프레임부터 5초를 넘기면 기존처럼 초기화한다", () => {
+  const h = harness();
+  const crossing = { crossing: true };
+  for (const t of [0, 250, 500]) h.send("red", t, true, crossing);
+  for (const t of [750, 1000, 1250]) h.send("green", t, true, crossing);
+  for (let t = 1500; t <= 4250; t += 250) h.tick(t);
+  for (const t of [4500, 5000, 5500, 6000, 6500]) h.send(null, t, false, { crossing: false });
+  for (const t of [6750, 7000, 7250]) h.send("green", t, true, crossing);
+  assert.equal(h.requests.at(-1).text, "초록불, 다음 신호까지 대기");
+});
+
+test("빨간불 뒤 가려져 ID가 바뀌어도 같은 자리의 초록이면 전환으로 안내한다", () => {
+  const h = harness();
+  const near = [0.68, 0.31, 0.71, 0.37], moved = [0.80, 0.30, 0.84, 0.35];
+  for (const t of [0, 250, 500, 750]) h.send("red", t, true, { box: near });
+  for (const t of [1000, 1500, 2000]) h.send(null, t, true);
+  for (const t of [2250, 2500, 2750]) h.send("green", t, true, { target: 2, box: moved });
+  assert.deepEqual(h.requests.map(item => item.text), ["빨간불", "초록불로 바뀜"]);
+});
+
+test("빨간불 대기 중 횡단보도 판정이 잠깐 끊겨도 같은 신호의 초록은 전환으로 안내한다", () => {
+  const h = harness();
+  for (const t of [0, 250, 500, 750]) h.send("red", t, true);
+  h.send(null, 1000, false);
+  for (const t of [1250, 1500, 1750]) h.send("green", t, true);
+  assert.deepEqual(h.requests.map(item => item.text), ["빨간불", "초록불로 바뀜"]);
+});
+
+test("빨간불 뒤 멀리 떨어진 신호등의 초록이나 오래 지난 초록은 대기 안내한다", () => {
+  const cases = [
+    { box: [0.039, 0.288, 0.089, 0.351], start: 2250 },
+    { box: [0.68, 0.31, 0.71, 0.37], start: 5000 },
+  ];
+  for (const { box, start } of cases) {
+    const h = harness();
+    for (const t of [0, 250, 500, 750]) h.send("red", t, true, { box: [0.535, 0.237, 0.574, 0.296] });
+    for (let t = 1000; t < start; t += 500) { h.send(null, t, true); h.tick(t); }
+    for (const t of [start, start + 250, start + 500]) h.send("green", t, true, { target: 2, box });
+    assert.equal(h.requests.filter(item => !item.text.startsWith("신호")).at(-1).text, "초록불, 다음 신호까지 대기",
+      JSON.stringify({ box, start }));
+  }
+});
+
+test("초록불로 바뀐 직후 횡단 판정 전의 1프레임 끊김으로 대기로 돌아가지 않는다", () => {
+  const h = harness();
+  for (const t of [0, 250, 500, 750]) h.send("red", t, true);
+  for (const t of [1000, 1250, 1500]) h.send("green", t, true);
+  h.send("green", 1750, false);
+  for (const t of [2000, 2250, 2500]) h.send("green", t, true);
+  for (let t = 2750; t <= 7000; t += 250) h.send("green", t, true);
+  assert.equal(h.requests.some(item => item.text === "초록불, 다음 신호까지 대기"), false,
+    h.requests.map(item => item.text).join(" / "));
+});
+
+test("초록불로 바뀐 직후 횡단 판정 전 수신이 잠깐 끊겨도 대기로 돌아가지 않는다", () => {
+  const h = harness();
+  for (const t of [0, 250, 500, 750]) h.send("red", t, true);
+  for (const t of [1000, 1250, 1500]) h.send("green", t, true);
+  for (let t = 1750; t <= 3250; t += 250) h.tick(t);
+  for (let t = 3500; t <= 8000; t += 250) h.send("green", t, true);
+  assert.equal(h.requests.some(item => item.text === "초록불, 다음 신호까지 대기"), false,
+    h.requests.map(item => item.text).join(" / "));
 });
