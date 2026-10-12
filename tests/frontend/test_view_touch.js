@@ -253,3 +253,23 @@ test("보관 영상 선택과 저장은 처리 중에도 가능하고 저장 실
   assert.equal(h.node("local-clips-panel").hidden, true);
   h.view.destroy();
 });
+
+test("영상 기록은 최대 1분 30초 영상 1개의 준비·기록·완료 상태를 표시한다", () => {
+  const h = harness();
+  h.view.setClipState({ available: true });
+  assert.equal(h.node("record-label").textContent, "1분 30초 영상 기록");
+  assert.equal(h.node("clip-status").textContent, "최대 1분 30초 영상 1개 · 기록을 마치면 자동 종료 후 저장");
+  assert.equal(h.node("test-panel-badge").textContent, "영상 0/1");
+  assert.equal(h.node("record-button").disabled, false);
+  h.view.setClipState({ active: true, count: 1 });
+  assert.equal(h.node("record-label").textContent, "영상 기록 끝내기");
+  assert.equal(h.node("record-button")["aria-pressed"], "true");
+  assert.equal(h.node("clip-status").textContent, "영상 1개 기록 중 · 최대 1분 30초");
+  assert.equal(h.node("test-panel-badge").textContent, "● 녹화 중 1/1");
+  h.view.setClipState({ active: false, available: false });
+  assert.equal(h.node("record-button")["aria-pressed"], "false");
+  assert.equal(h.node("record-button").disabled, true);
+  assert.equal(h.node("clip-status").textContent, "영상 1개 기록 완료 · 테스트를 종료하고 저장합니다");
+  assert.equal(h.node("test-panel-badge").textContent, "영상 1/1");
+  h.view.destroy();
+});

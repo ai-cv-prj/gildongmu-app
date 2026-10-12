@@ -13,6 +13,7 @@ import cv2
 import numpy as np
 import pytest
 from fastapi import HTTPException, UploadFile
+from fastapi.testclient import TestClient
 
 from backend.app import ClipCompleteRequest, StartRequest, StopRequest, create_app
 from backend.clips import ClipError, ClipStore
@@ -26,12 +27,70 @@ def endpoints(app):
     return {route.path: route.endpoint for route in app.routes if hasattr(route, "endpoint")}
 
 
-def sample_webm(path):
+def sample_webm(path, *, duration=.4):
     subprocess.run([
         ffmpeg_executable(), "-nostdin", "-y", "-v", "error", "-f", "lavfi", "-i",
-        "color=size=64x64:rate=10:duration=0.4", "-c:v", "libvpx", str(path),
+        f"color=size=64x64:rate=10:duration={duration}", "-c:v", "libvpx", str(path),
     ], check=True, capture_output=True)
     return path.read_bytes()
+
+
+def mark_legacy_session(manager, session_id):
+    """Reproduce a stopped session saved before the single-video policy existed."""
+    path = manager.completed_folder(session_id) / "session.json"
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    del saved["clip_policy"]
+    path.write_text(json.dumps(saved), encoding="utf-8")
+
+
+def test_new_session_uploads_one_real_90_second_video_with_late_frames(tmp_path):
+    manager = SessionManager(tmp_path, model_factory=FakeModels)
+    app = create_app(manager)
+    recording = sample_webm(tmp_path / "ninety-seconds.webm", duration=90)
+    image = np.zeros((80, 100, 3), dtype=np.uint8)
+    success, encoded = cv2.imencode(".jpg", image)
+    assert success
+    jpeg = encoded.tobytes()
+    with TestClient(app) as client:
+        session_id = manager.start("Android 90s")["session_id"]
+        for frame_id, timestamp in ((1, 1100), (2, 90000)):
+            manager.process(session_id, frame_id, timestamp, image,
+                            image_bytes=jpeg, save_live_frame=False)
+        manager.stop(session_id)
+        base = f"/api/sessions/{session_id}/clips"
+        policy = client.get(base).json()
+        assert policy["max_clips"] == 1 and policy["max_clip_ms"] == 90000
+        files = {"video": ("camera.webm", recording, "video/webm")}
+        assert client.post(f"{base}/1/chunks/0", files=files).status_code == 200
+        for frame_id, timestamp in ((1, 1100), (2, 90000)):
+            response = client.post(f"{base}/1/frames/{frame_id}",
+                                   data={"captured_at_ms": timestamp},
+                                   files={"image": ("frame.jpg", jpeg, "image/jpeg")})
+            assert response.status_code == 200, response.text
+        payload = {"mime_type": "video/webm", "chunk_count": 1, "size_bytes": len(recording),
+                   "started_at_ms": 1000, "ended_at_ms": 91000}
+        response = client.post(f"{base}/1/complete", json={**payload, "ended_at_ms": 91001})
+        assert response.status_code == 422
+        response = client.post(f"{base}/1/complete", json=payload)
+        assert response.status_code == 200, response.text
+        manifest = response.json()
+        assert manifest["duration_ms"] == 90000
+        assert 89900 <= manifest["original_duration_ms"] <= 90500
+        assert manifest["frame_count"] == 2
+        for response in (
+            client.post(f"{base}/2/chunks/0", files=files),
+            client.post(f"{base}/2/frames/1", data={"captured_at_ms": 1100},
+                        files={"image": ("frame.jpg", jpeg, "image/jpeg")}),
+            client.post(f"{base}/2/complete", json=payload),
+        ):
+            assert response.status_code == 422
+            assert "영상 1개" in response.json()["detail"]
+    # The application lifespan waits for the real MP4 export to finish.
+    manifest = app.state.clip_store.status(session_id)["clips"][0]
+    assert manifest["state"] == "ready", manifest.get("error")
+    assert [frame["clip_offset_ms"] for frame in manifest["frames"]] == [100, 89000]
+    original = manager.completed_folder(session_id) / manifest["original_path"]
+    assert original.read_bytes() == recording
 
 
 def test_inference_export_keeps_screen_overlay_and_heard_audio(tmp_path):
@@ -96,7 +155,7 @@ def test_no_clip_session_has_no_video_and_stop_retries(tmp_path):
     assert restarted.completed_folder(session_id) == folder
 
 
-def test_two_sequential_clips_render_after_stop_with_verified_frames(tmp_path):
+def test_legacy_clips_remain_uploadable_listed_and_retryable_after_restart(tmp_path):
     manager = SessionManager(tmp_path, model_factory=FakeModels)
     app = create_app(manager)
     routes = endpoints(app)
@@ -117,11 +176,12 @@ def test_two_sequential_clips_render_after_stop_with_verified_frames(tmp_path):
     folder = tmp_path / started["date"] / started["folder_name"]
     assert not (folder / "frames").exists()
     routes["/api/sessions/stop"](StopRequest(session_id=session_id))
+    mark_legacy_session(manager, session_id)
     recording = sample_webm(tmp_path / "sample.webm")
     chunk_route = routes["/api/sessions/{session_id}/clips/{clip_id}/chunks/{index}"]
     selected_route = routes["/api/sessions/{session_id}/clips/{clip_id}/frames/{frame_id}"]
     complete_route = routes["/api/sessions/{session_id}/clips/{clip_id}/complete"]
-    for clip_id, frame_id, start, end in ((1, 1, 900, 1400), (2, 2, 2400, 2900)):
+    for clip_id, frame_id, start, end in ((1, 1, 900, 1400), (5, 2, 2400, 2900)):
         upload = lambda: UploadFile(file=io.BytesIO(recording), filename="camera.webm")
         assert chunk_route(session_id, clip_id, 0, upload())["saved"]
         assert chunk_route(session_id, clip_id, 0, upload())["saved"]
@@ -143,7 +203,9 @@ def test_two_sequential_clips_render_after_stop_with_verified_frames(tmp_path):
             break
         time.sleep(.02)
     assert [clip["state"] for clip in status["clips"]] == ["ready", "ready"]
-    for clip_id in (1, 2):
+    assert [clip["clip_id"] for clip in status["clips"]] == [1, 5]
+    assert status["max_clips"] == 5
+    for clip_id in (1, 5):
         clip = folder / "clips" / f"clip_{clip_id:03d}"
         assert (clip / "original.webm").read_bytes() == recording
         assert (clip / "inference.mp4").stat().st_size > 0
@@ -156,6 +218,11 @@ def test_two_sequential_clips_render_after_stop_with_verified_frames(tmp_path):
     assert store.status(session_id)["clips"][0]["state"] == "ready"
     assert store.add_frame(session_id, 1, 1, 1000, jpeg[0], masks[0])["saved"]
     assert store.add_chunk(session_id, 1, 0, recording)["saved"]
+    assert store.add_frame(session_id, 5, 2, 2500, jpeg[1], masks[1])["saved"]
+    assert store.add_chunk(session_id, 5, 0, recording)["saved"]
+    manifest, retry = store.complete(session_id, 5, mime_type="video/webm", chunk_count=1,
+                                      size_bytes=len(recording), started_at_ms=2400, ended_at_ms=2900)
+    assert manifest["state"] == "ready" and not retry
     store.export(session_id, 1)
     clip = folder / "clips" / "clip_001"
     assert {path.name for path in clip.iterdir()} == {"original.webm", "inference.mp4", "manifest.json"}
@@ -171,6 +238,7 @@ def test_clip_window_hash_and_overlap_are_rejected(tmp_path):
     manager.process(session_id, 1, 1000, cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR),
                     image_bytes=data, save_live_frame=False)
     manager.stop(session_id)
+    mark_legacy_session(manager, session_id)
     store = ClipStore(manager, max_jpeg_bytes=3_000_000)
     with pytest.raises(ClipError):
         store.add_frame(session_id, 1, 1, 1000, data + b"altered")
@@ -178,7 +246,7 @@ def test_clip_window_hash_and_overlap_are_rejected(tmp_path):
     store.add_chunk(session_id, 1, 0, recording)
     with pytest.raises(ClipError):
         store.complete(session_id, 1, mime_type="video/webm", chunk_count=1, size_bytes=len(recording),
-                       started_at_ms=900, ended_at_ms=30_901)
+                       started_at_ms=900, ended_at_ms=90_901)
     manifest, _ = store.complete(session_id, 1, mime_type="video/webm", chunk_count=1,
                                  size_bytes=len(recording), started_at_ms=900, ended_at_ms=1400)
     assert manifest["state"] == "pending"
@@ -266,13 +334,15 @@ def test_mp4_camera_and_encoded_duration_limit(tmp_path):
     assert (manager.completed_folder(session_id) / "clips/clip_001/inference.mp4").is_file()
     long_video = tmp_path / "long.webm"
     subprocess.run([ffmpeg_executable(), "-nostdin", "-y", "-v", "error", "-f", "lavfi", "-i",
-                    "color=size=64x64:rate=1:duration=31", "-c:v", "libvpx", str(long_video)],
+                    "color=size=64x64:rate=1:duration=91", "-c:v", "libvpx", str(long_video)],
                    check=True, capture_output=True)
     too_long = long_video.read_bytes()
-    store.add_chunk(session_id, 2, 0, too_long)
-    with pytest.raises(ClipError, match="30초"):
-        store.complete(session_id, 2, mime_type="video/webm", chunk_count=1,
-                       size_bytes=len(too_long), started_at_ms=2000, ended_at_ms=30_000)
+    session_id = manager.start("Long recording")["session_id"]
+    manager.stop(session_id)
+    store.add_chunk(session_id, 1, 0, too_long)
+    with pytest.raises(ClipError, match="90초"):
+        store.complete(session_id, 1, mime_type="video/webm", chunk_count=1,
+                       size_bytes=len(too_long), started_at_ms=2000, ended_at_ms=92_000)
 
 
 def test_frame_retry_recovers_uncommitted_files_after_restart(tmp_path):

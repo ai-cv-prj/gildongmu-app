@@ -17,18 +17,20 @@ from uuid import uuid4
 import cv2
 import numpy as np
 
-from backend.session import SessionError
+from backend.session import SINGLE_CLIP_POLICY, SessionError
 from src.video_audio import ffmpeg_executable
 
 
 log = logging.getLogger(__name__)
+# Keep all legacy clip IDs readable/retryable after the recording policy changes.
 MAX_CLIPS = 5
-MAX_CLIP_MS = 30_000
+MAX_NEW_CLIPS = 1
+MAX_CLIP_MS = 90_000
 MAX_CHUNK_BYTES = 4 * 1024 * 1024
 MAX_TOTAL_BYTES = 120 * 1024 * 1024
 MAX_MASK_BYTES = 2 * 1024 * 1024
-MAX_FRAMES_PER_CLIP = 300
-MAX_FRAME_BYTES_PER_CLIP = 32 * 1024 * 1024
+MAX_FRAMES_PER_CLIP = 900
+MAX_FRAME_BYTES_PER_CLIP = 96 * 1024 * 1024
 
 
 class ClipError(Exception):
@@ -73,9 +75,20 @@ class ClipStore:
         except SessionError as error:
             raise ClipError(str(error), 409) from error
 
-    def _clip(self, folder, clip_id, create=False):
-        if not 1 <= clip_id <= MAX_CLIPS:
-            raise ClipError(f"클립 번호는 1~{MAX_CLIPS}여야 합니다.")
+    @staticmethod
+    def _max_clips(folder):
+        try:
+            session = json.loads((folder / "session.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            raise ClipError("세션 녹화 정책을 읽을 수 없습니다.", 500) from error
+        return MAX_NEW_CLIPS if session.get("clip_policy") == SINGLE_CLIP_POLICY else MAX_CLIPS
+
+    def _clip(self, folder, clip_id, create=False, *, for_upload=False):
+        limit = self._max_clips(folder) if create or for_upload else MAX_CLIPS
+        if not 1 <= clip_id <= limit:
+            if limit == 1:
+                raise ClipError("테스트당 90초 이하 영상 1개만 전송할 수 있습니다.")
+            raise ClipError(f"클립 번호는 1~{limit}여야 합니다.")
         clip = folder / "clips" / f"clip_{clip_id:03d}"
         if create and not (clip / "manifest.json").is_file():
             (clip / "chunks").mkdir(parents=True, exist_ok=True)
@@ -232,13 +245,13 @@ class ClipStore:
                 meta.unlink(missing_ok=True)
             frame_paths = list((clip / "frames").glob("*.jpg"))
             if len(frame_paths) >= MAX_FRAMES_PER_CLIP:
-                raise ClipError("클립당 선택 프레임 300개 한도를 넘었습니다.", 413)
+                raise ClipError(f"클립당 선택 프레임 {MAX_FRAMES_PER_CLIP}개 한도를 넘었습니다.", 413)
             stored_frame_bytes = sum(item.stat().st_size for item in frame_paths)
             stored_frame_bytes += sum(item.stat().st_size for item in (clip / "masks").glob("*.png"))
             stored_frame_bytes += sum(item.stat().st_size for item in (clip / "overlays").glob("*.png"))
             frame_bytes = len(image) + len(mask or b"") + len(overlay or b"")
             if stored_frame_bytes + frame_bytes > MAX_FRAME_BYTES_PER_CLIP:
-                raise ClipError("클립당 선택 프레임 32MiB 한도를 넘었습니다.", 413)
+                raise ClipError("클립당 선택 프레임 96MiB 한도를 넘었습니다.", 413)
             if self._input_size(folder) + frame_bytes > MAX_TOTAL_BYTES:
                 raise ClipError("세션의 선택 영상·프레임 120MiB 저장 한도를 넘었습니다.", 413)
             try:
@@ -262,7 +275,7 @@ class ClipStore:
     @staticmethod
     def _validate_window(start, end):
         if type(start) is not int or type(end) is not int or start <= 0 or end <= start or end - start > MAX_CLIP_MS:
-            raise ClipError("클립은 30초 이하의 양수 시각 구간이어야 합니다.")
+            raise ClipError("영상은 90초 이하의 양수 시각 구간이어야 합니다.")
 
     @staticmethod
     def _video_duration_ms(path):
@@ -287,7 +300,7 @@ class ClipStore:
             raise ClipError("영상 청크 수나 크기가 올바르지 않습니다.")
         with self.lock:
             folder = self._session(session_id, require_idle=True)
-            clip = self._clip(folder, clip_id)
+            clip = self._clip(folder, clip_id, for_upload=True)
             if not clip.is_dir():
                 raise ClipError("업로드된 클립이 없습니다.", 409)
             manifest = self._manifest(clip)
@@ -344,7 +357,7 @@ class ClipStore:
                 actual_duration_ms = self._video_duration_ms(target)
                 # Container timestamps can extend one final frame past the recorder stop time.
                 if actual_duration_ms > MAX_CLIP_MS + 500:
-                    raise ClipError("원본 영상이 30초 제한을 넘었습니다.")
+                    raise ClipError("원본 영상이 90초 제한을 넘었습니다.")
             except ClipError:
                 target.unlink(missing_ok=True)
                 raise
@@ -376,7 +389,7 @@ class ClipStore:
                     clips.append(manifest)
                 elif clip.is_dir():
                     clips.append({"clip_id": clip_id, "state": "uploading"})
-            return {"session_id": session_id, "clips": clips, "max_clips": MAX_CLIPS,
+            return {"session_id": session_id, "clips": clips, "max_clips": self._max_clips(folder),
                     "max_clip_ms": MAX_CLIP_MS, "max_total_bytes": MAX_TOTAL_BYTES}
 
     def pending_exports(self):

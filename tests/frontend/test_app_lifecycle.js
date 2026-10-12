@@ -135,7 +135,7 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
         recordingStartedAt = 100000 + now; return recordingStartedAt; },
       async stopRaw() { if (!recording) return null; recording = false; recordStops++;
         return { blob: { size: 12, type: "video/webm" }, started_at_ms: recordingStartedAt,
-          ended_at_ms: Math.min(100000 + now, recordingStartedAt + 30000) }; } },
+          ended_at_ms: Math.min(100000 + now, recordingStartedAt + 90000) }; } },
     GOverlay: { size() {}, clear() {}, snapshot: () => "cG5n",
       render(result, done) { overlayRenders.push(result); done("drawn"); } },
     fetch: async () => ({}), addEventListener() {},
@@ -214,8 +214,8 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
       const pending = callback(); await flush(); return { pending };
     },
     async autoStopClip() {
-      const [id, timer] = [...timers].find(([, value]) => value.delay === 29750);
-      timers.delete(id); now += 29750; timer.callback(); await flush();
+      const [id, timer] = [...timers].find(([, value]) => value.delay === 89750);
+      timers.delete(id); now = recordingStartedAt - 100000 + 89750; timer.callback(); await flush();
     },
     async respond(index, overrides = {}) { frames[index].resolve({ ...frameResult(frames[index]), ...overrides }); await flush(); },
     async finishVoice() { const done = voice; voice = null; done?.onEnd(); await flush(); },
@@ -636,86 +636,104 @@ test("카메라 종료 후 GPS만 계속할 때도 일시중지 버튼으로 GPS
   await app.end();
 });
 
-test("녹화는 기본 꺼짐이며 선택한 두 구간을 세션 종료 후 각각 업로드한다", async () => {
+test("녹화는 기본 꺼짐이며 영상 하나를 마치면 세션 종료 후 업로드한다", async () => {
   const app = await harness();
   await app.action("start");
   assert.deepEqual(app.recordCounts(), { starts: 0, stops: 0, recording: false });
-
   await app.action("record");
   const first = await app.capture();
   await app.respond(0); await first.pending;
-  app.setNow(1100);
-  await app.action("record");
-
-  await app.action("record");
+  app.setNow(60100);
   const second = await app.capture();
   await app.respond(1); await second.pending;
-  app.setNow(2200);
-  await app.action("record");
-  assert.deepEqual(app.recordCounts(), { starts: 2, stops: 2, recording: false });
   assert.equal(app.uploads.length, 0, "추론 중에는 영상을 전송하지 않는다");
-
-  await app.end();
-  assert.deepEqual(app.timeline, ["stop", "upload:1", "upload:2"]);
-  assert.deepEqual(app.uploads.map(clip => clip.index), [1, 2]);
-  assert.deepEqual(JSON.parse(JSON.stringify(app.uploads.map(clip => clip.frames.map(frame => frame.frame_id)))),
-    [[1], [2]]);
+  app.setNow(61100);
+  await app.action("record");
+  await new Promise(setImmediate);
+  assert.deepEqual(app.recordCounts(), { starts: 1, stops: 1, recording: false });
+  assert.deepEqual(app.timeline, ["stop", "upload:1"]);
+  assert.equal(app.resources().sessionsStopped, 1);
+  assert.deepEqual(app.uploads.map(clip => clip.index), [1]);
+  assert.deepEqual(Array.from(app.uploads[0].frames, frame => frame.frame_id), [1, 2]);
   assert.strictEqual(app.uploads[0].frames[0].image, app.frames[0].blob,
     "라이브 추론에 보낸 동일한 JPEG를 사후 업로드한다");
   assert.equal(app.uploads[0].frames[0].overlay_png, "cG5n",
     "화면에 실제 그린 오버레이도 같은 프레임과 함께 업로드한다");
-  assert.ok(app.uploads.every(clip => clip.ended_at_ms - clip.started_at_ms <= 30000));
+  assert.equal(app.uploads[0].ended_at_ms - app.uploads[0].started_at_ms, 61000);
   assert.match(app.statuses.at(-1), /원본·추론 영상 저장이 완료/);
 });
 
-test("30초 자동 종료 뒤에도 새 구간을 기록할 수 있고 세 번째 구간을 마치면 테스트를 종료해 저장한다", async () => {
+test("30초를 지나 계속 녹화하고 90초 한도에 영상 하나만 자동 저장한다", async () => {
   const app = await harness();
   await app.action("start");
   await app.action("record");
-  await app.autoStopClip();
-  assert.deepEqual(app.recordCounts(), { starts: 1, stops: 1, recording: false });
-  for (let index = 1; index < 3; index++) {
-    await app.action("record");
-    app.setNow(30000 + index * 1000);
-    await app.action("record");
+  const first = await app.capture();
+  await app.respond(0); await first.pending;
+  assert.equal(await app.runTimer(29750), null, "기존 30초 종료 타이머가 없다");
+  for (const time of [30100, 60100, 89100]) {
+    app.setNow(time);
+    const frame = await app.capture(); await app.respond(app.frames.length - 1); await frame.pending;
+    await app.tick();
+    assert.equal(app.recordCounts().recording, true);
+    assert.equal(app.resources().sessionsStopped, 0);
   }
-  assert.deepEqual(app.recordCounts(), { starts: 3, stops: 3, recording: false });
-  assert.equal(app.resources().sessionsStopped, 1, "세 번째 구간 뒤 세션을 자동으로 종료한다");
+  await app.autoStopClip();
+  await new Promise(setImmediate);
+  assert.deepEqual(app.recordCounts(), { starts: 1, stops: 1, recording: false });
+  assert.equal(app.resources().sessionsStopped, 1, "영상 하나를 마치면 세션을 자동 종료한다");
   assert.equal(app.screen(), "welcome");
-  assert.deepEqual(app.diagnostics.filter(event => event.type === "clip_buffered").map(event => event.clip_id), [1, 2, 3]);
+  assert.deepEqual(app.timeline, ["stop", "upload:1"]);
+  assert.equal(app.uploads[0].ended_at_ms - app.uploads[0].started_at_ms, 89750);
+  assert.equal(app.uploads[0].frames.length, 4);
+  assert.deepEqual(app.diagnostics.filter(event => event.type === "clip_buffered").map(event => event.clip_id), [1]);
   assert.ok(app.diagnostics.some(event => event.type === "session_stop" && event.reason === "clip_limit"));
+  await app.action("record");
+  assert.equal(app.recordCounts().starts, 1, "종료된 테스트에 두 번째 영상을 만들지 않는다");
 });
 
-test("세 번째 구간 기록 중 직접 종료해도 종료가 한 번만 실행된다", async () => {
+test("한 영상에 300개 넘는 추론 프레임을 담아도 녹화를 이어 간다", async () => {
   const app = await harness();
-  await app.action("start");
-  for (let index = 0; index < 2; index++) {
-    await app.action("record");
-    app.setNow(1000 + index * 1000);
-    await app.action("record");
+  await app.action("start"); await app.action("record");
+  for (let index = 0; index < 301; index++) {
+    app.setNow(100 + index * 100);
+    const frame = await app.capture(); await app.respond(index); await frame.pending;
   }
+  assert.equal(app.recordCounts().recording, true);
+  assert.equal(app.uploads.length, 0);
+  app.setNow(30200);
   await app.action("record");
+  await new Promise(setImmediate);
+  assert.equal(app.uploads.length, 1);
+  assert.equal(app.uploads[0].frames.length, 301);
+  assert.equal(app.resources().sessionsStopped, 1);
+});
+
+test("영상 기록 중 직접 종료해도 종료와 전송은 한 번만 실행된다", async () => {
+  const app = await harness();
+  await app.action("start"); await app.action("record");
+  const first = await app.capture(); await app.respond(0); await first.pending;
   app.setNow(5000);
   await app.end();
-  assert.deepEqual(app.recordCounts(), { starts: 3, stops: 3, recording: false });
+  assert.deepEqual(app.recordCounts(), { starts: 1, stops: 1, recording: false });
   assert.equal(app.resources().sessionsStopped, 1);
+  assert.deepEqual(app.timeline, ["stop", "upload:1"]);
   assert.deepEqual(app.diagnostics.filter(event => event.type === "session_stop").map(event => event.reason),
     ["user_confirmed"]);
 });
 
-test("일시중지와 카메라 종료는 현재 영상 구간을 끝내며 재개 시 새 구간을 쓴다", async () => {
-  const app = await harness();
-  await app.action("start");
-  await app.action("record");
-  app.setNow(1100);
-  await app.action("pause");
-  assert.equal(app.recordCounts().recording, false);
-  await app.action("pause");
-  await app.action("record");
-  app.setNow(2200);
-  await app.cameraEnd();
-  assert.deepEqual(app.recordCounts(), { starts: 2, stops: 2, recording: false });
-  await app.end();
+test("일시중지와 카메라 종료로 끝난 영상도 하나만 저장한다", async () => {
+  for (const reason of ["pause", "camera"]) {
+    const app = await harness();
+    await app.action("start"); await app.action("record");
+    const first = await app.capture(); await app.respond(0); await first.pending;
+    app.setNow(1100);
+    if (reason === "pause") await app.action("pause");
+    else await app.cameraEnd();
+    await new Promise(setImmediate);
+    assert.deepEqual(app.recordCounts(), { starts: 1, stops: 1, recording: false });
+    assert.equal(app.resources().sessionsStopped, 1);
+    assert.deepEqual(app.timeline, ["stop", "upload:1"]);
+  }
 });
 
 test("영상이 없어도 종료 요청 실패를 화면에서 다시 시도할 수 있다", async () => {

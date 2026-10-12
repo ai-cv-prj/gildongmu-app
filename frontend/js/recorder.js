@@ -1,5 +1,6 @@
 /** Camera preview and optional short raw-camera recording. */
 window.GRecorder = (() => {
+  const MAX_CLIP_MS = 90000;
   const video = document.getElementById("video");
   const overlay = document.getElementById("overlay");
   const canvas = document.getElementById("camera-view");
@@ -102,7 +103,7 @@ window.GRecorder = (() => {
     current.onstop = () => {
       if (recorder !== current) return;
       const endedAtMs = stopAtMs ?? Math.min(Math.max(
-        Math.round(performance.timeOrigin + performance.now()), startedAtMs + 1), startedAtMs + 30000);
+        Math.round(performance.timeOrigin + performance.now()), startedAtMs + 1), startedAtMs + MAX_CLIP_MS);
       const blob = new Blob(chunks, { type: current.mimeType || "video/webm" });
       const result = { blob, started_at_ms: startedAtMs, ended_at_ms: endedAtMs };
       const error = recordingError;
@@ -132,7 +133,7 @@ window.GRecorder = (() => {
     if (!recorder) return stoppedPromise || Promise.resolve(null);
     const current = recorder;
     if (stopAtMs === null) stopAtMs = Math.min(Math.max(
-      Math.round(performance.timeOrigin + performance.now()), startedAtMs + 1), startedAtMs + 30000);
+      Math.round(performance.timeOrigin + performance.now()), startedAtMs + 1), startedAtMs + MAX_CLIP_MS);
     if (current.state !== "inactive") current.stop();
     return stoppedPromise;
   }

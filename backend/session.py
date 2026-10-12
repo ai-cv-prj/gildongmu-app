@@ -27,6 +27,7 @@ from src.settings import load_app_config
 
 
 log = logging.getLogger(__name__)
+SINGLE_CLIP_POLICY = "single-90s"
 
 
 class SessionError(Exception):
@@ -115,6 +116,7 @@ class SessionManager:
                 "started_at": started_at.astimezone(timezone.utc).isoformat(),
                 "frame_count": 0, "last_frame_id": 0, "last_capture_ms": None,
                 "bus_highres": bool(bus_highres),
+                "clip_policy": SINGLE_CLIP_POLICY,
                 "folder": folder, "last_seen": time.monotonic(),
             }
             (folder / "session.json").write_text(json.dumps({
@@ -379,6 +381,7 @@ class SessionManager:
             "note": session["note"], "started_at": session["started_at"],
             "ended_at": datetime.now(timezone.utc).isoformat(),
             "frame_count": session["frame_count"],
+            "clip_policy": session["clip_policy"],
         }
         (session["folder"] / "session.json").write_text(
             json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8",

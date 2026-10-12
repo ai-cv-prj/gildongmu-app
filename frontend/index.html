@@ -89,12 +89,12 @@
     <div class="sr-only" id="announcer" role="status" aria-live="polite" aria-atomic="true"></div>
     <details class="bus-details" id="bus-details" hidden><summary>정류장·도착정보</summary><div class="target-card" id="bus-target" hidden><div><span class="card-label">현재 정류장</span><h2 id="bus-station-name">정류장 확인 중</h2></div><div class="target-number"><strong data-route>—</strong><span>번</span></div><p class="arrival-info" id="bus-arrival-text">도착정보를 확인하고 있어요.</p><p class="bus-message" id="bus-message" hidden></p><p class="bus-message" id="bus-gps-message" hidden></p><p class="bus-message" id="bus-ocr-message" hidden></p><div class="station-picker" id="station-picker" hidden><label for="bus-stations">정류장 선택</label><select id="bus-stations" disabled><option value="">가까운 정류장 확인 중</option></select></div><p class="hint" id="bus-location-status" hidden></p><button class="small-button" id="bus-location-button" type="button" data-action="locate"><svg class="icon" aria-hidden="true"><use href="#icon-pin"/></svg>위치 다시 확인</button></div></details>
     <details class="diagnostics" id="test-panel">
-      <summary><span class="panel-title">테스트 도구</span><span class="panel-badge" id="test-panel-badge" data-state="idle">영상 0/3</span></summary>
+      <summary><span class="panel-title">테스트 도구</span><span class="panel-badge" id="test-panel-badge" data-state="idle">영상 0/1</span></summary>
       <div class="diagnostics-content">
         <section class="test-group" aria-labelledby="test-clip-title">
-          <h2 class="test-group-title" id="test-clip-title">영상 구간</h2>
-          <button class="record-button" type="button" data-action="record" id="record-button" aria-pressed="false" disabled><span class="record-dot" aria-hidden="true"></span><span id="record-label">30초 영상 구간 기록</span></button>
-          <p class="test-note" id="clip-status" role="status" aria-live="polite">최대 30초씩 3개 · 3개를 채우면 자동 종료 후 저장</p>
+          <h2 class="test-group-title" id="test-clip-title">영상 기록</h2>
+          <button class="record-button" type="button" data-action="record" id="record-button" aria-pressed="false" disabled><span class="record-dot" aria-hidden="true"></span><span id="record-label">1분 30초 영상 기록</span></button>
+          <p class="test-note" id="clip-status" role="status" aria-live="polite">최대 1분 30초 영상 1개 · 기록을 마치면 자동 종료 후 저장</p>
           <button class="secondary-button" type="button" data-action="pause" id="pause-button" aria-pressed="false"><svg class="icon" aria-hidden="true"><use id="pause-icon" href="#icon-pause"/></svg><span id="pause-label">일시중지</span></button>
         </section>
         <section class="test-group" aria-labelledby="test-link-title">

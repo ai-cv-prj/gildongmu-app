@@ -21,7 +21,7 @@
     let obstacleDetection = true;
     let bus = {}, lastResult = null, currentCue = DEFAULT_CUES.walk;
     let micMode = null, destroyed = false, stationCount = 0, speechSession = false;
-    let clipState = { active: false, count: 0, max: 3, available: false };
+    let clipState = { active: false, count: 0, max: 1, available: false };
     let keypad = null, touchExplore = null, lastActionAt = -Infinity;
     const listeners = [];
     const cameraPanel = document.querySelector('[data-panel="camera"]');
@@ -152,14 +152,14 @@
       clipState = { ...clipState, ...value };
       const button = $("record-button");
       button.setAttribute("aria-pressed", String(clipState.active));
-      updateText($("record-label"), clipState.active ? "영상 구간 기록 끝내기" : "30초 영상 구간 기록");
+      updateText($("record-label"), clipState.active ? "영상 기록 끝내기" : "1분 30초 영상 기록");
       const message = clipState.active
-        ? `${clipState.count}/${clipState.max}번째 구간 기록 중 · 최대 30초`
+        ? `영상 ${clipState.count}개 기록 중 · 최대 1분 30초`
         : clipState.count >= clipState.max
-          ? `${clipState.max}개 기록 완료 · 테스트를 종료하고 저장합니다`
+          ? `영상 ${clipState.max}개 기록 완료 · 테스트를 종료하고 저장합니다`
           : clipState.count
             ? `${clipState.count}/${clipState.max}개 기록됨 · 이어서 기록할 수 있습니다`
-            : `최대 30초씩 ${clipState.max}개 · ${clipState.max}개를 채우면 자동 종료 후 저장`;
+            : `최대 1분 30초 영상 ${clipState.max}개 · 기록을 마치면 자동 종료 후 저장`;
       updateText($("clip-status"), message);
       const badge = $("test-panel-badge");
       if (badge) {

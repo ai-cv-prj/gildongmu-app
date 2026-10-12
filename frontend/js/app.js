@@ -15,9 +15,9 @@
   const SETTINGS_SCREENS = new Set(["home", "type"]);
   const temporaryScreen = () => SETTINGS_SCREENS.has(view.getScreen()) || view.getScreen() === "end";
   let timingQueue = [], eventQueue = [], flushTask = null, logTimer;
-  // Galaxy WebM clips are ~32MB each, so a fourth 30s clip can exceed MAX_PENDING_BYTES.
-  const MAX_CLIPS = 3, MAX_CLIP_MS = 30000, MAX_CLIP_FRAMES = 300;
-  const MAX_CLIP_FRAME_BYTES = 32 * 1024 * 1024, MAX_PENDING_BYTES = 120 * 1024 * 1024;
+  // Record one continuous 90-second clip within the existing total device storage budget.
+  const MAX_CLIPS = 1, MAX_CLIP_MS = 90000, MAX_CLIP_FRAMES = 900;
+  const MAX_CLIP_FRAME_BYTES = 96 * 1024 * 1024, MAX_PENDING_BYTES = 120 * 1024 * 1024;
   const MAX_FRAME_GAP_MS = 5000;
   let clips = [], activeClip = null, clipStopTask = null, clipTimer = null, clipWatchdog = null;
   let bufferedBytes = 0, uploadSessionId = null, pendingStopSessionId = null;
@@ -228,14 +228,14 @@
       clip.last_sent_at_ms = clip.started_at_ms;
       activeClip = clip;
       diagnostic("clip_started", { clip_id: clip.index });
-      clipTimer = setTimeout(() => { void finishClip("30초 영상 구간 기록을 마쳤습니다."); }, MAX_CLIP_MS - 250);
+      clipTimer = setTimeout(() => { void finishClip("1분 30초 영상 기록을 마쳤습니다."); }, MAX_CLIP_MS - 250);
       clipWatchdog = setInterval(() => {
         if (activeClip === clip && clipClock() - clip.last_sent_at_ms > MAX_FRAME_GAP_MS) {
           void finishClip("추론 프레임 전송이 멈춰 영상 기록을 마쳤습니다.");
         }
       }, 1000);
       controls();
-      status(`${clip.index}번째 영상 구간 기록 중입니다. 30초 후 자동으로 끝납니다.`);
+      status("영상 기록 중입니다. 최대 1분 30초 후 테스트를 종료하고 저장합니다.");
     } catch (error) {
       diagnostic("clip_start_failed", errorDetails(error));
       status(`영상 기록을 시작할 수 없습니다: ${error.message}`);
@@ -254,7 +254,7 @@
         const recorded = await GRecorder.stopRaw();
         if (!recorded?.blob?.size) throw new Error("원본 영상이 비어 있습니다.");
         if (recorded.ended_at_ms - recorded.started_at_ms > MAX_CLIP_MS) {
-          throw new Error("30초 제한을 넘긴 영상 구간은 저장하지 않습니다.");
+          throw new Error("1분 30초 제한을 넘긴 영상은 저장하지 않습니다.");
         }
         if (bufferedBytes + recorded.blob.size > MAX_PENDING_BYTES) {
           throw new Error("영상 기록 용량 120MB에 도달했습니다.");
@@ -265,7 +265,7 @@
         clips.push(clip);
         diagnostic("clip_buffered", { clip_id: clip.index });
         limitReached = clips.length >= MAX_CLIPS;
-        status(limitReached ? `영상 구간 ${MAX_CLIPS}개를 모두 기록했습니다. 테스트를 종료하고 저장합니다.`
+        status(limitReached ? "영상 1개를 기록했습니다. 테스트를 종료하고 저장합니다."
           : `${reason} ${clips.length}/${MAX_CLIPS}개를 선택했습니다. 테스트 종료 후 저장합니다.`);
         await preserveClip(sessionId, clip);
         return clip;
