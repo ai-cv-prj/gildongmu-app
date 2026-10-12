@@ -152,6 +152,14 @@ walking_surface:
 risk:
   enabled: true
 
+  hazard_confirmation:
+    movable_obstacle:
+      min_frames: 2
+      min_duration_s: 0.30
+      immediate_confidence: 0.60
+      match_iou: 0.30
+      max_gap_s: 0.50
+
   # 기본 예상보행경로(ROI)
   corridor_polygon:
     - [0.38, 0.30]

@@ -7,6 +7,7 @@ from copy import deepcopy
 import math
 import cv2
 import numpy as np
+from src.obstacle import EXPECTED_CLASS_NAMES
 
 DEFAULT_RISK = {
     "enabled": False,
@@ -78,8 +79,8 @@ DEFAULT_RISK = {
     "review_overlay": False,
     "log_jsonl": True,
 }
-# New rules are enabled explicitly in config/walking_risk.yaml, so saved older configs replay unchanged.
 DEFAULT_RISK.update({
+    "hazard_confirmation": {},
     "roi_ground_adapt_enabled":False,
     "roi_top_max_y":.65, "roi_extent_smooth_s":.35,
     "roi_extent_hold_s":.50, "roi_extent_deadband":.015,
@@ -204,6 +205,23 @@ def risk_config(value=None):
     if (isinstance(cfg["label_confirm_frames"], bool) or
             not isinstance(cfg["label_confirm_frames"], int) or cfg["label_confirm_frames"] < 1):
         raise ValueError("label_confirm_frames must be a positive integer")
+    policies = cfg["hazard_confirmation"]
+    required = {"min_frames", "min_duration_s", "immediate_confidence", "match_iou", "max_gap_s"}
+    if not isinstance(policies, dict):
+        raise ValueError("risk.hazard_confirmation must be a class-to-policy mapping")
+    for name, policy in policies.items():
+        if not isinstance(name, str) or not name or not isinstance(policy, dict) or set(policy) != required:
+            raise ValueError("risk.hazard_confirmation: invalid class or policy keys")
+        if name not in EXPECTED_CLASS_NAMES:
+            raise ValueError(f"risk.hazard_confirmation: unknown detector class {name}")
+        if (isinstance(policy["min_frames"], bool) or not isinstance(policy["min_frames"], int)
+                or policy["min_frames"] < 2):
+            raise ValueError(f"risk.hazard_confirmation.{name}.min_frames must be at least 2")
+        _number(policy["min_duration_s"], f"risk.hazard_confirmation.{name}.min_duration_s", 0)
+        _number(policy["immediate_confidence"],
+                f"risk.hazard_confirmation.{name}.immediate_confidence", 0, 1, True)
+        _number(policy["match_iou"], f"risk.hazard_confirmation.{name}.match_iou", 0, 1, True)
+        _number(policy["max_gap_s"], f"risk.hazard_confirmation.{name}.max_gap_s", 0, strictly_positive=True)
     if (isinstance(cfg["camera_motion_min_inlier_points"], bool) or
             not isinstance(cfg["camera_motion_min_inlier_points"], int)
             or cfg["camera_motion_min_inlier_points"] < 3):
