@@ -35,6 +35,14 @@ def box_iou(a, b):
 
 
 SIGNAL_DUPLICATE_IOU = 0.60
+# 화면 좌우 이 비율 안쪽에 걸친 신호등은 화면 끝 신호등으로 본다.
+FRAME_EDGE_FRACTION = 0.03
+
+
+def near_frame_edge(signal, width):
+    """신호등 박스가 화면 왼쪽이나 오른쪽 끝에 걸쳐 있는지 확인한다."""
+    x1, _, x2, _ = signal["xyxy"]
+    return x1 < width * FRAME_EDGE_FRACTION or x2 > width * (1 - FRAME_EDGE_FRACTION)
 
 
 def suppress_duplicate_signals(signals):
@@ -264,7 +272,11 @@ class TemporalSelector:
             if index is not None:
                 self.target_last_seen = context.captured_at_ms
                 if self.target_origin == "single_signal":
-                    self.target_requires_crosswalk |= len(signals) > 1
+                    # 화면 안쪽에서 따라가던 대상은 화면 끝에 걸친 다른 신호등만으로 연결 확인을 시작하지 않는다.
+                    others = [signal for i, signal in enumerate(signals) if i != index]
+                    if not near_frame_edge(signals[index], frame.shape[1]):
+                        others = [signal for signal in others if not near_frame_edge(signal, frame.shape[1])]
+                    self.target_requires_crosswalk |= bool(others)
                     if (self.target_requires_crosswalk and len(signals) == 1
                             and context.captured_at_ms - self.last_multi_at >= self.SINGLE_RELEASE_MS):
                         # 다른 신호등이 잠깐 잡혔다 사라지면 연결 확인 대기를 풀고

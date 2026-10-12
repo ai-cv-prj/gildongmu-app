@@ -354,6 +354,18 @@ class TrackingTests(unittest.TestCase):
         self.assertEqual(result['detections'][0]['xyxy'], FAR)
         self.assertEqual(result['association']['selection_origin'], 'single_signal')
 
+    def test_edge_signal_does_not_start_check_for_inner_target(self):
+        edge = [0, 100, 30, 180]
+        pipe = fake_pipeline([(NEAR, .8, 0)])
+        pipe.predict(FRAME, frame_id=1, captured_at_ms=0)
+        pipe.detector = fake_pipeline([(NEAR, .8, 0), (edge, .7, 0)]).detector
+        for fid in range(2, 6):
+            result = pipe.predict(FRAME, frame_id=fid, captured_at_ms=(fid - 1) * 200)
+            self.assertEqual(result['selected_detection_index'], 0)
+            self.assertEqual(result['detections'][0]['xyxy'], NEAR)
+            self.assertEqual(result['signal_state'], 'green')
+        self.assertFalse(pipe.selector.target_requires_crosswalk)
+
     def test_persistent_second_signal_keeps_crosswalk_check(self):
         pipe = fake_pipeline([(NEAR, .8, 0)])
         pipe.predict(FRAME, frame_id=1, captured_at_ms=0)
