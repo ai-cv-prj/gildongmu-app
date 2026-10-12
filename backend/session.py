@@ -256,6 +256,9 @@ class SessionManager:
                     "independent_velocity_norm_per_s": (item.get("motion") or {}).get(
                         "independent_velocity_norm_per_s"),
                     "risk_suppressed_reason": item.get("risk_suppressed_reason"),
+                    **{key: item[key] for key in (
+                        "confirmation_status", "confirmation_count", "confirmation_duration_s")
+                       if key in item},
                 } for item in risk["detections"]],
             }
             with (session["folder"] / "results.jsonl").open("a", encoding="utf-8") as file:
