@@ -222,3 +222,27 @@ test("4·5·10·15·30fps 모두에서 첫 신호와 빨강↔초록 전환을 �
     assert.deepEqual(h.requests.map(item => item.text), ["빨간불", "초록불로 바뀜", "빨간불로 바뀜"], `${fps}fps`);
   }
 });
+
+test("수신 중단 뒤 복귀 첫 프레임의 일시적 미인식으로 횡단 이력을 지우지 않는다", () => {
+  const h = harness();
+  const crossing = { crossing: true };
+  for (const t of [0, 250, 500]) h.send("red", t, true, crossing);
+  for (const t of [750, 1000, 1250]) h.send("green", t, true, crossing);
+  for (let t = 1500; t <= 4250; t += 250) h.tick(t);
+  // 서버는 2초 넘는 공백 뒤 횡단 상태를 초기화하고, 첫 프레임은 횡단보도도 놓친다.
+  h.send(null, 4500, false, { crossing: false });
+  for (const t of [4750, 5000, 5250]) h.send("green", t, true, crossing);
+  assert.equal(h.requests.map(item => item.text).includes("초록불, 다음 신호까지 대기"), false,
+    h.requests.map(item => item.text).join(" / "));
+});
+
+test("수신 중단 뒤 미인식이 마지막 프레임부터 5초를 넘기면 기존처럼 초기화한다", () => {
+  const h = harness();
+  const crossing = { crossing: true };
+  for (const t of [0, 250, 500]) h.send("red", t, true, crossing);
+  for (const t of [750, 1000, 1250]) h.send("green", t, true, crossing);
+  for (let t = 1500; t <= 4250; t += 250) h.tick(t);
+  for (const t of [4500, 5000, 5500, 6000, 6500]) h.send(null, t, false, { crossing: false });
+  for (const t of [6750, 7000, 7250]) h.send("green", t, true, crossing);
+  assert.equal(h.requests.at(-1).text, "초록불, 다음 신호까지 대기");
+});

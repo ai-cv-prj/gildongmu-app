@@ -33,6 +33,8 @@
     let gateLostAt = null;
     // 음성만 멈추고 신호 이력을 유지하기 시작한 시각과, 마지막 프레임의 횡단 상태다.
     let heldAt = null, lastCrossing = false;
+    // 이력 유지가 프레임 수신 중단("stall")으로 시작됐는지, 횡단보도 근거 소실("gate")로 시작됐는지다.
+    let heldBy = null;
     let lastWalkingAction = null;
     let lastWalkingEvent = null;
 
@@ -43,7 +45,7 @@
     function suspendTraffic() {
       trafficAllowed = false;
       hasConfirmedSignal = missingAnnounced = false;
-      lastAnnouncedColor = lastAnnouncedTarget = lastValid = remembered = heldAt = null;
+      lastAnnouncedColor = lastAnnouncedTarget = lastValid = remembered = heldAt = heldBy = null;
       lastAnnouncedAt = repeatText = null;
       waitingGreen = false;
       resetEvidence();
@@ -51,9 +53,10 @@
     }
     // 횡단 중 횡단보도 근거가 잠깐 끊기면 신호 음성만 멈추고 확인한 신호 기억은 유지한다.
     /** 다시 허용될 때 이미 확인한 신호를 처음 본 신호처럼 대기 안내하지 않는다. */
-    function holdTraffic(capturedAt) {
+    function holdTraffic(capturedAt, reason = "gate") {
       trafficAllowed = false;
       heldAt ??= capturedAt;
+      heldBy ??= reason;
       // 끊긴 동안은 소실 시간에 포함하지 않는다.
       lastValid = capturedAt;
       resetEvidence();
@@ -92,7 +95,7 @@
       trafficAllowed = false;
       lastAnnouncedColor = null;
       lastAnnouncedTarget = null;
-      lastAnnouncedAt = repeatText = remembered = heldAt = null;
+      lastAnnouncedAt = repeatText = remembered = heldAt = heldBy = null;
       waitingGreen = lastCrossing = false;
       resetEvidence();
       lastWalkingAction = null;
@@ -133,7 +136,7 @@
       if (lastCapture === null || now() - lastCapture >= limits.max_age_ms) {
         // 오래된 관측으로는 음성만 멈춘다. 건너도 되는 초록불로 횡단 중이었다면
         // 횡단보도 근거 소실과 같이 마지막 프레임부터 설정 시간까지 신호 이력을 유지한다.
-        if (lastCapture !== null && lastCrossing && repeatText === "초록불") holdTraffic(lastCapture);
+        if (lastCapture !== null && lastCrossing && repeatText === "초록불") holdTraffic(lastCapture, "stall");
         else suspendTraffic();
         return;
       }
@@ -191,13 +194,16 @@
         gateLostAt ??= capturedAt;
         // 건너도 되는 초록불을 안내하고 건너는 중일 때만 유지한다.
         // 빨간불이나 대기 안내 뒤에는 기존처럼 새로 확인해 대기 안내를 이어 간다.
-        if (res.crossing_active === true && repeatText === "초록불"
-            && capturedAt - gateLostAt < limits.traffic_crossing_hold_ms) holdTraffic(capturedAt);
+        // 수신 중단으로 유지 중이면 서버가 공백 뒤 횡단 상태를 초기화하므로, 복귀 직후의
+        // 일시적인 횡단·횡단보도 미인식만으로는 마지막 프레임부터 설정 시간 안의 이력을 지우지 않는다.
+        const stallHold = heldBy === "stall" && capturedAt - heldAt < limits.traffic_crossing_hold_ms;
+        if (stallHold || (res.crossing_active === true && repeatText === "초록불"
+            && capturedAt - gateLostAt < limits.traffic_crossing_hold_ms)) holdTraffic(capturedAt);
         else suspendTraffic();
         update("횡단보도 접근을 확인하고 있습니다.");
         return;
       }
-      gateLostAt = heldAt = null;
+      gateLostAt = heldAt = heldBy = null;
       trafficAllowed = true;
       const index = event.selected_detection_index;
       const selected = Number.isInteger(index) && index >= 0 ? res.detections?.[index] : null;
