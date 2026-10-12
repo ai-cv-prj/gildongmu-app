@@ -42,7 +42,7 @@
     const audio = window.Audio ? new window.Audio() : null;
     let audioContext = null, recordingDestination = null;
     let current = null, timer = null, fallbackTimer = null;
-    let rate = Math.min(2, Math.max(0.75, Number(settings.playback_rate) || 1));
+    let rate = Math.min(2, Math.max(0.75, Number(settings.playback_rate) || 1.5));
     const queue = [];
     if (audio) {
       audio.preload = "auto";

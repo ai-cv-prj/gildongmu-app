@@ -26,10 +26,10 @@
   const clipStore = window.GClipStore?.create();
   let localClipRefresh = 0;
   const preferenceKey = "gildongmu-accessibility-v1";
-  let preferences = { rate: 1, textScale: 1 };
+  let preferences = { rate: 1.5, textScale: 1 };
   try {
     const stored = JSON.parse(localStorage.getItem(preferenceKey) || "{}");
-    if (Number.isFinite(stored.rate)) preferences.rate = [1, 1.5, 2].reduce((nearest, rate) =>
+    if (Number.isFinite(stored.rate)) preferences.rate = [1.5, 1.75, 2].reduce((nearest, rate) =>
       Math.abs(rate - stored.rate) < Math.abs(nearest - stored.rate) ? rate : nearest);
     if ([1, 1.2, 1.5, 2].includes(stored.textScale)) preferences.textScale = stored.textScale === 2 ? 1.5 : stored.textScale;
   } catch (_) { /* Storage may be disabled. */ }

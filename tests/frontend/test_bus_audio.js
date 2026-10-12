@@ -512,7 +512,7 @@ for (const [name, navigator] of [["iPhone Safari", iphone],
   ["데스크톱 UA iPad", { userAgent: "Mozilla/5.0 (Macintosh) AppleWebKit/605.1.15", platform: "MacIntel", maxTouchPoints: 5 }]]) {
   test(`${name}: 녹화 그래프에서도 배속 음원을 1배로 재생한다`, () => {
     const app = harness({ navigator });
-    for (const rate of [.75, 1, 1.5, 2]) {
+    for (const rate of [.75, 1, 1.5, 1.75, 2]) {
       app.player.setRate(rate);
       assert.equal(app.player.getRate(), rate);
       assert.equal(app.player.recordingStream(), "recording-stream");
@@ -543,7 +543,7 @@ for (const navigator of [{ userAgent: "Mozilla/5.0 (Linux; Android 16) AppleWebK
     assert.equal(app.audio().loads, 0);
     assert.equal(app.connections.length, 2, "시작 버튼에서 모든 플랫폼의 스피커·녹화 그래프를 준비한다");
     app.player.recordingStream();
-    for (const rate of [1, 1.5, 2]) {
+    for (const rate of [1, 1.5, 1.75, 2]) {
       app.player.setRate(rate);
       app.player.speak("멈추세요", 5000);
       assert.equal(app.audio().src, "/audio/walking-stop.mp3?v=sesac-212-v3");

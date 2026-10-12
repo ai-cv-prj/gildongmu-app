@@ -200,7 +200,7 @@
       $("stage-button").dataset.action = busScreen ? "repeat" : "manual-arrival";
       updateText($("stage-label"), busScreen ? "다시 듣기" : "버스 번호 입력");
       $("camera-left").dataset.action = busScreen ? "back" : "settings-type";
-      updateText($("camera-left-label"), busScreen ? "이전 화면으로" : "글자 크기 설정");
+      updateText($("camera-left-label"), busScreen ? "버스 번호 입력" : "글자 크기 설정");
       if (screen === "input") routeError("");
       render(lastResult);
       updateControls();
@@ -208,7 +208,12 @@
       if (focus && previous !== screen && !(CAMERA_SCREENS.has(previous) && CAMERA_SCREENS.has(screen))) {
         window.scrollTo?.({ top: 0, behavior: "instant" });
         document.querySelector(`[data-panel="${panelName}"] .top-controls button:not(:disabled)`)?.focus({ preventScroll: true });
-        announce(getGuidance());
+        if (screen === "home") {
+          announce("음성 속도 설정");
+          // A screen title is transient like a button label: the next action
+          // or screen change cancels it before a delayed voice can play.
+          invoke(onExplore, "음성 속도 설정");
+        } else announce(getGuidance());
       }
     }
     function setBus(value = {}) {

@@ -36,7 +36,7 @@ function harness() {
   });
   const mic = node("mic-button"); mic.dataset.mic = "input";
   const submit = node("route-submit"); submit.type = "submit";
-  const rates = [1, 1.5, 2].map(value => { const button = node(`rate-${value}`); button.dataset.rate = String(value); return button; });
+  const rates = [1.5, 1.75, 2].map(value => { const button = node(`rate-${value}`); button.dataset.rate = String(value); return button; });
   const sizes = [1, 1.2, 1.5].map(value => { const button = node(`size-${value}`); button.dataset.size = String(value); return button; });
   const document = node("document");
   document.getElementById = node;
@@ -87,7 +87,7 @@ test("상단 두 버튼은 이동·버스 인식 화면에서 보이는 기능�
   assert.deepEqual(h.actions, ["settings-type", "manual-arrival"]);
   h.view.setRoute("강남02"); h.view.show("search");
   assert.equal(h.node("camera-route").textContent, "강남02번");
-  assert.equal(h.node("camera-left-label").textContent, "이전 화면으로");
+  assert.equal(h.node("camera-left-label").textContent, "버스 번호 입력");
   assert.equal(h.node("stage-label").textContent, "다시 듣기");
   h.click("camera-left"); h.click("stage-button");
   assert.deepEqual(h.actions.slice(-2), ["back", "repeat"]);
@@ -95,6 +95,21 @@ test("상단 두 버튼은 이동·버스 인식 화면에서 보이는 기능�
   h.view.show("end"); assert.equal(h.node("panel-end").hidden, false);
   h.click("end-cancel"); h.click("end-confirm");
   assert.deepEqual(h.actions.slice(-2), ["cancel-end", "confirm-end"]);
+  h.view.destroy();
+});
+
+test("음성 속도 설정은 화면에 들어갈 때만 제목을 읽고 일시중지 중에도 제목을 유지한다", () => {
+  const h = harness();
+  h.view.show("home");
+  assert.deepEqual(h.spoken, ["음성 속도 설정"]);
+  assert.equal(h.node("announcer").textContent, "음성 속도 설정");
+  h.view.show("home"); h.view.render(null);
+  assert.equal(h.spoken.length, 1, "같은 화면을 갱신할 때는 반복하지 않는다");
+  h.view.show("type"); h.view.setPaused(true); h.view.show("home");
+  assert.deepEqual(h.spoken, ["음성 속도 설정", "음성 속도 설정"]);
+  assert.equal(h.node("announcer").textContent, "음성 속도 설정");
+  h.view.show("type"); h.view.show("home", { focus: false });
+  assert.equal(h.spoken.length, 2);
   h.view.destroy();
 });
 
@@ -210,11 +225,12 @@ test("설정 로딩 실패나 전송 처리 중에도 오류 로그 저장을 �
 
 test("글자 크기 설정은 선택 표시와 화면 배율을 함께 복원한다", () => {
   const h = harness();
-  h.view.setSettings({ textScale: 1.5, rate: 2 });
+  h.view.setSettings({ textScale: 1.5, rate: 1.75 });
   assert.equal(h.node("app").properties.get("--text-scale"), "1.5");
   assert.equal(h.node("size-1.5")["aria-pressed"], "true");
   assert.equal(h.node("size-1")["aria-pressed"], "false");
-  assert.equal(h.node("rate-2")["aria-pressed"], "true");
+  assert.equal(h.node("rate-1.75")["aria-pressed"], "true");
+  assert.equal(h.node("rate-1.5")["aria-pressed"], "false");
   h.view.setSettings({ textScale: 2 });
   assert.equal(h.node("app").properties.get("--text-scale"), "1.5", "이전 최대 크기 설정을 새 최대값으로 옮긴다");
   h.view.destroy();

@@ -30,7 +30,7 @@ def decode(audio):
     return np.frombuffer(result.stdout, dtype="<f4")
 
 
-@pytest.mark.parametrize("rate", [0.75, 1, 1.5, 2])
+@pytest.mark.parametrize("rate", [0.75, 1, 1.5, 1.75, 2])
 def test_adjusted_audio_has_requested_duration_and_original_pitch(tmp_path, sine_mp3, rate):
     service = AudioPlaybackService(tmp_path)
     converted = service.adjust(sine_mp3, rate)

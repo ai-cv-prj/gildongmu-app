@@ -805,12 +805,25 @@ test("글자 크기 최대 저장값을 이전 2배에서 새 시안 1.5배로 �
   assert.equal(app.preferences().configured.textScale, 1.5);
   assert.equal(app.preferences().configured.rate, 1.5);
   const previous = await harness({ storedPreferences: { rate: 1.25, textScale: 1.2 } });
-  assert.equal(previous.preferences().configured.rate, 1, "이전 속도는 새 선택지 중 가까운 값으로 이어받는다");
+  assert.equal(previous.preferences().configured.rate, 1.5, "이전 속도는 새 선택지 중 가까운 값으로 이어받는다");
+});
+
+test("음성 속도는 기본 1.5배이며 이전 저장값을 보정하고 새 선택을 복원한다", async () => {
+  const fresh = await harness();
+  assert.equal(fresh.preferences().configured.rate, 1.5);
+  const legacy = await harness({ storedPreferences: { rate: 1 } });
+  assert.equal(legacy.preferences().configured.rate, 1.5);
+  const fast = await harness({ storedPreferences: { rate: 2 } });
+  assert.equal(fast.preferences().configured.rate, 2);
+  fresh.rate(1.75);
+  assert.equal(fresh.preferences().saved.rate, 1.75);
+  const restored = await harness({ storedPreferences: fresh.preferences().saved });
+  assert.equal(restored.preferences().configured.rate, 1.75);
 });
 
 test("음성 속도 선택은 두 번 미리 듣고 화면 이동이나 안내 시작 때 취소한다", async () => {
   const app = await harness();
-  await app.action("enter"); app.rate(1.5);
+  await app.action("enter"); app.rate(1.75);
   assert.deepEqual(app.audioLifecycle, ["unlock"], "미리듣기 타이머 전에 클릭 안에서 오디오를 준비한다");
   assert.equal(await app.previewTimer(220), true);
   assert.equal(app.voice().text, "왼쪽 한 걸음");
@@ -821,7 +834,7 @@ test("음성 속도 선택은 두 번 미리 듣고 화면 이동이나 안내 �
   assert.equal(await app.previewTimer(360), false);
   app.rate(2); await app.action("settings-type");
   assert.equal(await app.previewTimer(220), false);
-  await app.action("start"); await app.action("settings-home"); app.rate(1);
+  await app.action("start"); await app.action("settings-home"); app.rate(1.5);
   assert.equal(await app.previewTimer(220), false, "이동 중에는 자동 안내를 속도 미리듣기로 끊지 않는다");
   await app.end();
 });
@@ -836,7 +849,7 @@ test("첫 터치 안내는 오디오를 열고 시작·카메라 실행 없이 �
   assert.equal(app.resources().cameraActive, false);
   app.cancelExplore();
   assert.equal(app.voice(), null);
-  await app.action("enter"); app.rate(1.5);
+  await app.action("enter"); app.rate(1.75);
   app.explore("글자 크기 설정 버튼.");
   assert.equal(await app.previewTimer(220), false, "뒤늦은 속도 예시가 버튼 안내를 덮지 않는다");
 });
