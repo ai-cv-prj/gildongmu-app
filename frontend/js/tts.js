@@ -125,7 +125,10 @@
     function playNext() {
       if (current || !queue.length) return true;
       const request = queue.shift();
-      const validUntil = now() + request.startTimeoutMs;
+      // Fresh observations may extend loading, but one stalled request must
+      // still finish within the configured timeout. Playback gets its own timer.
+      const startLimit = now() + settings.playback_timeout_ms;
+      let validUntil = Math.min(startLimit, now() + request.startTimeoutMs);
       current = request;
       onStatus("음성 재생을 준비하고 있습니다.");
       const fail = message => {
@@ -134,6 +137,20 @@
         request.onFailure(message);
         onStatus(message);
         onError(message);
+      };
+      const scheduleStartTimeout = () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => fail("음성 재생이 지연되어 안내를 중단했습니다. 연결 상태를 확인하고 다시 시작해 주세요."),
+          Math.max(0, validUntil - now()));
+      };
+      request.extendStartDeadline = deadline => {
+        if (current !== request || request.started || !Number.isFinite(deadline)
+            || now() >= validUntil) return false;
+        const next = Math.min(startLimit, deadline);
+        if (next <= validUntil) return false;
+        validUntil = next;
+        scheduleStartTimeout();
+        return true;
       };
       const started = () => {
         if (current !== request || request.started) return;
@@ -233,8 +250,7 @@
         audio.onended = () => { if (audio.ended && !request.synthesized) finish(); };
         audio.onerror = () => { if (audio.error) rejected({ name: "NotSupportedError" }); };
       }
-      timer = setTimeout(() => fail("음성 재생이 지연되어 안내를 중단했습니다. 연결 상태를 확인하고 다시 시작해 주세요."),
-        Math.max(0, validUntil - now()));
+      scheduleStartTimeout();
       if (request.dynamic && audio && window.speechSynthesis && window.SpeechSynthesisUtterance) {
         // OCR is valid for only a few seconds. A server that stalls instead of
         // rejecting must leave time for Korean device speech before expiry.
@@ -275,7 +291,11 @@
       return rate;
     }
 
-    return { speak, cancel, recordingStream, unlock, setRate, getRate: () => rate };
+    function extendStartDeadline(validUntil) {
+      return current?.extendStartDeadline?.(validUntil) ?? false;
+    }
+
+    return { speak, cancel, recordingStream, unlock, setRate, getRate: () => rate, extendStartDeadline };
   }
   window.GTts = { create };
 })();

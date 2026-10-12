@@ -552,7 +552,12 @@
     if (!["input", "confirm", "home", "type", "end", "welcome", "finish"].includes(view.getScreen())) view.show(state, { focus: false });
     view.setPaused(paused);
   }
-  function showResult(result, capturedAt, clip = null, clipFrame = null) {
+  function acceptBusResult(result, routeForFrame) {
+    if (!result.bus || !activeRoute || activeRoute !== routeForFrame ||
+        (result.session_id != null && result.session_id !== sessionId)) return;
+    journey.accept(result.bus, result.bus.captured_at_ms ?? result.captured_at_ms);
+  }
+  function showResult(result, capturedAt, clip = null, clipFrame = null, routeForFrame = null) {
     // Apply revision-checked boarding first; an old in-flight frame must not
     // restore obstacle warnings after the user manually confirms arrival.
     boarding.accept(result, capturedAt);
@@ -572,7 +577,7 @@
     traffic.accept({ session_id: result.session_id, frame_id: result.frame_id,
       detections: result.traffic.detections, event: result.traffic.event,
       crossing_active: result.crosswalk?.event?.crossing_active === true }, capturedAt);
-    if (activeRoute) journey.accept(result.bus, result.bus?.captured_at_ms ?? result.captured_at_ms);
+    acceptBusResult(result, routeForFrame);
     const overlayResult = { ...result, bus_mode: Boolean(activeRoute), target_route: activeRoute,
       bus_guidance: activeRoute ? journey.snapshot().ocr : null, walking: { ...result.walking,
       event: { ...result.walking?.event,
@@ -701,8 +706,12 @@
         if (!running || version !== generation) return;
         frameId = result.frame_id; // Even an in-flight paused request advances the server sequence.
         const returnedAt = performance.now();
-        if (!paused && !cameraLost && !document.hidden && shownVersion === presentation && returnedAt - capturedAt < 1500)
-          showResult(result, capturedAt, selectedClip, clipFrame);
+        if (!paused && !cameraLost && !document.hidden && shownVersion === presentation) {
+          if (returnedAt - capturedAt < 1500) showResult(result, capturedAt, selectedClip, clipFrame, routeForFrame);
+          // Bus recognition validates its own capture timestamp and 3s window.
+          // A slow frame must not apply stale boarding, hazards or overlays.
+          else acceptBusResult(result, routeForFrame);
+        }
         const busTiming = {};
         if (busBlob) {
           busTiming.bus_capture_ms = busCaptureMs;

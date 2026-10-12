@@ -121,7 +121,7 @@ test("확정된 다른 버스 이벤트가 전체 안내 경로를 거쳐 스피
 });
 
 for (const [state, message] of [["recognized_single", "7011번 버스 인식 중."],
-  ["matched_candidate", "7011 목표 버스 확인."]]) {
+  ["matched_candidate", "7011번 버스 확인."]]) {
   for (const [mode, options] of [["서버 MP3", {}], ["기기 음성 대체", { playFailure: true }],
     ["MP3 지원 없는 기기", { noAudio: true }], ["서버 지연 시 기기 음성", { deferred: true }]]) {
     test(`${mode}: ${state} 후보는 화면에 표시하고 확정된 목표 버스만 한 번 안내한다`, () => {
@@ -289,7 +289,7 @@ test("773 도착정보 MP3 재생 중 목표 773 확인은 이전 음성을 끊�
   const loads = app.audio().loads, pauses = app.audio().pauses;
   const latePlaying = app.audio().onplaying, lateEnded = app.audio().onended;
   detect({ target: true });
-  const targetSource = busSpeechSource("773 목표 버스 확인.");
+  const targetSource = busSpeechSource("773번 버스 확인.");
   assert.equal(app.audio().src, targetSource);
   assert.equal(app.audio().pauses, pauses + 1);
   assert.ok(app.audio().loads > loads, "목표 버스 확인 음원을 새로 로딩한다");
@@ -358,11 +358,11 @@ test("773 확인으로 전환한 뒤 이전 도착정보 MP3·Android 기기 합
   assert.equal(oldSpeech.text, "도착정보. 773번, 3분 후.");
   const lateStart = oldSpeech.onstart, lateEnd = oldSpeech.onend, lateError = oldSpeech.onerror;
   detect({ target: true });
-  const targetSource = busSpeechSource("773 목표 버스 확인.");
+  const targetSource = busSpeechSource("773번 버스 확인.");
   assert.equal(app.audio().src, targetSource);
   app.step(1000);
   const targetSpeech = app.utterance();
-  assert.equal(targetSpeech.text, "773 목표 버스 확인.");
+  assert.equal(targetSpeech.text, "773번 버스 확인.");
   assert.notEqual(targetSpeech, oldSpeech);
   const loads = app.audio().loads, pauses = app.audio().pauses, cancels = app.cancels();
   latePlaying?.(); lateEnded?.(); lateStart?.(); lateEnd?.(); lateError?.({ error: "canceled" });
@@ -387,7 +387,7 @@ for (const [mode, options] of [["한국어 엔진 초기화 대기", { voices: [
   test(`Android ${mode}: 늦게 시작하는 서버 MP3를 끊지 않는다`, async () => {
     const app = harness({ navigator: android, deferred: true, ...options });
     let started = 0, completed = 0, failed = 0;
-    app.player.speak("7011 목표 버스 확인.", 3000, { dynamic: true, onStart: () => started++,
+    app.player.speak("7011번 버스 확인.", 3000, { dynamic: true, onStart: () => started++,
       onEnd: () => completed++, onFailure: () => failed++ });
     const source = app.audio().src;
     app.step(1000);
@@ -407,7 +407,7 @@ for (const [mode, options] of [["한국어 엔진 초기화 대기", { voices: [
 test("Android 기기 합성이 언어 오류를 보고해도 로딩 중인 서버 MP3로 안내한다", async () => {
   const app = harness({ navigator: android, deferred: true, speechDeferred: true, voices: [] });
   let started = 0, completed = 0, failed = 0;
-  app.player.speak("7011 목표 버스 확인.", 3000, { dynamic: true, onStart: () => started++,
+  app.player.speak("7011번 버스 확인.", 3000, { dynamic: true, onStart: () => started++,
     onEnd: () => completed++, onFailure: () => failed++ });
   const source = app.audio().src;
   app.step(1000); app.failSpeech();
@@ -423,7 +423,7 @@ test("Android 기기 합성이 언어 오류를 보고해도 로딩 중인 서�
 test("서버 MP3가 먼저 시작하면 대기 중인 기기 합성을 취소하고 늦은 이벤트를 무시한다", async () => {
   const app = harness({ navigator: android, deferred: true, speechDeferred: true });
   let started = 0, completed = 0, failed = 0;
-  app.player.speak("7011 목표 버스 확인.", 3000, { dynamic: true, onStart: () => started++,
+  app.player.speak("7011번 버스 확인.", 3000, { dynamic: true, onStart: () => started++,
     onEnd: () => completed++, onFailure: () => failed++ });
   const source = app.audio().src;
   app.step(1000);
@@ -443,7 +443,7 @@ test("서버 MP3가 먼저 시작하면 대기 중인 기기 합성을 취소하
 test("기기 합성이 실제 시작한 뒤에만 서버 MP3를 취소하고 늦은 서버 이벤트를 무시한다", async () => {
   const app = harness({ navigator: android, deferred: true, speechDeferred: true });
   let started = 0, completed = 0, failed = 0;
-  app.player.speak("7011 목표 버스 확인.", 3000, { dynamic: true, onStart: () => started++,
+  app.player.speak("7011번 버스 확인.", 3000, { dynamic: true, onStart: () => started++,
     onEnd: () => completed++, onFailure: () => failed++ });
   const source = app.audio().src, latePlaying = app.audio().onplaying, lateEnded = app.audio().onended;
   app.step(1000);
@@ -465,7 +465,7 @@ test("기기 합성이 실제 시작한 뒤에만 서버 MP3를 취소하고 늦
 test("서버와 기기 음성이 모두 시작하지 않으면 유효 시간에 한 번 실패하고 늦은 시작을 무시한다", async () => {
   const app = harness({ navigator: android, deferred: true, speechDeferred: true });
   let started = 0, completed = 0, failed = 0;
-  app.player.speak("7011 목표 버스 확인.", 3000, { dynamic: true, onStart: () => started++,
+  app.player.speak("7011번 버스 확인.", 3000, { dynamic: true, onStart: () => started++,
     onEnd: () => completed++, onFailure: () => failed++ });
   const latePlaying = app.audio().onplaying;
   app.step(1000);
@@ -480,10 +480,96 @@ test("서버와 기기 음성이 모두 시작하지 않으면 유효 시간에 
   assert.equal(failed, 1);
 });
 
+test("새 관측이 없으면 OCR 음원 준비는 3초에 끝나고 늦은 시작은 무시한다", () => {
+  const app = harness({ deferred: true, noSpeech: true });
+  let started = 0, cancelled = 0;
+  app.coordinator.start();
+  app.coordinator.request({ source: "bus-ocr", priority: app.coordinator.PRIORITY.busOcr,
+    text: "123번 버스 확인.", dynamic: true, validUntil: 3000,
+    onStart: () => started++, onCancel: () => cancelled++ });
+  const lateStart = app.audio().onplaying;
+  app.step(2999);
+  assert.equal(cancelled, 0);
+  app.step(1);
+  assert.equal(cancelled, 1);
+  assert.equal(app.audio().src, undefined);
+  assert.equal(app.player.extendStartDeadline(6000), false);
+  lateStart();
+  assert.equal(started, 0);
+  assert.equal(app.timers.size, 0);
+});
+
+test("연속 목표 관측은 같은 MP3를 유지하고 최초 3초 뒤에도 확인 안내를 시작한다", () => {
+  const app = harness({ deferred: true, noSpeech: true }), events = [];
+  app.coordinator.start();
+  const journey = app.journey({ api: {}, onEvent: event => events.push(event) });
+  journey.start("123");
+  const observe = () => journey.accept({ captured_at_ms: app.now(), event: { target_route: "123",
+    matches: [{ route_number: "123", state: "matched_candidate", track_id: 4, token_score: .99 }] } });
+  observe();
+  const source = app.audio().src, loads = app.audio().loads;
+  app.step(1000); observe();
+  app.step(1500); observe();
+  app.step(1000); app.tick();
+  assert.equal(app.audio().src, source);
+  assert.equal(app.audio().loads, loads);
+  assert.equal(app.playbackSources.length, 1, "새 프레임마다 같은 음원 요청을 재시작하지 않는다");
+  app.startAudio();
+  assert.equal(events.filter(event => event.type === "bus_ocr_speech_started").length, 1);
+  app.finishAudio();
+  assert.equal(events.filter(event => event.type === "bus_ocr_speech_completed").length, 1);
+  journey.stop();
+});
+
+test("시작 기한 연장은 대기 중인 기기 합성을 유지하고 재생 시간 제한은 따로 둔다", () => {
+  const app = harness({ deferred: true, speechDeferred: true });
+  let started = 0, cancelled = 0;
+  app.coordinator.start();
+  const request = deadline => app.coordinator.request({ source: "bus-ocr", priority: app.coordinator.PRIORITY.busOcr,
+    text: "123번 버스 확인.", kind: "4:123:confirmed", dynamic: true, validUntil: deadline,
+    onStart: () => started++, onCancel: () => cancelled++ });
+  request(3000);
+  app.step(1000);
+  const utterance = app.utterance();
+  app.step(1000); request(5000);
+  app.step(1500);
+  assert.equal(app.utterance(), utterance);
+  assert.equal(app.utterances.length, 1);
+  assert.equal(app.playbackSources.length, 1);
+  assert.equal(cancelled, 0);
+  app.startSpeech();
+  assert.equal(started, 1);
+  assert.equal(app.player.extendStartDeadline(30000), false);
+  app.step(14999);
+  assert.equal(cancelled, 0, "기한 갱신은 재생 시작 뒤의 15초 제한을 바꾸지 않는다");
+  app.step(1);
+  assert.equal(cancelled, 1);
+  assert.equal(app.timers.size, 0);
+});
+
+test("관측이 계속 갱신돼도 시작하지 않는 음원은 15초에 실패한다", () => {
+  const app = harness({ deferred: true, noSpeech: true });
+  let cancelled = 0;
+  app.coordinator.start();
+  const request = deadline => app.coordinator.request({ source: "bus-ocr", priority: app.coordinator.PRIORITY.busOcr,
+    text: "123번 버스 확인.", kind: "4:123:confirmed", dynamic: true, validUntil: deadline,
+    onCancel: () => cancelled++ });
+  request(3000);
+  for (let elapsed = 1000; elapsed <= 14000; elapsed += 1000) {
+    app.step(1000); request(elapsed + 3000);
+    assert.equal(cancelled, 0);
+  }
+  assert.equal(app.playbackSources.length, 1);
+  app.step(1000);
+  assert.equal(cancelled, 1);
+  assert.equal(app.audio().src, undefined);
+  assert.equal(app.timers.size, 0);
+});
+
 test("MP3 지원 없이 기기 합성도 실패하면 안내 실패를 한 번 보고한다", () => {
   const app = harness({ navigator: android, noAudio: true, speechDeferred: true });
   let failed = 0;
-  app.player.speak("7011 목표 버스 확인.", 3000, { dynamic: true, onFailure: () => failed++ });
+  app.player.speak("7011번 버스 확인.", 3000, { dynamic: true, onFailure: () => failed++ });
   app.failSpeech(); app.failSpeech();
   assert.equal(failed, 1);
   assert.equal(app.timers.size, 0);

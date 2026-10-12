@@ -103,7 +103,7 @@ window.GOverlay = (() => {
   function busScene(result, age) {
     const bus = result.bus || {}, event = bus.event || {};
     const target = String(result.target_route || event.target_route || "");
-    const failed = ["error", "unavailable", "disabled"].includes(bus.status) || event.errors?.length;
+    const failed = ["error", "unavailable", "disabled"].includes(bus.status);
     const preparing = ["loading", "idle"].includes(bus.status);
     const fresh = Number.isFinite(age) && age >= 0 && age <= 3000;
     const evidence = !failed && !preparing && fresh
@@ -212,8 +212,8 @@ window.GOverlay = (() => {
     // Keep one status line; tentative readings must not claim target confirmation.
     const confirmedTarget = shown && isTarget(shown) && shown.state === "matched_candidate";
     const title = shown && !isTarget(shown) ? `${shown.route_number} 다른 버스 확인`
-      : confirmedTarget ? `${shown.route_number} 목표 버스 확인`
-      : failed ? "번호 인식 오류"
+      : confirmedTarget ? `${shown.route_number}번 버스 확인`
+      : failed || event.errors?.length && !shown ? "번호 인식 오류"
       : preparing ? "번호 인식 준비 중"
       : shown || checking ? "버스 번호 확인중"
       : "버스 찾는 중";

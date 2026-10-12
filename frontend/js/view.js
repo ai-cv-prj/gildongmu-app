@@ -109,7 +109,10 @@
     function render(result) {
       lastResult = result || null;
       if (!CAMERA_SCREENS.has(screen) || paused) return;
-      currentCue = hazardCue(lastResult) || busCue() || DEFAULT_CUES[screen];
+      const cameraCue = busCue();
+      currentCue = hazardCue(lastResult) || cameraCue || DEFAULT_CUES[screen];
+      if (BUS_SCREENS.has(screen)) updateText($("camera-title-text"), cameraCue?.tone === "recognized"
+        ? " 버스 확인" : screen === "arrived" ? " 버스 도착정보" : " 버스 인식 중");
     }
     function setObstacleDetection(enabled) { obstacleDetection = enabled; render(lastResult); }
     function updateControls() {

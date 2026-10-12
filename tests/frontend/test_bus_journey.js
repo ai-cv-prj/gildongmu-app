@@ -104,9 +104,9 @@ test("GPS 권한 거절 후 후보는 화면에만 표시하고 확정한 목표
   assert.equal(app.journey.repeat(), false, "확정하지 않은 번호는 다시 듣기로도 읽지 않는다");
   app.detect({ state: "matched_candidate" });
   assert.equal(app.journey.snapshot().ocr.confirmed, true);
-  assert.equal(app.journey.snapshot().ocr.message, "143 목표 버스 확인.");
+  assert.equal(app.journey.snapshot().ocr.message, "143번 버스 확인.");
   assert.equal(app.spoken.length, 1);
-  assert.equal(app.spoken.at(-1).text, "143 목표 버스 확인.");
+  assert.equal(app.spoken.at(-1).text, "143번 버스 확인.");
   assert.equal(app.spoken.at(-1).dynamic, true);
   app.finish();
   app.detect({ state: "matched_candidate" });
@@ -122,13 +122,13 @@ test("새 목표 차량 확정은 이전 차량 안내를 교체하고 취소된
   app.journey.start("7011");
   app.detect({ route: "7011", state: "matched_candidate" });
   const previousPlayback = app.playback();
-  assert.equal(app.spoken[0].text, "7011 목표 버스 확인.");
+  assert.equal(app.spoken[0].text, "7011번 버스 확인.");
   app.detect({ route: "7011", state: "matched_candidate", id: 5 });
   const confirmedPlayback = app.playback();
   assert.notEqual(confirmedPlayback, previousPlayback);
   assert.equal(app.spoken.length, 2);
-  assert.equal(app.spoken[1].text, "7011 목표 버스 확인.");
-  assert.equal(app.journey.snapshot().ocr.message, "7011 목표 버스 확인.");
+  assert.equal(app.spoken[1].text, "7011번 버스 확인.");
+  assert.equal(app.journey.snapshot().ocr.message, "7011번 버스 확인.");
   previousPlayback.onEnd();
   previousPlayback.onStart();
   app.detect({ route: "7011", state: "matched_candidate", id: 5 });
@@ -142,7 +142,7 @@ test("새 목표 차량 확정은 이전 차량 안내를 교체하고 취소된
   assert.equal(app.spoken.length, 2);
   assert.equal(app.journey.repeat(), true);
   assert.equal(app.spoken.length, 3);
-  assert.equal(app.spoken[2].text, "7011 목표 버스 확인.");
+  assert.equal(app.spoken[2].text, "7011번 버스 확인.");
   app.finish();
   app.tick();
   assert.equal(app.spoken.length, 3, "다시 듣기도 한 번 안내하고 종료한다");
@@ -179,7 +179,7 @@ test("다른 버스 안내 중 목표 버스가 확인되면 목표 버스 안�
   app.journey.start("143");
   app.detectOther();
   app.detect({ state: "matched_candidate" });
-  assert.equal(app.spoken.at(-1).text, "143 목표 버스 확인.");
+  assert.equal(app.spoken.at(-1).text, "143번 버스 확인.");
   assert.equal(app.journey.snapshot().ocr.isTarget, true);
   app.finish();
   app.detect();
@@ -195,7 +195,7 @@ test("목표 일치와 다른 버스가 함께 보이면 목표 버스를 먼저
     recognized_routes: [{ route_number: "7011", track_id: 9, token_score: 1,
       state: "matched_candidate", is_target: false }] } }, app.now());
   assert.equal(app.spoken.length, 1);
-  assert.equal(app.spoken[0].text, "143 목표 버스 확인.");
+  assert.equal(app.spoken[0].text, "143번 버스 확인.");
   app.journey.stop();
 });
 
@@ -237,6 +237,76 @@ test("다른 번호의 오래된 결과·실패 캐시는 재생하지 않고 �
   app.journey.stop();
 });
 
+test("다른 차량의 부분 오류는 정상 목표 번호 확인을 버리지 않는다", () => {
+  const app = harness();
+  app.journey.start("123");
+  const event = { target_route: "123", errors: ["region_detection_failed:1:RuntimeError"],
+    buses: [{ track_id: 4 }, { track_id: 5 }],
+    matches: [{ route_number: "123", track_id: 4, state: "matched_candidate", token_score: .99 }] };
+  app.journey.accept({ status: "matched", event }, app.now());
+  assert.equal(app.journey.snapshot().ocr.status, "confirmed");
+  assert.deepEqual(app.spoken.map(item => item.text), ["123번 버스 확인."]);
+  app.finish();
+  app.journey.accept({ status: "error", event }, app.now());
+  assert.equal(app.journey.snapshot().ocr.status, "error", "전체 결과 오류는 정상 근거로 재사용하지 않는다");
+  assert.equal(app.journey.repeat(), false);
+  app.journey.accept({ status: "searching", event: { ...event, matches: [] } }, app.now());
+  assert.equal(app.journey.snapshot().ocr.status, "error", "사용할 번호가 없으면 부분 오류도 표시한다");
+  app.journey.stop();
+});
+
+test("버튼 설명으로 끊긴 도착정보는 최신일 때 다시 읽고 완료 후에는 반복하지 않는다", async () => {
+  const app = harness();
+  app.journey.start("123"); app.locate(); await flush();
+  const interrupted = app.playback();
+  app.coordinator.request({ source: "touch-explore", priority: app.coordinator.PRIORITY.boarding,
+    text: "버스 번호 입력.", validUntil: 10000 });
+  interrupted.onEnd();
+  assert.equal(app.events.filter(event => event.type === "bus_arrival_speech_completed").length, 0);
+  app.finish(); app.tick();
+  assert.deepEqual(app.spoken.map(item => item.text), [
+    "도착정보. 123번, 3분 후.", "버스 번호 입력.", "도착정보. 123번, 3분 후.",
+  ]);
+  app.finish(); app.locate(); await flush(); app.tick();
+  assert.equal(app.spoken.length, 3);
+  app.journey.stop();
+});
+
+for (const interruption of ["touch", "missing", "failure"]) {
+  test(`목표 확인 중 ${interruption} 뒤 같은 차량의 최신 확인을 끝까지 다시 읽는다`, () => {
+    const app = harness(); app.journey.start("123");
+    app.detect({ route: "123", state: "matched_candidate" });
+    const interrupted = app.playback();
+    if (interruption === "touch") app.coordinator.request({ source: "touch-explore",
+      priority: app.coordinator.PRIORITY.boarding, text: "다시 듣기.", validUntil: 10000 });
+    else if (interruption === "missing") app.journey.accept({ event: { target_route: "123", buses: [], matches: [] } }, app.now());
+    else interrupted.onFailure();
+    interrupted.onEnd();
+    assert.equal(app.events.filter(event => event.type === "bus_ocr_speech_completed").length, 0);
+    if (interruption === "touch") app.finish();
+    const before = app.spoken.length;
+    app.detect({ route: "123", state: "matched_candidate" }); app.tick();
+    assert.equal(app.spoken.length, before + 1);
+    assert.equal(app.spoken.at(-1).text, "123번 버스 확인.");
+    app.finish(); app.detect({ route: "123", state: "matched_candidate" }); app.tick();
+    assert.equal(app.spoken.length, before + 1, "완료한 같은 차량은 자동으로 반복하지 않는다");
+    app.journey.stop();
+  });
+}
+
+test("확인 음성이 GPS를 대체한 뒤 끊겨도 확인을 완료하면 이전 ETA를 되살리지 않는다", async () => {
+  const app = harness(); app.journey.start("123"); app.locate(); await flush();
+  app.detect({ route: "123", state: "matched_candidate" });
+  app.coordinator.request({ source: "touch-explore", priority: app.coordinator.PRIORITY.boarding,
+    text: "다시 듣기.", validUntil: 10000 });
+  app.finish(); app.tick();
+  assert.equal(app.spoken.at(-1).text, "123번 버스 확인.");
+  app.finish(); const count = app.spoken.length;
+  app.step(3001);
+  assert.equal(app.spoken.length, count);
+  app.journey.stop();
+});
+
 test("OCR 장애는 GPS 조회와 정류장 도착정보를 중단하지 않는다", async () => {
   const app = harness();
   app.journey.start("143");
@@ -265,11 +335,11 @@ for (const code of ["bus_api_unconfigured", "bus_api_error", "network_error"]) {
     assert.equal(app.spoken.length, 0, "API 오류 중에도 후보 번호는 화면에만 표시한다");
     app.detect({ id: 5, state: "matched_candidate" });
     assert.equal(app.journey.snapshot().ocr.confirmed, true);
-    assert.equal(app.spoken.at(-1).text, "143 목표 버스 확인.");
+    assert.equal(app.spoken.at(-1).text, "143번 버스 확인.");
     assert.equal(app.journey.snapshot().gps.selected, null);
     app.finish();
     assert.equal(app.journey.repeat(), true);
-    assert.equal(app.spoken.at(-1).text, "143 목표 버스 확인.");
+    assert.equal(app.spoken.at(-1).text, "143번 버스 확인.");
     app.journey.stop();
   });
 }
@@ -433,7 +503,7 @@ test("긴급·신호 안내가 버스 음성보다 우선하며 버스 안내는
   assert.deepEqual(app.spoken.map(item => item.text), ["멈추세요."]);
   app.finish();
   app.step(1000);
-  assert.equal(app.spoken.at(-1).text, "143 목표 버스 확인.");
+  assert.equal(app.spoken.at(-1).text, "143번 버스 확인.");
   app.coordinator.request({ source: "traffic", priority: app.coordinator.PRIORITY.trafficRed,
     text: "빨간불", validUntil: 15000 });
   assert.equal(app.spoken.at(-1).text, "빨간불");
@@ -456,10 +526,10 @@ test("목표 버스 음성을 끊은 긴급 안내는 새 목표 차량 확정�
   previousPlayback.onEnd();
   app.tick();
   assert.equal(app.playback(), emergencyPlayback);
-  assert.deepEqual(app.spoken.map(item => item.text), ["143 목표 버스 확인.", "멈추세요."]);
+  assert.deepEqual(app.spoken.map(item => item.text), ["143번 버스 확인.", "멈추세요."]);
   app.finish();
   app.step(1000);
-  assert.equal(app.spoken.at(-1).text, "143 목표 버스 확인.");
+  assert.equal(app.spoken.at(-1).text, "143번 버스 확인.");
   app.finish();
   app.tick();
   assert.equal(app.spoken.length, 3);
@@ -693,7 +763,7 @@ for (const autoStart of [true, false]) {
     assert.notEqual(targetPlayback, arrivalPlayback);
     assert.deepEqual(app.cancellations, [arrivalPlayback]);
     assert.deepEqual(app.spoken.map(item => item.text), [
-      "도착정보. 773번, 3분 후.", "773 목표 버스 확인.",
+      "도착정보. 773번, 3분 후.", "773번 버스 확인.",
     ]);
     app.startPlayback();
     arrivalPlayback.onEnd();
@@ -841,7 +911,7 @@ test("다시 듣기는 최신 773번 확정이 있으면 GPS보다 목표 번호
   app.finish();
   assert.equal(app.journey.repeat(), true);
   assert.deepEqual(app.spoken.map(item => item.text), [
-    "도착정보. 773번, 3분 후.", "773 목표 버스 확인.", "773 목표 버스 확인.",
+    "도착정보. 773번, 3분 후.", "773번 버스 확인.", "773번 버스 확인.",
   ]);
   app.journey.stop();
 });
@@ -870,12 +940,12 @@ test("773번 확정이 오래되면 보류한 최신 GPS 도착정보를 다시 
   app.requests[0].resolve({ matches: [match()] });
   await flush();
   assert.equal(app.journey.snapshot().gps.status, "ready");
-  assert.deepEqual(app.spoken.map(item => item.text), ["773 목표 버스 확인."]);
+  assert.deepEqual(app.spoken.map(item => item.text), ["773번 버스 확인."]);
   app.finish();
   app.step(3001);
   assert.equal(app.journey.snapshot().ocr.status, "stale");
   assert.deepEqual(app.spoken.map(item => item.text), [
-    "773 목표 버스 확인.", "도착정보. 773번, 3분 후.",
+    "773번 버스 확인.", "도착정보. 773번, 3분 후.",
   ]);
   app.journey.stop();
 });
@@ -897,7 +967,7 @@ for (const autoStart of [true, false]) {
     assert.notEqual(targetPlayback, arrivalPlayback);
     assert.deepEqual(app.cancellations, [arrivalPlayback]);
     assert.deepEqual(app.spoken.map(item => item.text), [
-      "773 목표 버스 확인.", "도착정보. 773번, 3분 후.", "773 목표 버스 확인.",
+      "773번 버스 확인.", "도착정보. 773번, 3분 후.", "773번 버스 확인.",
     ]);
     app.startPlayback();
     arrivalPlayback.onStart();

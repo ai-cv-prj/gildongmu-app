@@ -59,7 +59,11 @@ class TargetMatcher:
         self.single_score=single_score
         self.tracks={}
 
-    def update(self, track_id, timestamp, observations, bus_box=None, complete=True):
+    def retain_tracks(self, track_ids):
+        """Drop evidence for vehicles absent from the current processed frame."""
+        self.tracks = {track: state for track, state in self.tracks.items() if track in track_ids}
+
+    def update(self, track_id, timestamp, observations, bus_box=None, complete=True, *, consecutive_frame=False):
         if track_id is None:
             return {'state':'untracked','reason':'no_track_id','support_samples':0,'conflicts':[]}
         state=self.tracks.setdefault(track_id,{'hits':deque(),'last':None,'rivals':{},'box':None})
@@ -71,7 +75,13 @@ class TargetMatcher:
             inter=max(0,min(c,z)-max(a,x))*max(0,min(d,w)-max(b,y))
             union=(c-a)*(d-b)+(z-x)*(w-y)-inter
             jump=union<=0 or inter/union<.1
-        if jump or (state['last'] is not None and timestamp-state['last'] > .6+1e-6):
+        # Sparse inference is not a lost vehicle when the pipeline has observed
+        # this same canonical track in every processed frame. Callers without
+        # that frame-level visibility evidence retain the conservative gap.
+        gap_expired = state['last'] is not None and (
+            timestamp-state['last'] > self.window_s+1e-6 if consecutive_frame
+            else timestamp-state['last'] > .6+1e-6)
+        if jump or gap_expired:
             state['hits'].clear()
             state['rivals'].clear()
         state['last'],state['box']=timestamp,bus_box

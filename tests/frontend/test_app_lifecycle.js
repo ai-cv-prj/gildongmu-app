@@ -5,7 +5,7 @@ const test = require("node:test");
 const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
 
 async function harness({ stopFailsOnce = false, clipState = "ready", uploadResponseLostOnce = false, deferRouteSubmit = false,
-  storedPreferences = null, clipStore = null, realDiagnostics = false } = {}) {
+  storedPreferences = null, clipStore = null, realDiagnostics = false, realJourney = false } = {}) {
   let now = 100, nextTimer = 0, screen = "home", cameraActive = false, cameraEnded;
   let cameraExposureChanged, busCameraMode = false;
   let handlers, voice = null, busState = { status: "idle", revision: 0, arrival_event_id: null }, routeInput = "";
@@ -14,6 +14,7 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
   let recording = false, recordingStartedAt = null, recorderEnded = null;
   let releaseRouteSubmit = null, configuredPreferences = null, savedPreferences = null;
   const routeSubmissions = [], routeErrors = [], shownScreens = [];
+  const journeyAccepted = [];
   let recordStarts = 0, recordStops = 0;
   const timeline = [], uploads = [], diagnostics = [], audioLifecycle = [];
   let diagnosticContext = () => ({});
@@ -146,6 +147,22 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
   for (const name of ["audio_coordinator", "boarding"]) {
     vm.runInContext(fs.readFileSync(`frontend/js/${name}.js`, "utf8"), context);
   }
+  if (realJourney) {
+    for (const name of ["gps-motion", "gps-stop-select", "bus-journey"]) {
+      vm.runInContext(fs.readFileSync(`frontend/js/${name}.js`, "utf8"), context);
+    }
+  }
+  let appJourney;
+  const createJourney = context.GBusJourney.create;
+  context.GBusJourney.create = options => {
+    appJourney = createJourney(options);
+    const accept = appJourney.accept;
+    appJourney.accept = (result, capturedAt) => {
+      journeyAccepted.push({ result, capturedAt });
+      return accept(result, capturedAt);
+    };
+    return appJourney;
+  };
   let audioCoordinator;
   const createCoordinator = context.GAudioCoordinator.create;
   context.GAudioCoordinator.create = options => (audioCoordinator = createCoordinator(options));
@@ -155,7 +172,9 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
     captured_at_ms: frame.capturedAtMs, inference_ms: 10,
     walking: { detections: [], event: {} }, traffic: { detections: [], event: {} },
     boarding: { ...busState }, stop_proximity: { nearby: false } });
-  return { api, node, startSettings, metadataUpdates,
+  return { api, node, startSettings, metadataUpdates, journeyAccepted,
+    journeySnapshot: () => appJourney.snapshot(),
+    setHidden(value) { context.document.hidden = value; },
     localClips: () => localClips, errorHistory: () => context.GDiagnostics.exportData?.(),
     async event(id, type, value) {
       if (value !== undefined) node(id).value = value;
@@ -345,6 +364,128 @@ test("버스 노선 제출 후에도 보행 640px을 유지하고 버스 960px�
   await app.respond(2); await third.pending;
   await app.end();
 });
+
+const confirmedBusResult = (frame, trackId = 4) => ({
+  status: "ready", frame_id: frame.frameId, captured_at_ms: frame.busCapturedAtMs,
+  event: { target_route: "123", buses: [{ track_id: trackId }],
+    matches: [{ route_number: "123", track_id: trackId, state: "matched_candidate", token_score: .99 }] },
+});
+
+for (const delay of [1499, 1500, 1600]) {
+  test(`${delay}ms 응답의 버스 번호는 자체 유효시간으로 안내하고 보행·화면은 1500ms 미만만 반영한다`, async () => {
+    const app = await harness({ realJourney: true });
+    await app.action("start"); await app.action("manual-arrival");
+    await app.confirmRoute("123"); await app.finishVoice();
+    const frame = await app.capture(), sent = app.frames[0];
+    app.setNow(sent.capturedAtMs - 100000 + delay);
+    const result = { bus: confirmedBusResult(sent) };
+    // Minimal responses without a session ID retain their previous behavior.
+    if (delay === 1600) result.session_id = undefined;
+    await app.respond(0, result); await frame.pending;
+    assert.equal(app.journeyAccepted.length, 1);
+    assert.equal(app.journeySnapshot().ocr.status, "confirmed");
+    assert.equal(app.voice()?.text, "123번 버스 확인.");
+    assert.equal(app.screen(), "search");
+    assert.equal(app.overlayRenders.length, delay < 1500 ? 1 : 0);
+    assert.equal(app.renders.length, delay < 1500 ? 1 : 0);
+    assert.equal(app.guides[1].accepted.length, delay < 1500 ? 1 : 0);
+    assert.equal(app.guides[0].accepted.length, 0, "버스 탐색 중 보행 안내를 복원하지 않는다");
+    await app.finishVoice();
+    const next = await app.capture();
+    assert.equal(app.frames[1].frameId, 2);
+    await app.respond(1, { bus: confirmedBusResult(app.frames[1], 5) }); await next.pending;
+    assert.equal(app.journeyAccepted.length, 2);
+    assert.equal(app.voice()?.text, "123번 버스 확인.");
+    assert.equal(app.overlayRenders.at(-1).bus_guidance.status, "confirmed");
+    await app.end();
+  });
+}
+
+test("늦은 버스 결과는 자체 3초 제한을 넘으면 오래됨으로 처리하고 다음 최신 결과로 복구한다", async () => {
+  const app = await harness({ realJourney: true });
+  await app.action("start"); await app.action("manual-arrival");
+  await app.confirmRoute("123"); await app.finishVoice();
+  const frame = await app.capture(), sent = app.frames[0];
+  app.setNow(sent.capturedAtMs - 100000 + 3001);
+  await app.respond(0, { bus: confirmedBusResult(sent) }); await frame.pending;
+  assert.equal(app.journeyAccepted.length, 1, "나이는 버스 모듈이 검사한다");
+  assert.equal(app.journeySnapshot().ocr.status, "stale");
+  assert.equal(app.voice(), null);
+  assert.equal(app.overlayRenders.length, 0);
+  assert.equal(app.guides[1].accepted.length, 0);
+  const next = await app.capture();
+  await app.respond(1, { bus: confirmedBusResult(app.frames[1]) }); await next.pending;
+  assert.equal(app.journeySnapshot().ocr.status, "confirmed");
+  assert.equal(app.voice()?.text, "123번 버스 확인.");
+  await app.end();
+});
+
+test("늦은 버스 결과의 탑승 상태와 위험 안내는 현재 버스 화면·보행 상태를 바꾸지 않는다", async () => {
+  const app = await harness({ realJourney: true });
+  await app.action("start"); await app.action("manual-arrival");
+  await app.confirmRoute("123"); await app.finishVoice();
+  const walkingStarts = app.guides[0].starts;
+  const frame = await app.capture(), sent = app.frames[0];
+  app.setNow(sent.capturedAtMs - 100000 + 1600);
+  await app.respond(0, { bus: confirmedBusResult(sent),
+    boarding: { status: "cancelled", revision: 999 },
+    walking: { detections: [{ class_name: "person" }], event: { level: "danger", voice_text: "멈추세요." } },
+    walking_surface: { event: { status: "outside_left", repeat: true, voice_text: "보행로 이탈, 오른쪽 이동" } },
+    crosswalk: { event: { status: "finished", voice_text: "횡단보도 끝", repeat: false } },
+  }); await frame.pending;
+  assert.equal(app.journeySnapshot().route, "123");
+  assert.equal(app.screen(), "search");
+  assert.equal(app.guides[0].starts, walkingStarts);
+  assert.equal(app.guides[0].accepted.length, 0);
+  assert.equal(app.guides[1].accepted.length, 0);
+  assert.equal(app.overlayRenders.length, 0);
+  assert.equal(app.voice()?.text, "123번 버스 확인.");
+  await app.end();
+});
+
+for (const revision of [0, 999]) {
+  test(`최신 프레임의 탑승 취소 revision ${revision}을 검증한 뒤 버스 결과를 전달한다`, async () => {
+    const app = await harness({ realJourney: true });
+    await app.action("start"); await app.action("manual-arrival");
+    await app.confirmRoute("123"); await app.finishVoice();
+    const frame = await app.capture();
+    await app.respond(0, { bus: confirmedBusResult(app.frames[0]), boarding: { status: "cancelled", revision } });
+    await frame.pending;
+    const cancelled = revision === 999;
+    assert.equal(app.screen(), cancelled ? "walk" : "search");
+    assert.equal(app.journeyAccepted.length, cancelled ? 0 : 1);
+    assert.equal(app.journeySnapshot().active, !cancelled);
+    assert.equal(app.overlayRenders.at(-1).bus_mode, !cancelled);
+    await app.end();
+  });
+}
+
+for (const changed of ["paused", "resumed", "hidden", "camera-lost", "route-cleared", "route-changed", "session-mismatch", "stopped"]) {
+  test(`늦은 버스 응답도 ${changed} 상태가 바뀌면 전달하지 않는다`, async () => {
+    const app = await harness();
+    await app.action("start"); await app.action("manual-arrival");
+    await app.confirmRoute("123"); await app.finishVoice();
+    const frame = await app.capture(), sent = app.frames[0];
+    let ending;
+    if (changed === "paused" || changed === "resumed") await app.action("pause");
+    if (changed === "resumed") await app.action("pause");
+    if (changed === "hidden") app.setHidden(true);
+    if (changed === "camera-lost") await app.cameraEnd();
+    if (changed === "route-cleared" || changed === "route-changed") await app.action("back");
+    if (changed === "route-changed") await app.confirmRoute("606");
+    if (changed === "stopped") {
+      await app.action("end"); ending = app.action("confirm-end"); await flush();
+    }
+    app.setNow(sent.capturedAtMs - 100000 + 1600);
+    const result = { bus: confirmedBusResult(sent) };
+    if (changed === "session-mismatch") result.session_id = "other-session";
+    await app.respond(0, result); await frame.pending;
+    assert.equal(app.journeyAccepted.length, 0);
+    if (changed === "hidden") app.setHidden(false);
+    if (ending) await ending;
+    else await app.end();
+  });
+}
 
 test("시작 화면에서 출발 준비로 이동할 때 카메라나 추론 세션을 시작하지 않는다", async () => {
   const app = await harness();

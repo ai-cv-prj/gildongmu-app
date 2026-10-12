@@ -60,6 +60,9 @@
       }
       if (current) {
         if (current.source === source && current.text === text && current.kind === kind) {
+          if (!current.started && validUntil > current.validUntil) {
+            player.extendStartDeadline?.(validUntil);
+          }
           current.validUntil = Math.max(current.validUntil, validUntil);
           current.repeat = repeat;
           current.finishing = false;

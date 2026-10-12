@@ -20,17 +20,26 @@ class ObservedRouteMatcher:
         self.candidates = {}
         self.tracks = {}
 
-    def update(self, track_id, timestamp, observations, bus_box, *, target, complete):
+    def retain_tracks(self, track_ids):
+        """An observed disappearance also ends full-number context for that bus."""
+        self.tracks = {track: state for track, state in self.tracks.items() if track in track_ids}
+        self.candidates = {key: value for key, value in self.candidates.items() if key[0] in track_ids}
+
+    def update(self, track_id, timestamp, observations, bus_box, *, target, complete, consecutive_frame=False):
         # Bound history to the same short evidence window as target recognition.
         for key, (_, last_seen) in list(self.candidates.items()):
             if timestamp - last_seen > 2.0:
                 del self.candidates[key]
         for track, context in list(self.tracks.items()):
-            if timestamp - context['last'] > .6 + 1e-6:
+            if timestamp - context['last'] > 2.0 + 1e-6:
                 del self.tracks[track]
         if track_id is None:
             return []
         context = self.tracks.get(track_id)
+        if context and (
+                timestamp - context['last'] > 2.0 + 1e-6 if consecutive_frame
+                else timestamp - context['last'] > .6 + 1e-6):
+            context = None
         if context and bus_box and context['box']:
             a, b, c, d = bus_box
             x, y, z, w = context['box']
@@ -73,7 +82,8 @@ class ObservedRouteMatcher:
                 for item in observations
             )
             decision = matcher.update(track_id, timestamp, observations, bus_box,
-                                      complete=complete and not ambiguous)
+                                      complete=complete and not ambiguous,
+                                      consecutive_frame=consecutive_frame)
             self.candidates[key] = (matcher, timestamp if route in routes else last_seen)
             if route in routes and decision['state'] == 'matched_candidate':
                 confirmed.append({

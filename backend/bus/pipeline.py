@@ -46,6 +46,7 @@ class BusPipeline:
         self.last_capture_ms: int | None = None
         self.observed_matcher = ObservedRouteMatcher()
         self.track_continuity = BusTrackContinuity()
+        self._previous_bus_tracks: set[int] = set()
 
     def load(self) -> None:
         if self.weights is None or not self.weights.is_file():
@@ -78,6 +79,7 @@ class BusPipeline:
         self.last_capture_ms = None
         self.observed_matcher = ObservedRouteMatcher()
         self.track_continuity.reset()
+        self._previous_bus_tracks.clear()
         self.matcher = (TargetMatcher(self.target_route, single_score=.98)
                         if self.target_route else None)
         if self.detector is not None:
@@ -94,6 +96,7 @@ class BusPipeline:
         self.last_capture_ms = None
         self.observed_matcher = ObservedRouteMatcher()
         self.track_continuity.reset()
+        self._previous_bus_tracks.clear()
 
     @staticmethod
     def _led_diagnostics(rgb: np.ndarray, box) -> dict | None:
@@ -173,6 +176,14 @@ class BusPipeline:
     def infer(self, frame_bgr: np.ndarray, context: InferenceContext) -> dict[str, Any]:
         if self.detector is None or self.recognizer is None:
             raise RuntimeError('BusPipeline.load() must complete before inference')
+        captured_at_ms = int(context.captured_at_ms)
+        ordered = self.last_capture_ms is None or captured_at_ms > self.last_capture_ms
+        previous_capture_ms = self.last_capture_ms
+        previous_bus_tracks = self._previous_bus_tracks
+        if ordered:
+            # If detection/inference fails, the next successful frame must not
+            # bridge the unobserved frame with this vehicle's old evidence.
+            self._previous_bus_tracks = set()
         height, width = frame_bgr.shape[:2]
         rgb = frame_bgr[:, :, ::-1].copy()
         self.detector.sync()
@@ -180,13 +191,19 @@ class BusPipeline:
         self.detector.sync()
         current, errors = self._observations(rgb, buses)
         self.detector.sync()
-        captured_at_ms = int(context.captured_at_ms)
-        ordered = self.last_capture_ms is None or captured_at_ms > self.last_capture_ms
         if ordered:
             self.last_capture_ms = captured_at_ms
         timestamp_s = captured_at_ms / 1000.0
+        consecutive_tracks = set()
         if ordered:
             self.track_continuity.update(buses, timestamp_s)
+            visible_tracks = {bus['track_id'] for bus in buses if bus['track_id'] is not None}
+            if (previous_capture_ms is not None and
+                    captured_at_ms - previous_capture_ms <= self.track_continuity.max_gap_s * 1000):
+                consecutive_tracks = previous_bus_tracks & visible_tracks
+            if self.matcher is not None:
+                self.matcher.retain_tracks(consecutive_tracks)
+            self.observed_matcher.retain_tracks(consecutive_tracks)
         detections: list[dict] = []
         event_buses: list[dict] = []
         matches: list[dict] = []
@@ -205,7 +222,8 @@ class BusPipeline:
                             'support_samples': 0, 'conflicts': []}
             else:
                 decision = self.matcher.update(track_id, timestamp_s, observations,
-                                               bus_box, complete=complete)
+                                               bus_box, complete=complete,
+                                               consecutive_frame=track_id in consecutive_tracks)
             bus_record = {'track_id': track_id,
                           'detector_track_id': bus.get('detector_track_id', track_id),
                           'track_source': bus.get('track_source', 'detector'),
@@ -236,7 +254,8 @@ class BusPipeline:
             if ordered:
                 recognized_routes.extend(self.observed_matcher.update(
                     track_id, timestamp_s, observations, bus_box,
-                    target=self.target_route, complete=complete))
+                    target=self.target_route, complete=complete,
+                    consecutive_frame=track_id in consecutive_tracks))
             if (self.target_route and track_id is not None and
                     decision['state'] in {'recognized_single', 'matched_candidate'}):
                 supporting = [p for p in observations if p['eligible']
@@ -254,4 +273,6 @@ class BusPipeline:
                  'bus_number': matches[0]['route_number'] if len(matches) == 1 else None,
                  'is_target': len(matches) == 1,
                  'errors': errors}
+        if ordered:
+            self._previous_bus_tracks = visible_tracks
         return {'detections': detections, 'event': event}

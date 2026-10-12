@@ -32,15 +32,15 @@ function harness() {
   view.show("search");
   view.setBus({ route: "143", station: "정류장 정보 없음", arrivalText: "도착정보 이용 불가",
     gpsMessage: "도착정보를 사용할 수 없습니다. 카메라 번호 인식은 계속됩니다.",
-    ocrStatus: "confirmed", ocrCapturedAt: clock, ocrMessage: "143번 버스 확인함." });
+    ocrStatus: "confirmed", ocrCapturedAt: clock, ocrMessage: "143번 버스 확인." });
   return { view, node, now: () => clock, step(ms) { clock += ms; } };
 }
 
 test("결과 카드 없이도 확인한 목표 버스 번호의 음성 안내를 제공한다", () => {
   const { view, node } = harness();
-  assert.equal(node("camera-title-text").textContent, " 버스 인식 중");
+  assert.equal(node("camera-title-text").textContent, " 버스 확인");
   assert.equal(node("camera-route").textContent, "143번");
-  assert.equal(view.getGuidance(), "143번 버스 확인함. 버스 번호와 주변 상황을 함께 확인해 주세요.");
+  assert.equal(view.getGuidance(), "143번 버스 확인. 버스 번호와 주변 상황을 함께 확인해 주세요.");
   assert.equal(node("bus-arrival-text").textContent, "도착정보 이용 불가");
   assert.equal(view.getScreen(), "search", "번호 확인만으로 정류장 도착 상태로 바꾸지 않는다");
   view.destroy();
@@ -62,18 +62,29 @@ test("번호 확인 중 긴급 경고가 우선하며 경고 해제 후 번호 �
   assert.equal(view.getGuidance(), "멈추세요. 잠시 멈추고 주변을 확인해 주세요.");
   assert.equal(view.getScreen(), "search");
   view.render({ captured_at_ms: now(), walking: { event: { level: "safe" } } });
-  assert.match(view.getGuidance(), /^143번 버스 확인함/);
+  assert.match(view.getGuidance(), /^143번 버스 확인/);
   view.destroy();
 });
 
 test("지난 번호 확인 결과와 다른 목표 노선의 결과는 다시 읽지 않는다", () => {
-  const { view, now, step } = harness();
+  const { view, node, now, step } = harness();
   step(3001);
   assert.equal(view.getGuidance(), "버스를 찾고 있어요. 버스가 오는 쪽을 바라보세요.");
+  assert.equal(node("camera-title-text").textContent, " 버스 인식 중");
   view.setBus({ ocrCapturedAt: now() });
-  assert.match(view.getGuidance(), /^143번 버스 확인함/);
+  assert.match(view.getGuidance(), /^143번 버스 확인/);
   view.setRoute("271");
   assert.equal(view.getGuidance(), "버스를 찾고 있어요. 버스가 오는 쪽을 바라보세요.");
+  view.destroy();
+});
+
+test("GPS 도착과 카메라 확인은 화면 제목에서도 구분한다", () => {
+  const { view, node, now } = harness();
+  view.setBus({ ocrStatus: "searching", ocrCapturedAt: null }); view.show("arrived");
+  assert.equal(node("camera-title-text").textContent, " 버스 도착정보");
+  view.setBus({ ocrStatus: "confirmed", ocrCapturedAt: now(), ocrMessage: "143번 버스 확인." });
+  assert.equal(node("camera-title-text").textContent, " 버스 확인");
+  assert.equal(view.getScreen(), "arrived");
   view.destroy();
 });
 
@@ -91,7 +102,7 @@ test("정류장에서는 이전 장애물 경고를 읽지 않고 보행 복귀 
   const { view, now } = harness();
   view.render({ captured_at_ms: now(), walking: { event: { level: "danger", voice_action: "stop", voice_text: "멈추세요." } } });
   view.setObstacleDetection(false);
-  assert.match(view.getGuidance(), /^143번 버스 확인함/);
+  assert.match(view.getGuidance(), /^143번 버스 확인/);
   view.setObstacleDetection(true);
   assert.match(view.getGuidance(), /^멈추세요/);
   view.destroy();
@@ -102,7 +113,7 @@ test("다시 듣기는 만료된 긴급 경고 대신 현재 버스 안내를 �
   view.render({ captured_at_ms: now(), walking: { event: { level: "danger", voice_action: "stop", voice_text: "멈추세요." } } });
   assert.match(view.getGuidance(), /^멈추세요/);
   step(1500);
-  assert.match(view.getGuidance(), /^143번 버스 확인함/);
+  assert.match(view.getGuidance(), /^143번 버스 확인/);
   view.destroy();
 });
 

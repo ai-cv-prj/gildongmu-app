@@ -17,7 +17,7 @@
     let lastSuppressedOtherCaptureAt = -Infinity;
     let observationStartedAt = 0;
     let manualStationKey = null, gps = {}, ocr = {}, arrivalEntry = null;
-    let ocrPending = null, speakingArrival = null, speakingOcr = null;
+    let ocrPending = null, speakingArrival = null, speakingOcr = null, supersededArrival = null;
     const ocrAnnounced = new Set();
     const otherRouteAnnouncedAt = new Map();
     const emit = (type, fields = {}) => onEvent({ type, at_ms: now(), route, ...fields });
@@ -86,6 +86,7 @@
       lastSuppressedOtherCaptureAt = -Infinity;
       if (!preserveSelection) manualStationKey = null;
       arrivalEntry = null;
+      supersededArrival = null;
       ocrPending = null;
       gps = { status: "locating", message: "현재 위치와 주변 정류장을 확인하고 있습니다.",
         selected: null, candidates: [], lastUpdatedAt: null };
@@ -137,8 +138,6 @@
         metadata: { bus_route: route, station_key: entry.key, channel: "gps" },
         onStart: () => {
           if (!validGeneration(token)) return;
-          // Once heard, an interrupted API sentence must not restart automatically.
-          entry.vehicle.announcedPhase = Math.max(entry.vehicle.announcedPhase, entry.phase);
           emit("bus_arrival_speech_started", { text });
         },
         onComplete: () => {
@@ -169,8 +168,10 @@
         `${item.track_id ?? "unknown"}:${item.route_number}:confirmed`);
       if (!replay && (alreadyConfirmed || !item.isTarget && otherRecentlyAnnounced(item.route_number))) return false;
       const token = generation;
+      const previousSuperseded = supersededArrival;
+      if (item.isTarget && speakingArrival) supersededArrival = speakingArrival;
       // Only confirmed targets are spoken, once, with a short source-specific cue.
-      const speechText = item.isTarget ? `${item.route_number} 목표 버스 확인.`
+      const speechText = item.isTarget ? `${item.route_number}번 버스 확인.`
         : "다른 버스. 목표 버스를 계속 찾는 중.";
       speakingOcr = item;
       item.started = false;
@@ -184,10 +185,13 @@
         onStart: () => {
           if (!validGeneration(token) || speakingOcr !== item) return;
           item.started = true;
-          // Mark at actual start so expiry/interruption does not cause a repeat loop.
-          ocrAnnounced.add(item.key);
-          if (ocrAnnounced.size > 200) ocrAnnounced.delete(ocrAnnounced.values().next().value);
-          if (!item.isTarget) otherRouteAnnouncedAt.set(item.route_number, now());
+          // A target is only heard after completion. A brief interruption must
+          // not silence that same vehicle when fresh evidence returns.
+          if (!item.isTarget) {
+            ocrAnnounced.add(item.key);
+            if (ocrAnnounced.size > 200) ocrAnnounced.delete(ocrAnnounced.values().next().value);
+            otherRouteAnnouncedAt.set(item.route_number, now());
+          }
           emit("bus_ocr_speech_started", {
             text: speechText, captured_at_ms: item.capturedAt, track_id: item.track_id ?? null,
             voice_delay_ms: Math.max(0, now() - item.capturedAt),
@@ -199,12 +203,22 @@
           if (ocrAnnounced.size > 200) ocrAnnounced.delete(ocrAnnounced.values().next().value);
           if (!item.isTarget) otherRouteAnnouncedAt.set(item.route_number, now());
           if (otherRouteAnnouncedAt.size > 200) otherRouteAnnouncedAt.delete(otherRouteAnnouncedAt.keys().next().value);
+          // The completed camera confirmation replaces the interrupted ETA.
+          // Other interruptions leave the ETA eligible for a fresh retry.
+          if (item.isTarget && supersededArrival) {
+            supersededArrival.vehicle.announcedPhase = Math.max(
+              supersededArrival.vehicle.announcedPhase, supersededArrival.phase);
+            supersededArrival = null;
+          }
           if (speakingOcr === item) speakingOcr = null;
           emit("bus_ocr_speech_completed", { text: speechText });
         },
         onCancel: () => { if (speakingOcr === item) speakingOcr = null; },
       });
-      if (!accepted && speakingOcr === item) speakingOcr = null;
+      if (!accepted) {
+        if (speakingOcr === item) speakingOcr = null;
+        supersededArrival = previousSuperseded;
+      }
       return accepted;
     }
 
@@ -480,11 +494,14 @@
       const event = result.event || result;
       if (event.target_route && normalize(event.target_route) !== route) return;
       const preparing = ["loading", "idle"].includes(result.status);
-      const failed = event.errors?.length || ["error", "unavailable", "disabled"].includes(result.status);
+      const failed = ["error", "unavailable", "disabled"].includes(result.status);
+      // Per-vehicle region failures can coexist with a valid match on another
+      // vehicle. Only a whole-result failure invalidates all matches.
+      const hasErrors = failed || Boolean(event.errors?.length);
       const capturedAt = capturedAtMs == null ? NaN : Number(capturedAtMs);
       // Loading/missing-model failures can arrive before the worker has a source frame.
       if (!Number.isFinite(capturedAt)) {
-        if (preparing || failed) recognitionState(preparing ? "loading" : "error", recognitionMessage(result));
+        if (preparing || hasErrors) recognitionState(preparing ? "loading" : "error", recognitionMessage(result));
         return;
       }
       if (capturedAt < observationStartedAt
@@ -524,15 +541,15 @@
           && normalize(item.route_number) !== route)
         .sort((a, b) => (Number(b.token_score) || 0) - (Number(a.token_score) || 0));
       // Another route must not cut a target cue while that vehicle is still visible.
-      if (!matches.length && speakingOcr?.isTarget && freshCapture(ocr.capturedAt)
+      if (!failed && !matches.length && speakingOcr?.isTarget && freshCapture(ocr.capturedAt)
           && (!visibleTracks || visibleTracks.has(ocr.trackId))) return;
       const shown = matches[0] || others.find(item => !otherRecentlyAnnounced(normalize(item.route_number))
         && !ocrAnnounced.has(`${item.track_id}:${normalize(item.route_number)}:confirmed`)) || others[0];
       if (!shown) {
         // Keep recent evidence only while its vehicle remains in the current detections.
         if (!failed && ["candidate", "confirmed", "other"].includes(ocr.status) && freshCapture(ocr.capturedAt)) return;
-        ocr = { status: failed ? "error" : "searching", confirmed: false, routeNumber: null, capturedAt,
-          message: failed ? recognitionMessage(result)
+        ocr = { status: hasErrors ? "error" : "searching", confirmed: false, routeNumber: null, capturedAt,
+          message: hasErrors ? recognitionMessage(result)
             : `${route}번 버스 번호를 찾고 있습니다.` };
         ocrPending = null;
         clearSpeech("bus-ocr");
@@ -545,7 +562,7 @@
         && ocr.routeNumber === observedRoute && ocr.trackId === (shown.track_id ?? null)
         && freshCapture(ocr.capturedAt);
       const message = !isTarget ? `${observedRoute}번 버스, 다른 노선.`
-        : confirmed ? `${route} 목표 버스 확인.` : `${route}번 버스 인식 중.`;
+        : confirmed ? `${route}번 버스 확인.` : `${route}번 버스 인식 중.`;
       ocr = { status: !isTarget ? "other" : confirmed ? "confirmed" : "candidate",
         message, routeNumber: observedRoute, isTarget, confirmed, capturedAt,
         trackId: shown.track_id ?? null };
@@ -597,7 +614,7 @@
       active = false;
       paused = false;
       route = "";
-      arrivalEntry = ocrPending = null;
+      arrivalEntry = ocrPending = supersededArrival = null;
       ocrAnnounced.clear();
       otherRouteAnnouncedAt.clear();
       gps = { status: "idle", message: "", selected: null, candidates: [] };

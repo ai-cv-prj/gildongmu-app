@@ -152,6 +152,31 @@ assert.equal(completed, 0);
 runningClip.onEnd();
 assert.equal(completed, 1);
 assert.equal(playback.walkingPlaybackAction(), null);
+
+// Fresh evidence updates the pending player's deadline without replacing it.
+{
+  let clock = 0, callbacks, cancellations = 0;
+  const requests = [], extensions = [];
+  const pendingPlayer = {
+    speak(text, deadline, options) { requests.push({ text, deadline }); callbacks = options; return true; },
+    extendStartDeadline(deadline) { extensions.push(deadline); return true; },
+    cancel() { cancellations++; },
+  };
+  const pending = context.window.GAudioCoordinator.create({ player: pendingPlayer, now: () => clock });
+  const request = deadline => pending.request({ source: "bus-ocr", priority: pending.PRIORITY.busOcr,
+    text: "123번 버스 확인.", kind: "4:123:confirmed", dynamic: true, validUntil: deadline });
+  pending.start(); request(3000);
+  const initialCancellations = cancellations;
+  clock = 1000; request(4000); request(3500); request(4000);
+  assert.deepEqual(extensions, [4000]);
+  assert.equal(requests.length, 1);
+  assert.equal(cancellations, initialCancellations);
+  callbacks.onStart();
+  request(5000);
+  assert.deepEqual(extensions, [4000], "재생이 시작되면 준비 기한을 더 갱신하지 않는다");
+  callbacks.onEnd();
+  pending.stop();
+}
 playback.request({ source: "boarding", priority: 6, text: "버스 번호", validUntil: now + 1000,
   onCancel: () => interrupted++ });
 playback.request({ source: "walking", priority: 0, text: "멈추세요.", validUntil: now + 1000 });
