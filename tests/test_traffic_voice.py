@@ -16,7 +16,7 @@ import cv2
 import numpy as np
 
 from src.pipeline import process_video
-from src.traffic_voice import TrafficVoice
+from src.traffic_voice import MISSING_SECONDS, REPEAT_SECONDS, TrafficVoice
 from src.video_audio import ffmpeg_executable
 import subprocess
 
@@ -59,47 +59,54 @@ class TrafficVoiceTests(unittest.TestCase):
 
     # 짧은 후보와 대상 변경 확인
     def test_stability_and_target_change(self):
-        """짧은 후보는 침묵하고 다른 대상의 같은 색은 한 번 다시 읽는다."""
+        """짧은 후보는 침묵하고, 반복 간격 안에서는 대상이 바뀌어도 같은 색을 다시 읽지 않는다."""
         voice = TrafficVoice()
         start = .1
         self.observe(voice, "red", [start, start + .2])
         self.assertEqual(voice.events, [])
         voice.observe(signal("red", 1), 3, start + .4)
         self.observe(voice, "red", [start + .6, start + .8, start + 1], target=2, first_frame=4)
-        self.assertEqual([name for _, name in voice.events],
-                         ["red.mp3", "red.mp3"])
+        self.assertEqual([name for _, name in voice.events], ["red.mp3"])
 
     # 소실 이후 복구
     def test_missing_once_then_same_color_reannounced(self):
-        """확인된 신호가 2초 사라지면 한 번 알리고 복구된 색을 다시 읽는다."""
+        """확인된 신호가 설정 시간 사라지면 한 번 알리고 복구된 색을 바로 다시 읽는다."""
         voice = TrafficVoice()
         start = .1
         self.observe(voice, "red", [start, start + .2, start + .4])
-        for index, time_s in enumerate([start + 1, start + 2.4, start + 2.6, start + 2.8, start + 3]):
-            color = None if index < 2 else "red"
-            voice.observe(signal(color, None if color is None else 1), 4 + index, time_s)
+        lost = start + .4 + MISSING_SECONDS
+        times = [round(start + 1 + .5 * index, 2) for index in range(int((lost - start - 1) / .5) + 1)]
+        times = sorted(set(times + [round(lost, 2)]))
+        frame = 4
+        for time_s in times:
+            voice.observe(signal(None, None), frame, time_s)
+            frame += 1
+        for index in range(3):
+            voice.observe(signal("red", 1), frame + index, round(lost + .2 * (index + 1), 2))
         self.assertEqual([name for _, name in voice.events],
                          ["red.mp3", "missing.mp3", "red.mp3"])
 
     # 같은 색상 주기 재안내
     def test_same_color_repeats_every_interval_with_same_wording(self):
-        """초록 대기 안내는 5초마다 같은 문구로 낮은 우선순위 재안내를 기록한다."""
+        """초록 대기 안내는 반복 간격마다 같은 문구로 낮은 우선순위 재안내를 기록한다."""
         voice = TrafficVoice()
-        self.observe(voice, "green", [.1 + .25 * index for index in range(45)])
+        count = int((2 * REPEAT_SECONDS + 1) / .25) + 1
+        self.observe(voice, "green", [.1 + .25 * index for index in range(count)])
         self.assertEqual([event[1] for event in voice.events], ["green-initial-wait.mp3"] * 3)
         self.assertEqual([event[2:] for event in voice.events], [(), ("repeat",), ("repeat",)])
-        self.assertAlmostEqual(voice.events[1][0] - voice.events[0][0], 5)
-        self.assertAlmostEqual(voice.events[2][0] - voice.events[1][0], 5)
+        self.assertAlmostEqual(voice.events[1][0] - voice.events[0][0], REPEAT_SECONDS)
+        self.assertAlmostEqual(voice.events[2][0] - voice.events[1][0], REPEAT_SECONDS)
 
     # 전환 후 재안내 문구
     def test_repeat_after_change_reads_current_color_only(self):
         """전환 안내 뒤 같은 색상이 이어지면 전환 문구 대신 현재 색상만 다시 읽는다."""
         voice = TrafficVoice()
         self.observe(voice, "red", [.1, .3, .5])
-        self.observe(voice, "green", [.7 + .2 * index for index in range(30)], first_frame=4)
+        count = int((REPEAT_SECONDS + 1) / .2) + 1
+        self.observe(voice, "green", [.7 + .2 * index for index in range(count)], first_frame=4)
         self.assertEqual(voice.events[1][1], "green-changed.mp3")
         self.assertEqual(voice.events[2][1:], ("green.mp3", "repeat"))
-        self.assertGreaterEqual(voice.events[2][0] - voice.events[1][0], 5 - 1e-9)
+        self.assertGreaterEqual(voice.events[2][0] - voice.events[1][0], REPEAT_SECONDS - 1e-9)
 
     # 실제 파일의 영상 음성 저장
     def test_traffic_only_video_without_mask_has_no_audio(self):
