@@ -8,7 +8,8 @@
     const audio = window.GConfig.get().audio;
     // 서버를 재시작하기 전 이전 설정을 받은 경우에도 새 신호 규칙이 기본값으로 동작하게 한다.
     const limits = { stable_window_frames: 5, stable_window_ms: 1500, traffic_vote_min_confidence: 0.25,
-      traffic_red_change_stable_ms: 800,
+      traffic_red_change_stable_ms: 800, traffic_red_link_ms: 3000,
+      traffic_same_signal_max_dx: 0.25, traffic_same_signal_max_size_ratio: 2, traffic_gate_blip_ms: 1500,
       traffic_crossing_hold_ms: 5000, traffic_color_memory_ms: 5000, ...audio.guidance };
     let active = false, sessionId = null, mock = false;
     let startedAt = 0, lastFrame = null, lastCapture = null, lastValid = null;
@@ -20,6 +21,9 @@
     let waitingGreen = false;
     // 대상 추적이 잠깐 끊겨도 직전에 확정한 대상·색상을 기억해 전환과 다른 신호의 초록을 구분한다.
     let remembered = null;
+    // 직전에 확인한 빨간불이다. 추적 ID 교체나 짧은 횡단보도 근거 소실에도 지우지 않고,
+    // 같은 자리의 신호가 곧 초록으로 확인되면 같은 신호의 전환으로 안내하는 데 쓴다.
+    let redConfirmedAt = null, lastRedFrame = null;
     let hasConfirmedSignal = false;
     let trafficAllowed = false;
     let mode = "traffic";
@@ -31,14 +35,22 @@
     let retryText = null;
     // 횡단 중 파란 ROI의 횡단보도 근거가 처음 끊긴 시각이다. 다시 허용되면 지운다.
     let gateLostAt = null;
-    // 음성만 멈추고 신호 이력을 유지하기 시작한 시각과, 마지막 프레임의 횡단 상태다.
-    let heldAt = null, lastCrossing = false;
+    // 음성만 멈추고 신호 이력을 유지하기 시작한 시각이다.
+    let heldAt = null;
     // 이력 유지가 프레임 수신 중단("stall")으로 시작됐는지, 횡단보도 근거 소실("gate")로 시작됐는지다.
     let heldBy = null;
     let lastWalkingAction = null;
     let lastWalkingEvent = null;
 
     function update(text) { onChange({ active, text }); }
+    // 화면 가로 위치와 크기가 비슷하면 추적 ID가 달라도 같은 신호등으로 본다.
+    function nearBox(a, b) {
+      if (!Array.isArray(a) || !Array.isArray(b)) return false;
+      const ratio = (b[2] - b[0]) / (a[2] - a[0]);
+      return ratio > 0 && Math.abs((a[0] + a[2]) / 2 - (b[0] + b[2]) / 2) <= limits.traffic_same_signal_max_dx
+        && ratio <= limits.traffic_same_signal_max_size_ratio
+        && ratio >= 1 / limits.traffic_same_signal_max_size_ratio;
+    }
     function resetEvidence() { target = null; color = null; samples = []; candidate = null; retryText = null; }
     // 횡단보도 근거가 없으면 신호 음성과 이전 색상 기억을 해제한다.
     /** 다시 허용될 때 새 신호처럼 안정화하며 다른 출처의 음성은 유지한다. */
@@ -96,7 +108,8 @@
       lastAnnouncedColor = null;
       lastAnnouncedTarget = null;
       lastAnnouncedAt = repeatText = remembered = heldAt = heldBy = null;
-      waitingGreen = lastCrossing = false;
+      waitingGreen = false;
+      redConfirmedAt = lastRedFrame = null;
       resetEvidence();
       lastWalkingAction = null;
       lastWalkingEvent = null;
@@ -134,9 +147,9 @@
       }
       if (!trafficAllowed) return;
       if (lastCapture === null || now() - lastCapture >= limits.max_age_ms) {
-        // 오래된 관측으로는 음성만 멈춘다. 건너도 되는 초록불로 횡단 중이었다면
-        // 횡단보도 근거 소실과 같이 마지막 프레임부터 설정 시간까지 신호 이력을 유지한다.
-        if (lastCapture !== null && lastCrossing && repeatText === "초록불") holdTraffic(lastCapture, "stall");
+        // 오래된 관측으로는 음성만 멈춘다. 수신 중단은 횡단보도를 벗어났다는 근거가 아니므로,
+        // 건너도 되는 초록불을 안내한 뒤라면 횡단 판정과 관계없이 마지막 프레임부터 설정 시간까지 이력을 유지한다.
+        if (lastCapture !== null && repeatText === "초록불") holdTraffic(lastCapture, "stall");
         else suspendTraffic();
         return;
       }
@@ -189,7 +202,6 @@
         });
         return;
       }
-      lastCrossing = res.crossing_active === true;
       if (event.voice_gate?.allowed !== true) {
         gateLostAt ??= capturedAt;
         // 건너도 되는 초록불을 안내하고 건너는 중일 때만 유지한다.
@@ -197,8 +209,11 @@
         // 수신 중단으로 유지 중이면 서버가 공백 뒤 횡단 상태를 초기화하므로, 복귀 직후의
         // 일시적인 횡단·횡단보도 미인식만으로는 마지막 프레임부터 설정 시간 안의 이력을 지우지 않는다.
         const stallHold = heldBy === "stall" && capturedAt - heldAt < limits.traffic_crossing_hold_ms;
-        if (stallHold || (res.crossing_active === true && repeatText === "초록불"
-            && capturedAt - gateLostAt < limits.traffic_crossing_hold_ms)) holdTraffic(capturedAt);
+        // 건너도 되는 초록불 뒤에는 횡단 중이거나, 아직 횡단 판정 전이라도 아주 짧은 끊김이면 유지한다.
+        const crossableHold = repeatText === "초록불"
+          && (res.crossing_active === true || capturedAt - gateLostAt < limits.traffic_gate_blip_ms)
+          && capturedAt - gateLostAt < limits.traffic_crossing_hold_ms;
+        if (stallHold || crossableHold) holdTraffic(capturedAt);
         else suspendTraffic();
         update("횡단보도 접근을 확인하고 있습니다.");
         return;
@@ -219,6 +234,7 @@
         update("안내 대상의 신호를 확인하고 있습니다.");
       }
       const next = event.signal_state;
+      if (next === "red") lastRedFrame = { target, box: selected.xyxy, at: capturedAt };
       // 최근 관측 중 같은 색이 기준 개수 이상이면 순간 오인식이 섞여도 색상을 확정한다.
       samples.push({ color: next, at: capturedAt });
       // 오래된 관측은 빼되, 프레임이 느린 기기를 위해 최근 확정 개수만큼은 시간과 관계없이 남긴다.
@@ -239,6 +255,7 @@
       if (capturedAt - candidate.since
           < (fromGreen ? limits.traffic_red_change_stable_ms : limits.stable_ms)) return;
       remembered = { target, color: next, at: capturedAt };
+      if (next === "red") redConfirmedAt = capturedAt;
       if (color === next) {
         if (retryText !== null) {
           announceSignal(retryText, capturedAt);
@@ -252,9 +269,16 @@
         return;
       }
       // 같은 대상이 짧게 끊긴 뒤 다른 색으로 확인되면 전환으로 안내한다.
-      const previous = color ?? (memory?.target === target ? memory.color : null);
+      // 빨간불을 확인한 뒤 짧은 공백 안에 같은 ID나 같은 자리의 신호가 초록으로 확인되면,
+      // 그사이 추적 ID가 바뀌었거나 횡단보도 근거가 잠깐 끊겼어도 같은 신호의 전환으로 본다.
+      const redLinked = next === "green" && redConfirmedAt !== null && lastRedFrame !== null
+        && capturedAt - redConfirmedAt <= limits.traffic_color_memory_ms
+        && capturedAt - lastRedFrame.at <= limits.traffic_red_link_ms
+        && (lastRedFrame.target === target || nearBox(lastRedFrame.box, selected.xyxy));
+      const previous = color ?? (memory?.target === target ? memory.color : null) ?? (redLinked ? "red" : null);
       // 빨간불을 보던 중 다른 신호등의 초록을 잡으면 바뀌는 순간을 보지 못한 초록으로 본다.
-      const unverifiedGreen = next === "green" && memory?.target !== target && memory?.color === "red";
+      const unverifiedGreen = !redLinked && next === "green" && memory?.target !== target
+        && memory?.color === "red";
       color = next;
       const firstConfirmed = !hasConfirmedSignal;
       const recoveredAfterMissing = missingAnnounced;
@@ -271,6 +295,7 @@
       } else text = "빨간불";
       if (next === "red" || text === "초록불로 바뀜") waitingGreen = false;
       else if (text === "초록불, 다음 신호까지 대기") waitingGreen = true;
+      if (next === "green") redConfirmedAt = lastRedFrame = null;
       if (lastAnnouncedTarget === target && lastAnnouncedColor === next && !recoveredAfterMissing) {
         // 소실 안내가 없었던 짧은 끊김 뒤 같은 대상·색상은 반복하지 않는다.
         update(mock ? `모의 신호. ${text}` : text);
