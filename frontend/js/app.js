@@ -35,6 +35,8 @@
   } catch (_) { /* Storage may be disabled. */ }
   const view = GView.create({ onAction: action => act(action),
     onSubmitRoute: submitRoute, onSpeak: text => speak(text), onStationChange: key => journey?.selectStop(key),
+    onExplore: text => speak(text, "touch-explore"),
+    onCancelExplore: () => coordinator?.clear("touch-explore"),
     onRateChange: rate => { preferences.rate = player?.setRate(rate) ?? rate; savePreferences(); previewRate(); },
     onTextScaleChange: textScale => { preferences.textScale = textScale; savePreferences(); } });
   view.setSettings(preferences); view.show("welcome", { focus: false }); view.setBusy(true);
@@ -430,13 +432,14 @@
     }
     ratePreviewTimer = setTimeout(() => play(0), 220);
   }
-  function speak(text) {
+  function speak(text, source = "interface") {
     if (!ready || !text) return;
     cancelRatePreview();
+    coordinator.clear("touch-explore");
     coordinator.clear("interface");
-    player.recordingStream();
-    if (!running) coordinator.start();
-    coordinator.request({ source: "interface", priority: coordinator.PRIORITY.boarding, text,
+    if (!running || paused) coordinator.start();
+    player.unlock();
+    coordinator.request({ source, priority: coordinator.PRIORITY.boarding, text,
       dynamic: true, validUntil: performance.now() + 10000 });
   }
   const normalizeRoute = value => String(value || "").trim().replace(/\s+/g, "").replace(/번$/, "").toUpperCase();
@@ -936,6 +939,7 @@
     if (action === "back" && starting) return stopTest();
     if (action === "sample") return speak("길동무가 함께합니다. 선택한 속도로 안내해 드릴게요.");
     if (action === "speech-start") { boarding.dismissPrompt(); coordinator.stop(); return; }
+    if (action === "speech-explore") { if (!paused) coordinator.start(); return; }
     if (action === "speech-end") { if (!paused) coordinator.start(); return; }
     if (!running || starting || stopping) return;
     if (action === "record") return activeClip ? finishClip() : startClip();

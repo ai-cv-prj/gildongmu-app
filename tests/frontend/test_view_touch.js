@@ -5,7 +5,7 @@ const test = require("node:test");
 const { normalize } = require("../../frontend/js/route-keypad.js");
 
 function harness() {
-  let clock = 100000, speechCallbacks, keypadCallbacks, speechActive = false, speechStops = 0;
+  let clock = 100000, speechCallbacks, keypadCallbacks, exploreCallbacks, speechActive = false, speechSuspended = false, speechStops = 0;
   const nodes = new Map(), actions = [], submissions = [], spoken = [], focused = [], keypadOpens = [], keypadCloses = [];
   const keypadErrors = [];
   function node(id) {
@@ -54,6 +54,7 @@ function harness() {
   };
   const context = { Date: class extends Date { static now() { return clock; } }, document, window: {
     GildongmuFilm: { mount: () => ({ setVisible() {}, restart() {}, destroy() {} }) },
+    GTouchExplore: { create(callbacks) { exploreCallbacks = callbacks; return { reset() {}, destroy() {} }; } },
     GRouteKeypad: { normalize, create(callbacks) {
       keypadCallbacks = callbacks;
       return { setValue() {}, setError(message) { keypadErrors.push(message); }, open(value) { keypadOpens.push(value); callbacks.onOpenChange(true); },
@@ -62,14 +63,17 @@ function harness() {
     GSpeechInput: { create(callbacks) {
       speechCallbacks = callbacks;
       return { supported: true, isActive: () => speechActive,
-        start(mode) { speechActive = true; callbacks.onState(true, mode); return true; },
-        stop() { speechStops++; speechActive = false; callbacks.onState(false); }, destroy() {} };
+        start(mode) { speechActive = true; speechSuspended = false; callbacks.onState(true, mode); return true; },
+        suspend() { if (!speechActive || speechSuspended) return false;
+          speechSuspended = true; callbacks.onState(true, "input", true); return true; },
+        stop() { speechStops++; speechActive = false; speechSuspended = false; callbacks.onState(false); }, destroy() {} };
     } },
   } };
   vm.runInNewContext(fs.readFileSync("frontend/js/view.js", "utf8"), context);
   const view = context.window.GView.create({ onAction: action => actions.push(action), onSubmitRoute: route => submissions.push(route),
     onSpeak: message => spoken.push(message) });
   return { view, node, actions, submissions, spoken, focused, keypadOpens, keypadCloses, keypadErrors, speechCallbacks, keypadCallbacks,
+    explore: message => exploreCallbacks.onSpeak(message),
     speechStops: () => speechStops, click(id) { clock += 300; node(id).fire("click"); },
     submit() { clock += 300; node("route-form").fire("submit"); }, now: () => clock,
   };
@@ -152,6 +156,20 @@ test("음성 인식 실패 시 마이크를 종료하고 오류 안내를 재생
   assert.equal(h.node("route-error").textContent, "마이크 권한이 필요합니다.");
   assert.equal(h.spoken.at(-1), "마이크 권한이 필요합니다.");
   assert.deepEqual(h.submissions, []);
+  h.view.destroy();
+});
+
+test("음성 입력 중 버튼 안내는 인식을 멈추고 마이크 취소 기능을 유지한다", () => {
+  const h = harness(); h.view.show("input"); h.click("mic-button");
+  h.explore("음성 입력 취소. 빠르게 두 번 누르면 실행합니다.");
+  assert.equal(h.node("mic-label").textContent, "음성 입력 일시정지");
+  assert.equal(h.node("mic-button")["aria-label"], "음성 입력 취소");
+  assert.equal(h.actions.at(-1), "speech-explore");
+  assert.match(h.spoken.at(-1), /^음성 입력 취소/);
+  assert.deepEqual(h.submissions, []);
+  h.click("mic-button");
+  assert.equal(h.node("mic-label").textContent, "음성 입력");
+  assert.equal(h.actions.at(-1), "speech-end", "확정 터치는 음성 입력을 다시 시작하지 않고 취소한다");
   h.view.destroy();
 });
 

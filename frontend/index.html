@@ -29,7 +29,7 @@
   </svg>
   <main class="app" id="app">
     <section class="screen welcome-screen" data-panel="welcome" aria-labelledby="welcome-title">
-      <nav class="top-controls story-controls" aria-label="시작 화면 상단"><button class="touch-zone story-action top-primary" type="button" data-action="enter">길동무 시작하기</button></nav>
+      <nav class="top-controls story-controls" aria-label="시작 화면 상단"><button class="touch-zone story-action top-primary" type="button" data-action="enter" aria-describedby="touch-help">길동무 시작하기</button><p class="touch-help" id="touch-help">버튼을 한 번 누르면 음성 안내,<br>같은 버튼을 빠르게 두 번 누르면 실행합니다.</p></nav>
       <div class="story-stage">
         <h1 class="story-heading" id="welcome-title" tabindex="-1">카메라 안내로,<br>버스에 오르기까지.</h1>
         <div class="film-scene">
@@ -135,6 +135,7 @@
   <script defer src="/static/js/route-keypad.js"></script>
   <script defer src="/static/js/speech-input.js"></script>
   <script defer src="/static/js/film.js"></script>
+  <script defer src="/static/js/touch-explore.js"></script>
   <script defer src="/static/js/view.js"></script>
   <script defer src="/static/js/gps-motion.js"></script>
   <script defer src="/static/js/gps-stop-select.js"></script>

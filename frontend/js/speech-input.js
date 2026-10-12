@@ -13,17 +13,33 @@
 
   function create({ onState = () => {}, onResult = () => {}, onError = () => {} } = {}) {
     const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    let recognition = null, generation = 0, active = false;
-    function stop() {
-      generation++;
+    let recognition = null, generation = 0, active = false, suspended = false, activeMode = null;
+    function detachRecognition() {
       const previous = recognition;
       recognition = null;
-      active = false;
       if (previous) {
         previous.onstart = previous.onresult = previous.onerror = previous.onend = null;
         try { previous.abort(); } catch (_) { /* Already stopped. */ }
       }
-      onState(false);
+    }
+    function stop() {
+      generation++;
+      active = false;
+      suspended = false;
+      detachRecognition();
+      const mode = activeMode;
+      activeMode = null;
+      onState(false, mode, false);
+    }
+    // Keep the cancel button selected while spoken button labels cannot be
+    // mistaken for a route. Only an explicit new start opens the mic again.
+    function suspend() {
+      if (!active || suspended) return false;
+      generation++;
+      suspended = true;
+      detachRecognition();
+      onState(true, activeMode, true);
+      return true;
     }
     function start(mode = "input") {
       stop();
@@ -32,6 +48,7 @@
         return false;
       }
       const token = generation;
+      activeMode = mode;
       let handled = false;
       try {
         const next = new Recognition();
@@ -43,7 +60,7 @@
         next.onstart = () => {
           if (token !== generation) return;
           active = true;
-          onState(true, mode);
+          onState(true, mode, false);
         };
         next.onresult = event => {
           if (token !== generation || handled) return;
@@ -72,12 +89,15 @@
           if (token !== generation) return;
           recognition = null;
           active = false;
-          onState(false, mode);
+          suspended = false;
+          activeMode = null;
+          onState(false, mode, false);
           if (!handled) onError("음성 확인 불가. 다시 말하거나 직접 입력.");
         };
         next.start();
+        if (token !== generation) return active;
         active = true;
-        onState(true, mode);
+        onState(true, mode, false);
         return true;
       } catch (_) {
         stop();
@@ -85,7 +105,7 @@
         return false;
       }
     }
-    return { start, stop, supported: Boolean(Recognition), isActive: () => active, destroy: stop };
+    return { start, stop, suspend, supported: Boolean(Recognition), isActive: () => active, destroy: stop };
   }
   window.GSpeechInput = { create, normalizeRouteTranscript, confirmation };
 })();

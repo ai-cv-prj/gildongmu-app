@@ -15,13 +15,14 @@
   const updateText = (element, value) => { if (element.textContent !== value) element.textContent = value; };
 
   function create({ onAction = () => {}, onSubmitRoute = () => {}, onRateChange = () => {},
-    onTextScaleChange = () => {}, onStationChange = () => {}, onSpeak = () => {} } = {}) {
+    onTextScaleChange = () => {}, onStationChange = () => {}, onSpeak = () => {},
+    onExplore = onSpeak, onCancelExplore = () => {} } = {}) {
     let screen = "welcome", paused = false, busy = false;
     let obstacleDetection = true;
     let bus = {}, lastResult = null, currentCue = DEFAULT_CUES.walk;
     let micMode = null, destroyed = false, stationCount = 0, speechSession = false;
     let clipState = { active: false, count: 0, max: 3, available: false };
-    let keypad = null, lastActionAt = -Infinity;
+    let keypad = null, touchExplore = null, lastActionAt = -Infinity;
     const listeners = [];
     const cameraPanel = document.querySelector('[data-panel="camera"]');
     const film = window.GildongmuFilm.mount($("opening-film"), $("film-caption"), $("ending-film"), $("input-art"));
@@ -36,6 +37,10 @@
       } catch (error) { setStatus(error.message || "요청을 완료하지 못했어요."); }
     }
     function announce(message) { updateText($("announcer"), String(message || "")); }
+    function resetExploration() {
+      touchExplore?.reset();
+      invoke(onCancelExplore);
+    }
     function setStatus(message) {
       const value = String(message || "");
       updateText($("app-status"), value);
@@ -118,7 +123,10 @@
       $("record-button").disabled = busy || !clipState.available;
       $("app").setAttribute("aria-busy", String(busy));
     }
-    function setBusy(value) { busy = Boolean(value); updateControls(); }
+    function setBusy(value) {
+      if (busy !== Boolean(value)) resetExploration();
+      busy = Boolean(value); updateControls();
+    }
     function setLocalClips(records = []) {
       const panel = $("local-clips-panel"), select = $("local-clip-choice"), label = $("local-clips-status");
       if (!panel || !select || !label) return;
@@ -159,6 +167,7 @@
       updateControls();
     }
     function setPaused(value) {
+      if (paused !== Boolean(value)) resetExploration();
       paused = Boolean(value);
       if (paused) speech.stop();
       cameraPanel.classList.toggle("is-paused", paused);
@@ -175,7 +184,7 @@
       if (!SCREENS.has(next)) throw new Error(`지원하지 않는 화면: ${next}`);
       const previous = screen;
       screen = next;
-      if (previous !== next) { speech.stop(); keypad?.close({ restoreFocus: false }); }
+      if (previous !== next) { resetExploration(); speech.stop(); keypad?.close({ restoreFocus: false }); }
       const panelName = CAMERA_SCREENS.has(screen) ? "camera" : screen;
       all("[data-panel]").forEach(panel => { panel.hidden = panel.dataset.panel !== panelName; });
       $("app").dataset.screen = screen;
@@ -267,19 +276,22 @@
       invoke(onSubmitRoute, route);
     }
     const speech = window.GSpeechInput.create({
-      onState(active, mode) {
+      onState(active, mode, suspended = false) {
         if (active) micMode = mode;
         all("[data-mic]").forEach(button => {
           const selected = active && button.dataset.mic === micMode;
           button.setAttribute("aria-pressed", String(selected));
           button.setAttribute("aria-label", selected ? "음성 입력 취소" : "버스 번호 음성 입력");
         });
-        updateText($("mic-label"), active ? "듣는 중" : "음성 입력");
+        updateText($("mic-label"), suspended ? "음성 입력 일시정지" : active ? "듣는 중" : "음성 입력");
         if (active) {
-          updateText($("route-hint"), "음성 입력 중 · 탈 버스 번호를 말해 주세요.");
+          updateText($("route-hint"), suspended
+            ? "버튼 안내를 위해 음성 입력을 멈췄어요. 음성 입력을 취소한 뒤 다시 시작할 수 있어요."
+            : "음성 입력 중 · 탈 버스 번호를 말해 주세요.");
           announce($("route-hint").textContent);
         }
         if (!active && speechSession) {
+          updateText($("route-hint"), "버스 번호를 입력하거나 음성 입력을 눌러 말해 주세요.");
           speechSession = false;
           invoke(onAction, "speech-end");
         }
@@ -294,7 +306,16 @@
       onChange(value) { setRoute(value, { syncKeypad: false }); routeError(""); },
       onSubmit: submitRoute,
       onSpeak: speak,
-      onOpenChange(open) { if (open) speech.stop(); },
+      onOpenChange(open) { resetExploration(); if (open) speech.stop(); },
+    });
+    touchExplore = window.GTouchExplore.create({ root: document,
+      onSpeak(message) {
+        // Never let a spoken button label become a recognized route number.
+        // Keep the microphone's cancel action until the user explicitly exits.
+        if (speech.suspend()) invoke(onAction, "speech-explore");
+        invoke(onExplore, message);
+      },
+      onActivate: () => invoke(onCancelExplore),
     });
     if (!speech.supported) updateText($("route-hint"), "음성 입력을 지원하지 않는 브라우저입니다. 번호 입력 버튼을 눌러 주세요.");
     function takeAction() {
@@ -335,9 +356,13 @@
       speak(`글자 크기, ${button.textContent.trim()}`);
     }));
     bind($("bus-stations"), "change", event => invoke(onStationChange, event.target.value));
-    bind(document, "visibilitychange", () => { if (document.hidden) { speech.stop(); keypad.close({ restoreFocus: false }); } });
+    bind(document, "visibilitychange", () => {
+      if (document.hidden) { resetExploration(); speech.stop(); keypad.close({ restoreFocus: false }); }
+    });
     function destroy() {
       destroyed = true;
+      resetExploration();
+      touchExplore.destroy();
       speech.destroy();
       keypad.destroy();
       film.destroy();

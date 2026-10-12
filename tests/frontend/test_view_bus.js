@@ -19,6 +19,7 @@ function harness() {
   const context = { Date: { now: () => clock },
     window: {
       GildongmuFilm: { mount: () => ({ setVisible() {}, restart() {}, destroy() {} }) },
+      GTouchExplore: { create: () => ({ reset() {}, destroy() {} }) },
       GSpeechInput: { create: () => ({ stop() {}, destroy() {} }) },
       GRouteKeypad: { normalize: require("../../frontend/js/route-keypad.js").normalize,
         create: () => ({ setValue() {}, setError() {}, close() {}, destroy() {} }) },

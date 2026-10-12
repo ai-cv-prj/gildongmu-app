@@ -146,6 +146,9 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
   for (const name of ["audio_coordinator", "boarding"]) {
     vm.runInContext(fs.readFileSync(`frontend/js/${name}.js`, "utf8"), context);
   }
+  let audioCoordinator;
+  const createCoordinator = context.GAudioCoordinator.create;
+  context.GAudioCoordinator.create = options => (audioCoordinator = createCoordinator(options));
   await vm.runInContext(fs.readFileSync("frontend/js/app.js", "utf8"), context);
   const action = async value => { await handlers.onAction(value); await flush(); };
   const frameResult = frame => ({ session_id: "session-1", frame_id: frame.frameId,
@@ -167,6 +170,9 @@ async function harness({ stopFailsOnce = false, clipState = "ready", uploadRespo
       arrival: { first_arrival_state: state }, station: { station_name: "테스트 정류장" } }, candidates: [] }, ocr: {} }); await flush(); },
     preferences: () => ({ configured: configuredPreferences, saved: savedPreferences }),
     rate(value) { handlers.onRateChange(value); },
+    explore(text) { handlers.onExplore(text); },
+    cancelExplore() { handlers.onCancelExplore(); },
+    emergency() { audioCoordinator.request({ source: "walking", priority: 0, text: "멈추세요.", validUntil: now + 1500 }); },
     async previewTimer(delay) { const entry = [...timers].find(([, value]) => value.delay === delay);
       if (!entry) return false; const [id, value] = entry; timers.delete(id); value.callback(); await flush(); return true; },
     voice: () => voice,
@@ -817,6 +823,57 @@ test("음성 속도 선택은 두 번 미리 듣고 화면 이동이나 안내 �
   assert.equal(await app.previewTimer(220), false);
   await app.action("start"); await app.action("settings-home"); app.rate(1);
   assert.equal(await app.previewTimer(220), false, "이동 중에는 자동 안내를 속도 미리듣기로 끊지 않는다");
+  await app.end();
+});
+
+test("첫 터치 안내는 오디오를 열고 시작·카메라 실행 없이 버튼 이름만 읽는다", async () => {
+  const app = await harness();
+  app.explore("길동무 시작하기 버튼. 빠르게 두 번 누르면 실행합니다.");
+  assert.match(app.voice().text, /^길동무 시작하기 버튼/);
+  assert.deepEqual(app.audioLifecycle, ["unlock"]);
+  assert.equal(app.screen(), "welcome");
+  assert.equal(app.resources().sessionsStarted, 0);
+  assert.equal(app.resources().cameraActive, false);
+  app.cancelExplore();
+  assert.equal(app.voice(), null);
+  await app.action("enter"); app.rate(1.5);
+  app.explore("글자 크기 설정 버튼.");
+  assert.equal(await app.previewTimer(220), false, "뒤늦은 속도 예시가 버튼 안내를 덮지 않는다");
+});
+
+test("일시중지 중에도 재개 버튼을 읽되 촬영과 자동 안내는 재개하지 않는다", async () => {
+  const app = await harness();
+  await app.action("start"); await app.action("pause");
+  const starts = app.guides.map(guide => guide.starts);
+  app.explore("재개 버튼. 빠르게 두 번 누르면 실행합니다.");
+  assert.match(app.voice().text, /^재개 버튼/);
+  assert.equal(app.journeyPaused(), true);
+  assert.deepEqual(app.guides.map(guide => guide.starts), starts);
+  assert.equal(app.resources().sessionsStarted, 1);
+  app.cancelExplore();
+  assert.equal(app.voice(), null);
+  await app.end();
+});
+
+test("버튼 안내와 취소는 진행 중인 긴급 보행 음성을 끊지 않는다", async () => {
+  const app = await harness(); await app.action("start");
+  app.emergency();
+  app.explore("안내 종료 버튼.");
+  assert.equal(app.voice().text, "멈추세요.");
+  app.cancelExplore();
+  assert.equal(app.voice().text, "멈추세요.");
+  await app.end();
+});
+
+test("음성 인식을 멈춘 뒤에는 버튼 안내를 재생하고 취소 후 새 입력을 시작할 수 있다", async () => {
+  const app = await harness(); await app.action("start");
+  await app.action("speech-start");
+  await app.action("speech-explore");
+  app.explore("음성 입력 취소.");
+  assert.equal(app.voice().text, "음성 입력 취소.");
+  app.cancelExplore(); await app.action("speech-end");
+  await app.action("speech-start");
+  assert.equal(app.voice(), null);
   await app.end();
 });
 
