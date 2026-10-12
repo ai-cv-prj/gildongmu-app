@@ -17,6 +17,7 @@ from src.warning_groups import group_warnings
 from src.hazard_labels import LabelMemory
 from src.warning_summary import WarningSelector
 from src.camera_view import CameraViewGuard
+from src.hazard_confirmation import HazardConfirmation
 
 
 MOVING_TRAFFIC_CLASSES = frozenset({"car", "bus", "truck", "motorcycle", "bicycle"})
@@ -116,6 +117,7 @@ class RiskEngine:
         self.path_roi = SidewalkGuidedROI(self.config)
         self.surface = SurfaceRisk(self.config)
         self.labels = LabelMemory(self.config)
+        self.hazard_confirmation = HazardConfirmation(self.config)
         self.warning_selector = WarningSelector(self.config)
         self.camera_view = CameraViewGuard(self.config)
         self.reset()
@@ -131,6 +133,7 @@ class RiskEngine:
         self.path_roi.reset()
         self.surface.reset()
         self.labels.reset()
+        self.hazard_confirmation.reset()
         self.warning_selector.reset()
         self.camera_view.reset()
         self.last_trusted_danger_time = None
@@ -185,6 +188,7 @@ class RiskEngine:
             self.path_roi.reset()
             self.surface.reset()
             self.labels.reset()
+            self.hazard_confirmation.reset()
             self.warning_selector.reset()
             self.previous_tracker_status = self.tracker.status
             self.last_trusted_danger_time = None
@@ -197,6 +201,7 @@ class RiskEngine:
         tracking_reset = self.tracker.status == "failed" and self.previous_tracker_status != "failed"
         if tracking_reset:
             self.motion.reset()
+            self.hazard_confirmation.reset()
             self.epoch += 1
         self.previous_tracker_status = self.tracker.status
         acknowledged_stop_track = (
@@ -220,6 +225,8 @@ class RiskEngine:
         roi = self.path_roi.update(class_map if not view_unavailable else None,
                                    label_ids if not view_unavailable else None,
                                    shape, timestamp_s, timestamp_valid)
+        self.hazard_confirmation.update(tracked, timestamp_s,
+                                        timestamp_valid and not view_unavailable)
         results = []
         for detection in tracked:
             item = {**deepcopy(detection), "risk_level": "monitor", "assessment_quality": "limited",
@@ -382,6 +389,11 @@ class RiskEngine:
                             alert_level=None, assessment_quality=reason,
                             risk_suppressed_reason=reason)
                 item["reasons"].append(reason)
+            if item.get("confirmation_status") == "candidate":
+                item.update(untrusted_risk_level=item["risk_level"], risk_level=None,
+                            alert_level=None,
+                            risk_suppressed_reason="unconfirmed_detection")
+                item["reasons"].append("unconfirmed_detection")
             results.append(item)
         if view_unavailable:
             # Preserve detector output and raw geometric assessment for audit.
@@ -401,6 +413,10 @@ class RiskEngine:
         else:
             events = self.alerts.update(results, timestamp_s)
             self.labels.update(results, timestamp_s)
+            for item in results:
+                if item.get("confirmation_status") == "candidate":
+                    item.update(risk_level="monitor", alert_level="monitor",
+                                display_label="obstacle", label_status="provisional")
             surface, surface_events = self.surface.update(class_map,label_ids,shape,roi,timestamp_s,
                                                          timestamp_valid,camera_stable,results)
             events.extend(surface_events)
