@@ -477,15 +477,15 @@ class WalkingVoiceTests(unittest.TestCase):
     def test_direction_edge_walkability_uses_pink_roi_outer_regions(self):
         """화면 전체가 아니라 핑크 ROI 좌우 끝 영역에서만 초록 마스크를 계산한다."""
         class_map = np.zeros((100, 100), np.uint8)
-        class_map[65:75, 2:21] = 1
-        class_map[65:76, 79:98] = 1
+        class_map[60:70, 2:21] = 1
+        class_map[60:71, 79:98] = 1
         result = direction_edge_walkability(
             class_map, {"walkable": 1}, class_map.shape,
-            {"immediate_polygon": [[.02, .65], [.98, .65], [.98, 1], [.02, 1]]},
+            {"immediate_polygon": [[.02, .60], [.98, .60], [.98, 1], [.02, 1]]},
             .20, .30)
         self.assertEqual(result["status"], "available")
-        self.assertAlmostEqual(result["left"], 10 / 35)
-        self.assertAlmostEqual(result["right"], 11 / 35)
+        self.assertAlmostEqual(result["left"], 10 / 40)
+        self.assertAlmostEqual(result["right"], 11 / 40)
 
     # 목표 방향의 보행 마스크 부족 시 장애물 주의 음성 대체 확인
     def test_direction_voice_uses_blocked_clip_below_walkable_threshold(self):

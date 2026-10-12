@@ -42,7 +42,7 @@ class SharedProfileTests(unittest.TestCase):
 
     def test_g25u_close_tree_warns_even_with_clipped_top(self):
         cases = [((12.7,0,35.2,50.7), "caution"),
-                 ((0,.1,29.2,65.4), "caution")]
+                 ((0,.1,29.2,65.4), "danger")]
         for box, expected in cases:
             item=engine(None,config=CFG).update(FRAME,[detection(box,"tree_trunk",27)],0)["detections"][0]
             self.assertEqual(item["risk_level"],expected)
@@ -251,12 +251,12 @@ class SharedProfileTests(unittest.TestCase):
         self.assertEqual(shown.shape,FRAME.shape)
         self.assertEqual(int(FRAME.sum()),0)
 
-    def test_upward_view_places_roi_on_visible_ground_not_sky(self):
+    def test_upward_view_caps_path_roi_at_configured_broad_limit(self):
+        """지면 상단이 낮아도 경로 ROI는 설정된 넓은 상한을 유지한다."""
         e=engine(config=CFG)
         mask=np.zeros((100,100),np.uint8);mask[58:,:]=1
         r=e.update(FRAME,[],0,class_map=mask,label_ids=LABELS)
-        self.assertGreater(r["roi"]["path_top_y"],.55)
-        self.assertLessEqual(r["roi"]["path_top_y"],.65)
+        self.assertEqual(r["roi"]["path_top_y"],CFG["roi_top_max_y"])
         self.assertEqual(r["roi"]["immediate_polygon"],CFG["immediate_polygon"])
 
     def test_no_sidewalk_shows_uncertainty_without_filling_sky(self):
