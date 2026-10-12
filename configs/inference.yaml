@@ -126,8 +126,8 @@ crosswalk_safety:
   walking_direction_min_walkable_ratio: 0.30
   # 현재 위치만으로 좌우 회피 공간을 판단하고 미래 bbox 예측은 사용하지 않는다.
   walking_direction_prediction_enabled: false
-  # 오른쪽 회피는 하단 보행 마스크 연결 실패로 차단하지 않는다.
-  walking_direction_right_ground_check_enabled: false
+  # 좌우 회피는 하단 보행 마스크 연결 실패로 차단하지 않는다.
+  walking_direction_ground_check_enabled: false
 
 # 보행로 이탈 안내
 # 횡단보도 판정과 같은 가상 발 영역을 사용하되 상태와 음성은 따로 관리한다.

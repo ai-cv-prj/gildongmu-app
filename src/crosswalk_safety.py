@@ -66,7 +66,7 @@ DEFAULT_CROSSWALK_SAFETY = {
     "walking_direction_edge_width_ratio": 0.20,
     "walking_direction_min_walkable_ratio": 0.30,
     "walking_direction_prediction_enabled": False,
-    "walking_direction_right_ground_check_enabled": True,
+    "walking_direction_ground_check_enabled": True,
 }
 
 
@@ -88,7 +88,7 @@ def crosswalk_safety_config(value=None):
         "enabled", "non_green_obstacle_voice_suppression",
         "obstacle_surrounding_voice_suppression",
         "walking_direction_prediction_enabled",
-        "walking_direction_right_ground_check_enabled",
+        "walking_direction_ground_check_enabled",
     ):
         if not isinstance(cfg[key], bool):
             raise ValueError(f"crosswalk_safety.{key} must be boolean")

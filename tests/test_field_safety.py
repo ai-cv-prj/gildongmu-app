@@ -34,12 +34,12 @@ def test_missing_ground_does_not_delay_warning_or_allow_direction():
     assert WalkingVoice().observe(result, 100, 0)[0] == "전방 장애물"
 
 
-def test_only_right_ground_check_can_be_disabled():
-    """오른쪽 연결 실패만 무시하고 왼쪽 연결 실패는 계속 방향을 차단한다."""
+def test_ground_check_can_be_disabled_for_both_directions():
+    """공통 설정을 끄면 좌우 연결 실패가 방향 안내를 차단하지 않는다."""
     right_candidate = prediction(danger_item(1, [20, 20, 43, 75]))
     right_candidate["direction_ground"]["left"] = False
     right_candidate["direction_ground"]["right"] = False
-    right_candidate["direction_right_ground_check_enabled"] = False
+    right_candidate["direction_ground_check_enabled"] = False
     assert WalkingVoice().observe(right_candidate, 100, 0)[0] == "오른쪽 한 걸음"
     assert right_candidate["voice_diagnostics"]["direction_safety"]["right"] == {
         "allowed": True, "reason": "clear", "blockers": [],
@@ -48,10 +48,11 @@ def test_only_right_ground_check_can_be_disabled():
     left_candidate = prediction(danger_item(2, [57, 20, 80, 75]))
     left_candidate["direction_ground"]["left"] = False
     left_candidate["direction_ground"]["right"] = False
-    left_candidate["direction_right_ground_check_enabled"] = False
-    assert WalkingVoice().observe(left_candidate, 100, 0)[0] == "전방 장애물"
-    assert left_candidate["voice_diagnostics"]["direction_safety"]["left"]["reason"] == (
-        "ground_blocked")
+    left_candidate["direction_ground_check_enabled"] = False
+    assert WalkingVoice().observe(left_candidate, 100, 0)[0] == "왼쪽 한 걸음"
+    assert left_candidate["voice_diagnostics"]["direction_safety"]["left"] == {
+        "allowed": True, "reason": "clear", "blockers": [],
+    }
 
 
 def test_diagonal_nonwalkable_gap_cannot_join_disconnected_ground():

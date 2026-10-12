@@ -210,8 +210,8 @@ def apply_obstacle_voice_suppression(prediction, signal, class_map, label_ids, s
     prediction["direction_ground"] = direction_ground(class_map, label_ids, shape)
     prediction["direction_prediction_enabled"] = config.get(
         "walking_direction_prediction_enabled", False)
-    prediction["direction_right_ground_check_enabled"] = config.get(
-        "walking_direction_right_ground_check_enabled", True)
+    prediction["direction_ground_check_enabled"] = config.get(
+        "walking_direction_ground_check_enabled", True)
     for item in prediction.get("detections", []):
         item.pop("voice_suppressed_reason", None)
         item.pop("crosswalk_contact_fraction", None)
