@@ -19,22 +19,8 @@ MISSING_SECONDS = AUDIO_SETTINGS["guidance"]["missing_ms"] / 1000
 REPEAT_SECONDS = AUDIO_SETTINGS["guidance"]["traffic_repeat_ms"] / 1000
 CROSSING_HOLD_SECONDS = AUDIO_SETTINGS["guidance"]["traffic_crossing_hold_ms"] / 1000
 COLOR_MEMORY_SECONDS = AUDIO_SETTINGS["guidance"]["traffic_color_memory_ms"] / 1000
-RED_LINK_SECONDS = AUDIO_SETTINGS["guidance"]["traffic_red_link_ms"] / 1000
-SAME_SIGNAL_MAX_DX = AUDIO_SETTINGS["guidance"]["traffic_same_signal_max_dx"]
-SAME_SIGNAL_MAX_SIZE_RATIO = AUDIO_SETTINGS["guidance"]["traffic_same_signal_max_size_ratio"]
-GATE_BLIP_SECONDS = AUDIO_SETTINGS["guidance"]["traffic_gate_blip_ms"] / 1000
 # 전환 안내 후 같은 색상을 다시 읽을 때는 현재 색상만 안내한다.
 REPEAT_CLIPS = {"green-changed.mp3": "green.mp3", "red-changed.mp3": "red.mp3"}
-
-
-# 같은 신호등 판단
-def near_box(a, b):
-    """화면 가로 위치와 크기가 비슷하면 추적 ID가 달라도 같은 신호등으로 본다."""
-    if not isinstance(a, (list, tuple)) or not isinstance(b, (list, tuple)) or a[2] <= a[0]:
-        return False
-    ratio = (b[2] - b[0]) / (a[2] - a[0])
-    return (ratio > 0 and abs((a[0] + a[2]) / 2 - (b[0] + b[2]) / 2) <= SAME_SIGNAL_MAX_DX
-            and 1 / SAME_SIGNAL_MAX_SIZE_RATIO <= ratio <= SAME_SIGNAL_MAX_SIZE_RATIO)
 
 
 class TrafficVoice:
@@ -50,10 +36,6 @@ class TrafficVoice:
         self.samples = []
         # 대상 추적이 잠깐 끊겨도 직전에 확정한 대상·색상을 기억해 전환과 다른 신호의 초록을 구분한다.
         self.remembered = None
-        # 직전에 확인한 빨간불이다. 추적 ID 교체나 짧은 횡단보도 근거 소실에도 지우지 않고,
-        # 같은 자리의 신호가 곧 초록으로 확인되면 같은 신호의 전환으로 안내하는 데 쓴다.
-        self.red_confirmed_time = None
-        self.last_red_frame = None
         # 최근 다수결로 정한 후보 색과 이어진 시각이다. 관측 창 크기와 별도로 안정 시간을 잰다.
         self.candidate = None
         # 바뀌는 순간을 보지 못한 초록을 대기 안내했다. 빨강이나 초록 전환을 확인하기 전까지 유지한다.
@@ -127,11 +109,8 @@ class TrafficVoice:
                 self.gate_lost_time = time_s
             # 건너도 되는 초록불을 안내하고 건너는 중일 때만 유지한다.
             # 빨간불이나 대기 안내 뒤에는 기존처럼 새로 확인해 대기 안내를 이어 간다.
-            # 아직 횡단 판정 전이라도 아주 짧은 끊김이면 건너도 되는 초록불 기억을 유지한다.
-            lost_s = time_s - self.gate_lost_time
-            if (self.repeat_clip == "green.mp3"
-                    and (crossing_active or lost_s < GATE_BLIP_SECONDS - 1e-9)
-                    and lost_s < CROSSING_HOLD_SECONDS - 1e-9):
+            if (crossing_active and self.repeat_clip == "green.mp3"
+                    and time_s - self.gate_lost_time < CROSSING_HOLD_SECONDS - 1e-9):
                 self._hold(time_s)
             else:
                 self._suspend(time_s)
@@ -167,8 +146,6 @@ class TrafficVoice:
                     and selected["confidence"] < VOTE_MIN_CONFIDENCE)):
             return
         self.last_valid = time_s
-        if next_color == "red":
-            self.last_red_frame = (target, selected.get("xyxy"), time_s)
         if self.target != target:
             self._reset_evidence()
             self.target = target
@@ -197,8 +174,6 @@ class TrafficVoice:
         if time_s - self.candidate["since"] < required - 1e-9:
             return
         self.remembered = (target, next_color, time_s)
-        if next_color == "red":
-            self.red_confirmed_time = time_s
         if self.color == next_color:
             self._repeat(time_s)
             return
@@ -207,18 +182,8 @@ class TrafficVoice:
         previous = self.color
         if previous is None and memory is not None and memory[0] == target:
             previous = memory[1]
-        # 빨간불을 확인한 뒤 짧은 공백 안에 같은 ID나 같은 자리의 신호가 초록으로 확인되면,
-        # 그사이 추적 ID가 바뀌었거나 횡단보도 근거가 잠깐 끊겼어도 같은 신호의 전환으로 본다.
-        red_linked = (next_color == "green" and self.red_confirmed_time is not None
-                      and self.last_red_frame is not None
-                      and time_s - self.red_confirmed_time <= COLOR_MEMORY_SECONDS + 1e-9
-                      and time_s - self.last_red_frame[2] <= RED_LINK_SECONDS + 1e-9
-                      and (self.last_red_frame[0] == target
-                           or near_box(self.last_red_frame[1], selected.get("xyxy"))))
-        if previous is None and red_linked:
-            previous = "red"
         # 빨간불을 보던 중 다른 신호등의 초록을 잡으면 바뀌는 순간을 보지 못한 초록으로 본다.
-        unverified_green = (not red_linked and next_color == "green" and memory is not None
+        unverified_green = (next_color == "green" and memory is not None
                             and memory[0] != target and memory[1] == "red")
         self.color = next_color
         first = not self.confirmed
@@ -237,8 +202,6 @@ class TrafficVoice:
             self.waiting_green = False
         elif clip == "green-initial-wait.mp3":
             self.waiting_green = True
-        if next_color == "green":
-            self.red_confirmed_time = self.last_red_frame = None
         if self.last_announced_target == target and self.last_announced_color == next_color and not recovered:
             return
         self.last_announced_target = target
