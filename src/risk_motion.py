@@ -6,7 +6,6 @@ import numpy as np
 from src.risk_geometry import overlap
 
 
-# RANSAC 카메라 변환 신뢰 조건 확인
 def camera_motion_inliers_valid(inliers, cfg):
     """일치점 비율과 실제 개수가 모두 설정 기준 이상인지 반환한다."""
     if inliers is None or not inliers.size:
@@ -28,7 +27,6 @@ class CameraMotionGuard:
         self.last_result = None
         self.last_transform_norm = None
 
-    # 인접 프레임의 카메라 변환 측정
     def _measure(self, frame):
         """변환이 안정적이면 참, 임계값 초과면 거짓, 계산할 수 없으면 None을 반환한다."""
         h, w = frame.shape[:2]
@@ -65,7 +63,6 @@ class CameraMotionGuard:
             self.last_transform_norm = (normalized @ pixels @ basis)[:2]
         return stable
 
-    # 카메라 안정 상태 갱신
     def update(self, frame, timestamp):
         """계산 불가를 잠시 유예하되 실제 임계값 초과는 즉시 불안정으로 반환한다."""
         self.last_transform_norm = None
@@ -94,13 +91,11 @@ class CameraMotionGuard:
 class BackgroundStationarityGuard:
     """Track middle/lower background flow and confirm a nearly still camera over time."""
 
-    # 배경 정지 판정기 초기화
     def __init__(self, cfg):
         """정지 시간과 배경 움직임 허용치를 저장하고 프레임 이력을 초기화한다."""
         self.cfg = cfg
         self.reset()
 
-    # 영상별 정지 판정 상태 초기화
     def reset(self):
         """이전 영상과 정지 후보 시간을 제거한다."""
         self.previous = None
@@ -110,7 +105,6 @@ class BackgroundStationarityGuard:
         self.moving_since = None
         self.status = "uncertain"
 
-    # 동적 객체를 제외한 중·하단 배경 마스크 생성
     def _background_mask(self, shape, boxes):
         """상단과 화면 끝, 검출 객체를 제외한 광학 흐름 탐색 마스크를 반환한다."""
         height, width = shape
@@ -131,7 +125,6 @@ class BackgroundStationarityGuard:
                 cv2.rectangle(mask, (x1, y1), (x2, y2), 0, -1)
         return mask
 
-    # 인접 프레임의 배경 이동량 측정
     def _measure(self, frame, detections, elapsed_s):
         """동적 객체를 제외한 중·하단 특징점의 초당 이동량과 확대율을 계산한다."""
         height, width = frame.shape[:2]
@@ -194,7 +187,6 @@ class BackgroundStationarityGuard:
             "lower_point_count": lower_count,
         }
 
-    # 카메라 배경 정지 상태 갱신
     def update(self, frame, detections, timestamp, timestamp_valid=True):
         """설정된 시간 동안 연속 정지를 확인하고 짧은 흔들림에는 상태를 유지한다."""
         elapsed_s = None if self.previous_time is None else timestamp - self.previous_time

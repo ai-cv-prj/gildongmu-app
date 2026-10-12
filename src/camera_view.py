@@ -1,7 +1,4 @@
-"""
-file_path: src/camera_view.py
-
-Conservative, image-only camera-view quality gate for risk presentation.
+"""Conservative, image-only camera-view quality gate for risk presentation.
 
 A low-detail frame alone is not enough to invalidate a forward view. Ground-like
 appearance requires either an implausibly large detector box or sustained loss
@@ -12,13 +9,11 @@ import numpy as np
 
 
 class CameraViewGuard:
-    # 촬영 상태 판정기 초기화
     def __init__(self, cfg):
         """위험 설정을 받아 촬영 상태 판정기를 초기화한다."""
         self.cfg = cfg
         self.reset()
 
-    # 촬영 상태 기록 초기화
     def reset(self):
         """이전 촬영 상태와 복구 대기 시간을 지운다."""
         self.status = "clear"
@@ -26,7 +21,6 @@ class CameraViewGuard:
         self.starts = {}
         self.recovery_since = None
 
-    # 상태 후보 지속 시간 계산
     def _duration(self, key, present, timestamp):
         """상태 후보가 이어진 시간을 초 단위로 반환한다."""
         if not present:
@@ -36,7 +30,6 @@ class CameraViewGuard:
         return max(0.0, timestamp - self.starts[key])
 
     @staticmethod
-    # 화면 대부분을 가리는 검출 박스 확인
     def _large_clipped_box(detections, shape):
         """프레임을 크게 가리는 검출 박스가 있는지 확인한다."""
         h, w = shape[:2]
@@ -52,7 +45,6 @@ class CameraViewGuard:
                 return True
         return False
 
-    # 촬영 상태 갱신
     def update(self, frame, detections, class_map, label_ids, timestamp, camera_stable):
         """원본 프레임과 보행 마스크로 촬영 상태를 갱신한다."""
         h, w = frame.shape[:2]

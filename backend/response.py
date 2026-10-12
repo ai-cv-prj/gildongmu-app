@@ -1,8 +1,4 @@
-"""
-file_path: backend/response.py
-
-추론 결과를 휴대폰 오버레이와 음성 안내에 필요한 응답으로 변환한다.
-"""
+"""추론 결과를 휴대폰 오버레이와 음성 안내에 필요한 응답으로 변환한다."""
 
 import base64
 
@@ -10,7 +6,6 @@ import cv2
 import numpy as np
 
 
-# 영상 좌표의 객체 박스를 화면 비율 좌표로 변환
 def normalize_detections(items, width, height):
     """원본 픽셀 좌표의 객체 목록을 0~1 화면 좌표로 바꾼다."""
     normalized = []
@@ -30,7 +25,6 @@ def normalize_detections(items, width, height):
     return normalized
 
 
-# 모바일 화면에 합성할 분할 마스크 압축
 def encode_mask(class_map, label_ids, width=320, include_walkable=True):
     """보행 안내 중에만 보행가능영역을, 항상 횡단보도를 반투명 PNG로 인코딩한다."""
     height, original_width = class_map.shape
@@ -48,7 +42,6 @@ def encode_mask(class_map, label_ids, width=320, include_walkable=True):
     return base64.b64encode(png.tobytes()).decode("ascii")
 
 
-# 브라우저 안내 정책이 읽을 단일 프레임 응답 작성
 def make_response(session_id, frame_id, captured_at_ms, frame, risk, signal, crosswalk,
                   walking_surface, class_map, label_ids, inference_ms):
     """보행·신호·횡단보도 안전 결과와 같은 프레임의 마스크를 포함한다."""

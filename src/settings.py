@@ -1,7 +1,4 @@
-"""
-file_path: src/settings.py
-
-경로·앱·음성 YAML을 읽고 실행 전에 설정 형식과 범위를 검증한다.
+"""경로·앱·음성 YAML을 읽고 실행 전에 설정 형식과 범위를 검증한다.
 모델을 불러오지 않으므로 서버 실행 스크립트에서도 사용할 수 있다.
 """
 
@@ -20,13 +17,11 @@ DEFAULT_APP_CONFIG = PROJECT_DIR / "configs/app.yaml"
 DEFAULT_AUDIO_CONFIG = PROJECT_DIR / "configs/audio.yaml"
 
 
-# 프로젝트 기준 경로 해석
 def resolve_path(value):
     """상대 경로와 홈 경로를 프로젝트 루트 기준 절대 경로로 변환한다."""
     return (PROJECT_DIR / Path(value).expanduser()).resolve()
 
 
-# YAML 문서 읽기
 def read_yaml(config_path):
     """최상위가 매핑인 YAML 문서를 읽고 잘못된 형식은 파일명과 함께 알린다."""
     path = resolve_path(config_path)
@@ -37,7 +32,6 @@ def read_yaml(config_path):
     return config
 
 
-# 필수 설정 묶음 확인
 def section(config, key):
     """누락되거나 매핑이 아닌 설정 묶음을 거부한다."""
     value = config.get(key)
@@ -46,7 +40,6 @@ def section(config, key):
     return value
 
 
-# 숫자 설정 검증
 def number(config, key, minimum, maximum, integer=False):
     """불리언·비유한 수·허용 범위 밖의 숫자를 설정명과 함께 거부한다."""
     value = config.get(key)
@@ -57,7 +50,6 @@ def number(config, key, minimum, maximum, integer=False):
     return value
 
 
-# 경로 설정 읽기
 def load_paths(config_path=DEFAULT_PATHS_CONFIG):
     """필수 경로의 빈 값과 형식을 확인하고 원래 경로 문자열을 반환한다."""
     config = read_yaml(config_path)
@@ -69,7 +61,6 @@ def load_paths(config_path=DEFAULT_PATHS_CONFIG):
     return config
 
 
-# 앱 설정 읽기
 def load_app_config(config_path=DEFAULT_APP_CONFIG):
     """카메라·녹화·업로드 범위와 세션 시간대를 검증한다."""
     config = read_yaml(config_path)
@@ -121,7 +112,6 @@ def load_app_config(config_path=DEFAULT_APP_CONFIG):
     return config
 
 
-# 음성 설정 읽기
 def load_audio_settings(config_path=DEFAULT_AUDIO_CONFIG):
     """음성 합성과 재생·관측 시간의 단위와 범위를 확인한다."""
     audio = section(read_yaml(config_path), "audio")
@@ -175,7 +165,6 @@ def load_audio_settings(config_path=DEFAULT_AUDIO_CONFIG):
     return audio
 
 
-# 브라우저 공개 설정 만들기
 def browser_settings(app, audio):
     """화면에 필요한 허용 항목만 복사하고 서버 경로와 주소는 제외한다."""
     return deepcopy({
@@ -195,7 +184,6 @@ def browser_settings(app, audio):
     })
 
 
-# 실행 스크립트의 서버 주소 해석
 def server_address(config_path=DEFAULT_APP_CONFIG, environ=None):
     """YAML 기본값에 APP_HOST·APP_PORT 환경변수를 적용하고 포트를 검증한다."""
     server = load_app_config(config_path)["server"].copy()

@@ -87,7 +87,7 @@ def create_app(settings=None):
     archive = Archive(settings.storage_dir)
     app = FastAPI(title="길동무 팀 결과 보관함", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.archive = archive
-    # A single publication stream keeps bounded memory/disk pressure across four uploaders.
+    # Serialize concurrent uploads to bound memory and disk usage.
     upload_lock = asyncio.Lock()
     basic = HTTPBasic(auto_error=False)
     bearer = HTTPBearer(auto_error=False)

@@ -1,7 +1,4 @@
-"""
-file_path: src/walking_surface_visualization.py
-
-보행로 이탈 판정에 사용하는 가상 발 ROI와 현재 상태를 결과 영상에 표시한다.
+"""보행로 이탈 판정에 사용하는 가상 발 ROI와 현재 상태를 결과 영상에 표시한다.
 녹색 ROI 테두리와 오른쪽 위 상태 배지를 실시간 화면 구성과 맞춘다.
 """
 
@@ -11,7 +8,6 @@ import cv2
 FOOT_ROI_COLOR = (80, 230, 90)
 
 
-# 보행로 판정 오버레이
 def draw_walking_surface(frame, event):
     """가상 발의 녹색 ROI 테두리와 보행로 상태 배지를 그린다."""
     result = frame.copy()

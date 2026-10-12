@@ -1,17 +1,4 @@
-"""
-file_path: scripts/run_bus_video_inference.py
-
-녹화된 MP4·WebM 영상에 실시간 버스 번호 인식 파이프라인을 적용한다.
-실시간 화면과 같은 버스 박스·번호 카드 오버레이와 프레임별 JSONL을 저장한다.
-
-[영상 테스트 실행]
-# sample1 폴더에 있는 모든 MP4·WebM을 143번 버스 기준으로 처리
-python -m scripts.run_bus_video_inference --sample-dir data/samples/input/sample1 --target-route 143
-
-[영상 테스트 결과물]
-data/samples/output/샘플폴더명/에 result_bus_원본파일명.mp4를 저장한다.
-샘플폴더명/jsonl/에 result_bus_원본파일명.bus.jsonl을 저장한다.
-"""
+"""로컬 영상에서 버스 노선 번호를 인식하고 분석 영상과 JSONL 기록을 저장한다."""
 from __future__ import annotations
 
 import argparse
@@ -45,7 +32,6 @@ FONT_CANDIDATES = (
 )
 
 
-# 버스 JSONL 경로 계산
 def bus_log_path(video_output: Path) -> Path:
     """
     결과 MP4와 같은 폴더의 jsonl 하위에 버스 인식 로그 경로를 만든다.
@@ -53,7 +39,6 @@ def bus_log_path(video_output: Path) -> Path:
     return video_output.parent / "jsonl" / f"{video_output.stem}.bus.jsonl"
 
 
-# 기존 결과를 보존할 출력 경로 선택
 def next_available_output(output_path: Path, reserved: set[Path]) -> Path:
     """
     같은 이름의 영상이나 버스 JSONL이 있으면 번호를 올려 새 출력 경로를 선택한다.
@@ -67,7 +52,6 @@ def next_available_output(output_path: Path, reserved: set[Path]) -> Path:
         number += 1
 
 
-# 한글 표시용 글꼴 선택
 def resolve_font_path(value: Path | None) -> Path:
     """
     사용자가 지정한 글꼴이나 실행 환경에서 찾은 한글 글꼴을 반환한다.
@@ -83,7 +67,6 @@ def resolve_font_path(value: Path | None) -> Path:
     raise FileNotFoundError("한글 오버레이 글꼴이 없습니다. --font-path로 TTF/TTC를 지정하세요.")
 
 
-# 현재 프레임에서 표시할 번호 근거 선택
 def select_evidence(event: dict, target_route: str) -> dict | None:
     """
     실시간 오버레이와 같은 우선순위로 목표 번호와 다른 노선의 표시 근거를 고른다.
@@ -211,7 +194,6 @@ def draw_bus_overlay(frame, result: dict, target_route: str, age_ms: float,
     return cv2.cvtColor(np.asarray(rendered), cv2.COLOR_RGB2BGR)
 
 
-# 입력 영상 타이밍 검사
 def inspect_video_timing(video_path: Path) -> tuple[int, float, float]:
     """
     모든 프레임의 원본 PTS를 읽어 프레임 수, 시작 PTS, 실제 길이 기준 FPS를 계산한다.
@@ -247,7 +229,6 @@ def inspect_video_timing(video_path: Path) -> tuple[int, float, float]:
     return len(timestamps), timestamps[0], len(timestamps) * 1000.0 / duration_ms
 
 
-# 원본 오디오를 결과 영상에 결합
 def mux_source_audio(video_path: Path, rendered_path: Path, output_path: Path) -> None:
     """
     원본 영상에 오디오가 있으면 재생 길이를 유지해 오버레이 영상에 다시 결합한다.
@@ -372,7 +353,6 @@ def process_video(video_path: Path, output_path: Path, pipeline: BusPipeline,
             log_temporary.unlink(missing_ok=True)
 
 
-# 명령행 입력과 출력 경로 준비
 def main() -> None:
     """
     run_video_inference.py와 같은 입력·출력 옵션으로 버스 영상 추론을 실행한다.

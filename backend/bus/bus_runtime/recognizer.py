@@ -1,5 +1,4 @@
-# 파일명: core/bus_route/recognizer.py
-# 설명: PARSeq 모델 로딩, 번호 이미지 전처리, 추론을 담당하는 파일.
+"""PARSeq 모델 로딩, 버스 번호 이미지 전처리와 문자 인식."""
 
 from dataclasses import dataclass
 import hashlib
@@ -38,7 +37,7 @@ class PARSeqRecognizer:
                                     source="local", trust_repo=True)
         self.model.model.load_state_dict(torch.load(self.weights_path, map_location="cpu", weights_only=True))
         self.model = self.model.eval().to(self.device)
-        # Torch Hub가 내려받은 공식 저장소의 전처리를 사용한다.
+        # 로컬에 준비한 공식 PARSeq 소스의 전처리를 사용한다.
         from strhub.data.module import SceneTextDataModule
 
         self.transform = SceneTextDataModule.get_transform(self.model.hparams.img_size)

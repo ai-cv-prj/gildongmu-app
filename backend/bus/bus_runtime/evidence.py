@@ -1,7 +1,4 @@
-"""B operating route-display evidence policy, ported from scripts/infer_target_video.py.
-
-Source behavior is preserved; CRAFT fallback is disabled by the app runtime.
-"""
+"""Filter route-display OCR evidence; the app runtime disables CRAFT fallback."""
 from dataclasses import asdict
 import math
 import re

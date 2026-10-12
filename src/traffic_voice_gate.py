@@ -1,7 +1,4 @@
-"""
-file_path: src/traffic_voice_gate.py
-
-파란 예상 경로 ROI 안의 횡단보도 마스크 비율로 신호 음성 허용 여부를 계산한다.
+"""파란 예상 경로 ROI 안의 횡단보도 마스크 비율로 신호 음성 허용 여부를 계산한다.
 실시간과 저장 영상이 같은 원본 프레임의 ROI·분할 결과를 사용한다.
 """
 
@@ -14,7 +11,6 @@ from src.settings import load_audio_settings
 MIN_CROSSWALK_FRACTION = load_audio_settings()["guidance"]["traffic_crosswalk_roi_min_fraction"]
 
 
-# 파란 ROI의 횡단보도 비율로 신호 음성 허용 여부 계산
 def traffic_voice_gate(class_map, label_ids, shape, roi):
     """파란 ROI의 합집합에서 횡단보도 픽셀 비율을 구하고 근거가 없으면 음성을 막는다."""
     result = {"allowed": False, "crosswalk_fraction": None,

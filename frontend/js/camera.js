@@ -1,6 +1,4 @@
 /**
- * file_path: frontend/js/camera.js
- *
  * 후면 카메라에서 전송용 JPEG를 만들고 가능하면 Worker로 인코딩한다.
  */
 window.GCamera = (() => {
@@ -16,7 +14,6 @@ window.GCamera = (() => {
   let cancelVideoReady = null;
   let exposure = null, onExposureChange = null;
 
-  // 인코더 종료 및 대기 요청 해제
   /** Worker를 종료하고 진행 중인 캡처가 영원히 기다리지 않도록 한다. */
   function closeEncoder(error) {
     encoder?.terminate();
@@ -26,7 +23,6 @@ window.GCamera = (() => {
     if (pending) { clearTimeout(pending.timer); pending.reject(error); }
   }
 
-  // 캡처 작업용 Worker 준비
   /** 필요한 API가 없거나 Worker가 실패한 경우 기존 canvas 경로를 사용한다. */
   function getEncoder() {
     if (encoderFailed || !window.Worker || !window.OffscreenCanvas
@@ -55,7 +51,6 @@ window.GCamera = (() => {
     }
   }
 
-  // VideoFrame/ImageBitmap 소유권을 Worker에 넘겨 JPEG 생성
   /** 대기열 없이 한 장만 처리하고 2초 내 완료되지 않으면 기존 경로로 전환한다. */
   function encodeFrame(worker, bitmap, width, height, quality) {
     return new Promise((resolve, reject) => {
@@ -70,7 +65,6 @@ window.GCamera = (() => {
     });
   }
 
-  // 후면 카메라 및 인코더 준비
   /** 카메라 권한을 받고 영상이 준비되면 Worker 로딩도 시작한다. */
   async function start() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -128,11 +122,10 @@ window.GCamera = (() => {
         onEnded?.();
       },
     });
-    getEncoder(); // 테스트 시작 전에 Worker 로딩을 시작한다.
+    getEncoder(); // 첫 프레임 캡처 전에 Worker 로딩을 시작한다.
     return { width: video.videoWidth, height: video.videoHeight, label: track.label };
   }
 
-  // 카메라와 인코더 종료
   /** 진행 중인 캡처를 무효화하고 카메라 트랙과 Worker 자원을 해제한다. */
   function stop({ keepExposureStatus = false } = {}) {
     cameraVersion += 1;
@@ -152,7 +145,6 @@ window.GCamera = (() => {
     return !!stream && stream.getVideoTracks().some((t) => t.readyState === "live") && video.videoWidth > 0;
   }
 
-  // 실제 프레임 캡처 및 JPEG 생성
   /** VideoFrame을 우선 전달하고 미지원·오류 시 기존 경로로 전환하며 종료 결과는 버린다. */
   async function captureFrame(maxSide, quality) {
     const vw = video.videoWidth, vh = video.videoHeight;
@@ -192,7 +184,6 @@ window.GCamera = (() => {
     return new Promise((resolve) => canvas.toBlob((b) => resolve(b), "image/jpeg", quality));
   }
 
-  // 대기열 없는 단일 프레임 캡처
   /** 비트맵 생성 단계부터 JPEG 완료까지 중복 캡처를 허용하지 않는다. */
   async function capture(maxSide, quality) {
     if (capturing) throw new Error("이전 캡처가 아직 처리 중입니다");
@@ -207,7 +198,6 @@ window.GCamera = (() => {
     finally { capturing = false; }
   }
 
-  // 실제 캡처 경로 조회
   /** VideoFrame Worker, ImageBitmap Worker, 기존 canvas 중 실제 사용 경로를 반환한다. */
   function captureBackend() { return lastBackend; }
 

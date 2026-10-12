@@ -1,4 +1,3 @@
-# file_path: configs/inference.yaml
 # 보도·장애물·신호등 통합 추론 설정. 
 
 paths_config: configs/paths.yaml

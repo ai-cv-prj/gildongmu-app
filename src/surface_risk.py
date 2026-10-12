@@ -1,7 +1,4 @@
-"""
-file_path: src/surface_risk.py
-
-Warnings for observed non-walkable path regions, independent of YOLO boxes.
+"""Warnings for observed non-walkable path regions, independent of YOLO boxes.
 
 Semantic labels alone indicate a path check, never metric distance or confirmed
 collision. Missing/unstable evidence is not a reason to declare the scene safe.
@@ -11,13 +8,11 @@ import numpy as np
 
 
 class SurfaceRisk:
-    # 보행불가 영역 판정기 초기화
     def __init__(self, cfg):
         """보행불가 영역의 확인 시간과 중복 판정 기준을 저장한다."""
         self.cfg = cfg
         self.reset()
 
-    # 이전 영역 판정 초기화
     def reset(self):
         """이전 영상의 보행불가 영역 상태를 지운다."""
         self.pending_since = None
@@ -28,7 +23,6 @@ class SurfaceRisk:
         self.last_time = None
         self.last_observed = None
 
-    # 보행불가 영역 위험 갱신
     def update(self, class_map, label_ids, shape, roi, timestamp, valid, camera_stable, detections):
         """ROI 안의 보행불가 영역을 평가하고 안정적인 객체 경고와 중복을 확인한다."""
         result = {"enabled":self.cfg["surface_risk_enabled"], "status":"unavailable",

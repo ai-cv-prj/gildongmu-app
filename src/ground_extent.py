@@ -1,8 +1,4 @@
-"""
-file_path: src/ground_extent.py
-
-Estimate the visible ground top while retaining a stable wide lower ROI.
-"""
+"""Estimate the visible ground top while retaining a stable wide lower ROI."""
 import math
 
 import cv2
@@ -10,7 +6,6 @@ import numpy as np
 
 
 class GroundExtent:
-    # 보행가능영역 상단 추정기 초기화
     def __init__(self, cfg):
         """넓은 하단 ROI를 유지하며 상단 경계를 추정할 설정을 저장한다."""
         self.cfg = cfg
@@ -21,7 +16,6 @@ class GroundExtent:
         self.last_good_time = None
         self.pending_shrink_since = None
 
-    # 마스크에서 연결된 지면 경계 추출
     def _candidate(self, class_map, label_ids, shape):
         """화면 아래와 연결된 보행가능영역의 상단 후보를 구한다."""
         if (class_map is None or not label_ids
@@ -52,7 +46,6 @@ class GroundExtent:
             return None, "ground_extent_uncertain"
         return candidates[0] / mh + .04, "connected_walkable_extent"
 
-    # 지면 경계 안정화
     def update(self, class_map, label_ids, shape, timestamp, valid=True):
         """가림과 관측 누락을 고려해 ROI 상단 경계를 갱신한다."""
         if (self.previous_time is not None

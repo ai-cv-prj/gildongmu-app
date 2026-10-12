@@ -1,8 +1,4 @@
-"""
-file_path: src/risk_config.py
-
-Experimental risk defaults; all image coordinates are normalized, not metres.
-"""
+"""Experimental risk defaults; all image coordinates are normalized, not metres."""
 from copy import deepcopy
 import math
 import cv2
@@ -116,7 +112,6 @@ DEFAULT_TRACKING = {
     "match_thresh": 0.80, "fuse_score": True,
 }
 
-# 위험 설정과 기본값 병합
 def _merge(value, defaults, name):
     """알 수 없는 설정 키를 거부하며 기본값과 사용자 값을 합친다."""
     if value is None:
@@ -125,7 +120,6 @@ def _merge(value, defaults, name):
         raise ValueError(f"{name}: unknown keys or invalid mapping")
     return {**deepcopy(defaults), **deepcopy(value)}
 
-# 숫자 설정의 범위 확인
 def _number(value, name, low, high=None, strictly_positive=False):
     """숫자 설정이 유한하고 지정 범위에 있는지 확인한다."""
     if (isinstance(value, bool) or not isinstance(value, (int, float))
@@ -134,7 +128,6 @@ def _number(value, name, low, high=None, strictly_positive=False):
             or (strictly_positive and value == 0)):
         raise ValueError(f"{name}: invalid numeric value")
 
-# 보행 위험 설정 검증
 def risk_config(value=None):
     """ROI 모양과 보행 위험 판정 기준을 검증해 완전한 설정을 반환한다."""
     cfg = _merge(value, DEFAULT_RISK, "risk")
@@ -260,7 +253,6 @@ def risk_config(value=None):
         raise ValueError("immediate_polygon must be inside corridor_polygon")
     return cfg
 
-# 장애물 추적 설정 검증
 def tracking_config(value=None):
     """추적기 종류와 임계값을 검증해 완전한 설정을 반환한다."""
     cfg = _merge(value, DEFAULT_TRACKING, "tracking")

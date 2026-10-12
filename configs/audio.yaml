@@ -1,4 +1,3 @@
-# file_path: configs/audio.yaml
 # 음성 합성·재생과 신호 안내의 시간 설정이다.
 
 audio:

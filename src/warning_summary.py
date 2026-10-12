@@ -1,12 +1,7 @@
-"""
-file_path: src/warning_summary.py
-
-Choose one current hazard by urgency, position and fresh evidence.
-"""
+"""Choose one current hazard by urgency, position and fresh evidence."""
 LEVEL = {"monitor": 0, "caution": 1, "danger": 2}
 
 
-# 객체 위험의 대표 경고 후보 계산
 def _object_candidate(item, cfg):
     """객체의 위험도와 위치로 대표 경고 후보를 만든다."""
     level = item.get("alert_level", item.get("risk_level"))
@@ -42,7 +37,6 @@ def _object_candidate(item, cfg):
             "reasons": reasons}
 
 
-# 보행불가 영역의 경고 후보 계산
 def _surface_candidate(surface):
     """마스크가 확인한 보행불가 영역의 경고 후보를 만든다."""
     if not surface.get("alert_level") or surface.get("suppressed_duplicate"):
@@ -62,19 +56,16 @@ def _surface_candidate(surface):
 
 
 class WarningSelector:
-    # 대표 경고 선택기 초기화
     def __init__(self, cfg):
         """대표 경고를 고르는 기준과 이전 상태를 설정한다."""
         self.cfg = cfg
         self.reset()
 
-    # 이전 경고 초기화
     def reset(self):
         """이전에 선택한 경고의 식별 정보와 시간을 지운다."""
         self.last_id = None
         self.last_time = -float("inf")
 
-    # 현재 프레임의 대표 경고 선택
     def update(self, detections, surface, advisories, timestamp, camera_view=None):
         """객체와 보행 영역 후보에서 현재 대표 경고 하나를 고른다."""
         candidates = [c for item in detections

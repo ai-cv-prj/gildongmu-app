@@ -1,23 +1,9 @@
-"""
-file_path: scripts/run_video_inference.py
-
-명령어 옵션을 받아 도보·장애물·신호등 영상 추론을 시작한다.
-실제 처리 로직은 src.pipeline에서 실행한다.
-
-[영상 테스트 실행]
-# sample1 폴더에 있는 모든 MP4를 처리
-python -m scripts.run_video_inference --sample-dir data/samples/input/sample1
-
-[영상 테스트 결과물]
-data/samples/output/샘플폴더명/에 결과 MP4를 저장함
-위험 판정이 켜져 있으면 샘플폴더명/jsonl/에 .risk.jsonl을 저장함
-"""
+"""명령행 옵션으로 보행·장애물·신호등 영상 추론을 실행한다. 처리 로직은 src.pipeline에 있다."""
 
 import argparse
 from pathlib import Path
 
 
-# 영상 추론 시작
 def main():
     """실행 옵션을 처리하고 영상 추론 파이프라인을 호출한다."""
     parser = argparse.ArgumentParser(description="도보·장애물·보행자 신호등 통합 영상 추론")

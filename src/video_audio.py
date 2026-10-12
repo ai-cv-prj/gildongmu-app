@@ -1,7 +1,4 @@
-"""
-file_path: src/video_audio.py
-
-보행 위험·신호 안내 MP3를 영상 시간에 맞춰 음성 트랙으로 만들고 결과 MP4에 합친다.
+"""보행 위험·신호 안내 MP3를 영상 시간에 맞춰 음성 트랙으로 만들고 결과 MP4에 합친다.
 새 위험 안내가 시작되면 이전 안내를 중단한다.
 """
 
@@ -19,13 +16,11 @@ AUDIO_DIR = AUDIO_SETTINGS["voice_dir"]
 SAMPLE_RATE = AUDIO_SETTINGS["sample_rate_hz"]
 
 
-# 동봉된 FFmpeg 실행 파일 조회
 def ffmpeg_executable():
     """시스템 설치 여부와 관계없이 의존성 패키지의 FFmpeg를 사용한다."""
     return imageio_ffmpeg.get_ffmpeg_exe()
 
 
-# 음성 MP3를 단일 채널 PCM으로 해독
 def decode_clip(filename):
     """동봉된 한국어 MP3를 설정된 샘플레이트의 PCM 바이트로 바꾼다."""
     path = AUDIO_DIR / filename
@@ -40,7 +35,6 @@ def decode_clip(filename):
     return result.stdout
 
 
-# 비어 있는 음성 구간 기록
 def write_silence(output, frame_count):
     """긴 영상에서도 음성 전체를 메모리에 올리지 않고 무음 구간을 쓴다."""
     while frame_count > 0:
@@ -49,7 +43,6 @@ def write_silence(output, frame_count):
         frame_count -= count
 
 
-# 영상 길이만큼 음성 트랙 만들기
 def render_voice_track(events, duration_s, wav_path):
     """새 위험이 시작되면 앞 음성을 끊고 다음 음성을 이어 붙인다."""
     total_frames = round(duration_s * SAMPLE_RATE)
@@ -76,7 +69,6 @@ def render_voice_track(events, duration_s, wav_path):
         write_silence(output, total_frames - cursor)
 
 
-# 영상과 음성 결합
 def mux_voice(video_path, wav_path, output_path, other_wav_path=None):
     """우선순위 음성 트랙을 AAC로 인코딩하며 이전 두 트랙 호출도 호환한다."""
     command = [ffmpeg_executable(), "-nostdin", "-y", "-v", "error", "-i", str(video_path),

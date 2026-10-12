@@ -1,7 +1,4 @@
-"""
-file_path: src/visualization.py
-
-클래스 지도의 반투명 색상과 클래스별 고정 색상의 객체 박스를 표시한다.
+"""클래스 지도의 반투명 색상과 클래스별 고정 색상의 객체 박스를 표시한다.
 보행가능은 초록색, 횡단보도는 핑크색, 보행불가는 원본을 유지한다.
 """
 
@@ -60,7 +57,6 @@ OBJECT_COLORS = {
 UNKNOWN_OBJECT_COLOR = (200, 200, 200)  # 미등록 클래스 표시용 회색
 
 
-# 클래스별 반투명 색상 표시
 def overlay_segmentation(frame, class_map, label_ids, alpha=0.55):
     """원본을 변경하지 않고 클래스별 색상을 합성한 프레임을 반환한다."""
     if class_map.shape != frame.shape[:2]:
@@ -77,7 +73,6 @@ def overlay_segmentation(frame, class_map, label_ids, alpha=0.55):
     return result
 
 
-# 실시간 화면과 같은 신호등 라벨 생성
 def traffic_label(signal):
     """신호 선택 상태와 색상을 실시간 오버레이와 같은 한글 문자열로 반환한다."""
     if signal["selection_status"] == "selected":
@@ -137,7 +132,6 @@ def draw_traffic(frame, prediction):
     return result
 
 
-# 클래스별 색상의 객체 박스 및 이름 표시
 def draw_detections(frame, detections):
     """입력 이미지를 유지하며 클래스별 색상으로 박스·이름·신뢰도를 표시한다."""
     result = frame.copy()

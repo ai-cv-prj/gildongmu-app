@@ -1,8 +1,4 @@
-"""
-file_path: backend/app.py
-
-휴대폰 브라우저에 실시간 테스트 화면과 추론 API를 제공한다.
-"""
+"""휴대폰 브라우저에 실시간 테스트 화면과 추론 API를 제공한다."""
 
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -123,10 +119,9 @@ class CorrelatedFastAPI(FastAPI):
         return RequestCorrelationMiddleware(super().build_middleware_stack())
 
 
-# FastAPI 앱과 테스트용 세션 저장소 생성
 def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT_PATHS_CONFIG,
                audio_config=DEFAULT_AUDIO_CONFIG, bus_config=None):
-    """테스트에서는 모델 저장소를 교체할 수 있는 API 앱을 반환한다."""
+    """세션 관리자와 설정을 연결한 실시간 추론 API 앱을 반환한다."""
     @asynccontextmanager
     async def lifespan(_app):
         configure_app_logging(sessions.output_dir)
@@ -220,13 +215,11 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
               name="audio")
     app.mount("/static", StaticFiles(directory=frontend), name="frontend")
 
-    # 브라우저에 필요한 설정만 공개
     @app.get("/api/config")
     def config():
         """카메라·녹화·음성 옵션을 제공하고 이전 서버의 설정 캐시를 막는다."""
         return JSONResponse(browser_settings(settings, audio), headers={"Cache-Control": "no-store"})
 
-    # 실행 상태 확인
     @app.get("/api/health")
     def health():
         """터널 스크립트가 서버 작동 여부를 확인한다."""
@@ -262,13 +255,11 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
         return Response(content=audio_playback.guidance(clip, rate), media_type="audio/mpeg",
                         headers={"Cache-Control": "no-cache"})
 
-    # 휴대폰 화면 제공
     @app.get("/")
     def index():
         """한 화면에서 보행과 신호 결과를 볼 수 있는 페이지를 반환한다."""
         return FileResponse(frontend / "index.html")
 
-    # 세션 시작
     @app.post("/api/sessions")
     def start(request: StartRequest):
         """지정한 휴대폰 모델로 테스트를 시작한다."""
@@ -296,7 +287,6 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
         except SessionError as error:
             raise HTTPException(409, str(error)) from error
 
-    # JPEG 한 프레임 추론
     @app.post("/api/sessions/{session_id}/frames")
     def frame(session_id: str, frame_id: int = Form(...), captured_at_ms: int = Form(...),
               image: UploadFile = File(...),
@@ -417,7 +407,6 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
             raise HTTPException(409, str(error)) from error
         return {"saved": len(events)}
 
-    # 브라우저 녹화물을 MP4로 변환해 저장
     def save_video(session_id, kind, video, path, include_audio):
         """용량을 확인하고 임시 업로드를 영상별 MP4로 변환한다."""
         source = path.with_suffix(".upload.webm")
@@ -501,7 +490,6 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
     def clips(session_id: str):
         return clip_store.status(session_id)
 
-    # 오버레이와 안내 음성이 포함된 선택형 영상 업로드
     @app.post("/api/sessions/{session_id}/recording")
     def recording(session_id: str, video: UploadFile = File(...)):
         """브라우저의 오버레이 영상을 camera_overlay.mp4로 저장한다."""
@@ -511,7 +499,6 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
             raise HTTPException(409, str(error)) from error
         return save_video(session_id, "overlay", video, path, include_audio=True)
 
-    # 오버레이와 현장 소리가 없는 원본 카메라 영상 업로드
     @app.post("/api/sessions/{session_id}/camera")
     def camera(session_id: str, video: UploadFile = File(...)):
         """카메라 영상에서 오디오를 제거하고 camera.mp4로 저장한다."""
@@ -521,7 +508,6 @@ def create_app(manager=None, app_config=DEFAULT_APP_CONFIG, paths_config=DEFAULT
             raise HTTPException(409, str(error)) from error
         return save_video(session_id, "camera", video, path, include_audio=False)
 
-    # 테스트 종료
     @app.post("/api/sessions/stop")
     def stop(request: StopRequest):
         """세션 결과 요약을 저장하고 반환한다."""

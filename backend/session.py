@@ -1,8 +1,4 @@
-"""
-file_path: backend/session.py
-
-실시간 테스트 세션과 프레임별 추론 기록을 관리한다.
-"""
+"""실시간 테스트 세션과 프레임별 추론 기록을 관리한다."""
 
 import json
 import copy
@@ -34,11 +30,8 @@ class SessionError(Exception):
     """세션 상태나 프레임 순서가 올바르지 않을 때 발생한다."""
 
 
-# 폴더명에 사용할 사용자 입력 정리
 def safe_folder_part(value, fallback="", max_length=None):
-    """
-    파일명에 사용할 수 없는 문자를 바꾸고 선택한 길이만 남기는 함수이다.
-    """
+    """파일명에 사용할 수 없는 문자를 바꾸고 지정한 길이로 제한한다."""
     cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", value).strip(" .")
     if max_length is not None:
         cleaned = cleaned[:max_length].rstrip(" .")
@@ -48,7 +41,6 @@ def safe_folder_part(value, fallback="", max_length=None):
 class SessionManager:
     """한 서버에서 한 휴대폰 테스트를 순서대로 처리한다."""
 
-    # 모델 저장소와 출력 폴더 준비
     def __init__(self, output_dir, model_factory=None, session_settings=None,
                  bus_recognizer=None, bus_config=None):
         """모델은 첫 세션 시작 시에만 로딩하고 이후 세션에서 재사용한다."""
@@ -65,7 +57,6 @@ class SessionManager:
         self._last_frame_key = None
         self._last_frame_result = None
 
-    # 휴대폰 테스트 시작
     def start(self, device_name, note="", bus_highres=False):
         """새 세션을 만들고 모델 추적 상태를 초기화한다."""
         with self.lock:
@@ -144,7 +135,6 @@ class SessionManager:
             return {"session_id": session_id, "device_name": device_name, "note": note,
                     "date": session["date"], "folder_name": session["folder_name"]}
 
-    # 한 프레임 처리와 JSONL 기록
     def process(self, session_id, frame_id, captured_at_ms, frame, request_start_ns=None,
                 decode_ms=None, image_bytes=None, save_live_frame=False,
                 bus_frame=None, bus_captured_at_ms=None, bus_image_bytes=None):
@@ -394,7 +384,6 @@ class SessionManager:
         self.bus_recognizer.set_target(None, None)
         return summary
 
-    # 휴대폰 테스트 종료
     def stop(self, session_id):
         """세션 종료 시각과 처리 프레임 수를 저장한다."""
         with self.lock:
@@ -432,7 +421,6 @@ class SessionManager:
                 return folder
         raise SessionError("종료된 세션을 찾을 수 없습니다.")
 
-    # 원본 카메라 영상의 세션별 경로 확인
     def camera_path(self, session_id):
         """현재 세션에 속하는 원본 카메라 영상 경로를 반환한다."""
         with self.lock:
@@ -440,7 +428,6 @@ class SessionManager:
                 raise SessionError("진행 중인 세션이 없습니다.")
             return self.session["folder"] / "camera.mp4"
 
-    # 오버레이 녹화 파일의 세션별 경로 확인
     def recording_path(self, session_id):
         """현재 세션에 속하는 오버레이 영상 경로를 반환한다."""
         with self.lock:

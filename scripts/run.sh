@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# file_path: scripts/run.sh
-# 실시간 테스트 서버를 PC에서 실행한다.
+# 실시간 앱 서버를 PC에서 실행한다.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

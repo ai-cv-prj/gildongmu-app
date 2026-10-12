@@ -1,8 +1,4 @@
-"""추론 파이프라인 공통 인터페이스.
-
-각 기능(traffic / walking / bus)은 InferencePipeline을 구현한다.
-API, 세션 저장, UI는 이 인터페이스만 알고 모델 내부는 모른다.
-"""
+"""버스 추론 파이프라인의 모델 정보, 프레임 입력과 응답 인터페이스."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -22,7 +18,7 @@ class InferenceContext:
 
 @dataclass
 class ModelSpec:
-    """UI 모델 목록에 노출되는 정보."""
+    """모델 식별 정보와 로컬 가중치 준비 상태."""
 
     id: str
     mode: str
@@ -43,7 +39,7 @@ class InferencePipeline(Protocol):
     spec: ModelSpec
 
     def load(self) -> None:
-        """가중치 로딩. registry가 최초 사용 시 한 번만 호출한다."""
+        """추론에 필요한 모델 가중치를 로딩한다."""
 
     def infer(self, frame_bgr: np.ndarray, context: InferenceContext) -> dict[str, Any]:
         """한 프레임 추론.
@@ -72,7 +68,7 @@ def clamp01(v: float) -> float:
 
 
 def normalize_box(x1: float, y1: float, x2: float, y2: float, width: int, height: int) -> dict[str, float]:
-    """픽셀 xyxy → 0~1 정규화. 실제 모델 연결 시 유틸로 사용."""
+    """픽셀 xyxy 좌표를 0~1 범위의 화면 비율로 정규화한다."""
     return {
         "x1": clamp01(x1 / width),
         "y1": clamp01(y1 / height),

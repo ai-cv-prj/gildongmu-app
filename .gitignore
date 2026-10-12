@@ -64,3 +64,12 @@ docs/stop_location_implementation_plan_20260930.md
 
 # 라벨링 툴
 labelling/
+
+# 제출에서 제외한 테스트·설계안·중간 산출물의 로컬 보관함
+/.local-only/
+/tests/
+/pytest.ini
+
+# 로컬 도구 설정 및 인증 정보
+/.codex/
+/.aws/

@@ -1,4 +1,4 @@
-/** Large route keypad, including the preview's Korean/English route prefixes. */
+/** Large route keypad with Korean and English route prefixes. */
 (function (root) {
   "use strict";
 

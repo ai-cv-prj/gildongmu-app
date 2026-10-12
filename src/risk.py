@@ -1,8 +1,4 @@
-"""
-file_path: src/risk.py
-
-Experimental obstacle risk assessment with preserved detections and optional IDs.
-"""
+"""Experimental obstacle risk assessment with preserved detections and optional IDs."""
 import math
 from copy import deepcopy
 from src.risk_config import risk_config
@@ -87,12 +83,10 @@ def predicted_moving_conflict(detection, geometry, motion, entry_y, cfg):
 
 class VideoClock:
     """Use source PTS. Nominal FPS fallback is explicitly invalid for motion."""
-    # 영상 타임스탬프 판독기 초기화
     def __init__(self, fps):
         """PTS가 없을 때 쓸 명목 FPS를 저장한다."""
         self.fps, self.previous = fps, None
 
-    # 프레임 시간 판독
     def read(self, pts_ms, index):
         """유효한 PTS를 우선 사용하고 대체 시간의 운동 판정은 비활성화한다."""
         valid = (isinstance(pts_ms, (int,float)) and math.isfinite(pts_ms) and pts_ms >= 0
@@ -103,7 +97,6 @@ class VideoClock:
         return index/self.fps, False, "nominal_fps_motion_disabled"
 
 class RiskEngine:
-    # 위험 판정 모듈 초기화
     def __init__(self, config=None, tracking=None, tracker=None, camera_guard=None,
                  stationarity_guard=None):
         """추적·ROI·촬영 상태·경고 선택기를 같은 설정으로 준비한다."""
@@ -122,7 +115,6 @@ class RiskEngine:
         self.camera_view = CameraViewGuard(self.config)
         self.reset()
 
-    # 영상별 위험 판정 상태 초기화
     def reset(self):
         """새 영상에서 이전 영상의 추적과 경고 상태를 지운다."""
         self.tracker.reset()
@@ -143,7 +135,6 @@ class RiskEngine:
         self.previous_tracker_status = self.tracker.status
         self.epoch = getattr(self, "epoch", -1) + 1
 
-    # 프레임 위험도 판정
     def update(self, frame, detections, timestamp_s, timestamp_valid=True, class_map=None, label_ids=None,
                *, suppress_stop_hazard=False, suppress_stop_identity=None):
         """프레임의 장애물과 보행 영역에서 위험도와 대표 경고를 고른다."""
@@ -470,7 +461,6 @@ class RiskEngine:
                 "warning_text":warning["text"], "level":warning["level"],
                 "detections":results, "events":events}
 
-    # 보행가능영역 설명 부착
     def add_sidewalk_context(self, prediction, class_map, label_ids, shape):
         """검출 객체에 같은 프레임의 보행가능영역 문맥을 붙인다."""
         # Same-frame context only. An absent/non-walkable mask never vetoes a warning.

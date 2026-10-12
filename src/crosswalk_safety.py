@@ -1,7 +1,4 @@
-"""
-file_path: src/crosswalk_safety.py
-
-횡단보도 마스크로 진입 정렬과 횡단 상태 및 좌우 이탈을 판단한다.
+"""횡단보도 마스크로 진입 정렬과 횡단 상태 및 좌우 이탈을 판단한다.
 정규화된 영상 좌표만 사용하며 실제 거리나 횡단 안전을 보장하지 않는다.
 """
 
@@ -70,14 +67,12 @@ DEFAULT_CROSSWALK_SAFETY = {
 }
 
 
-# 횡단보도 판정용 촬영 안정 상태 확인
 def crosswalk_camera_stable(prediction):
     """순간 움직임값 대신 시간 안정화된 촬영 상태가 clear인지 확인한다."""
     camera_view = (prediction or {}).get("camera_view") or {}
     return camera_view.get("status", "clear") == "clear"
 
 
-# 횡단보도 안전 설정 검증
 def crosswalk_safety_config(value=None):
     """알 수 없는 키와 범위를 벗어난 값을 거부하고 전체 설정을 반환한다."""
     value = {} if value is None else value
@@ -145,7 +140,6 @@ def crosswalk_safety_config(value=None):
     return cfg
 
 
-# 사용자 위치 주변의 보행 의미 비율 계산
 def foot_semantics(class_map, label_ids, shape, cfg):
     """화면 아래 중앙의 가상 발 영역에서 보행가능·횡단보도 비율을 계산한다."""
     if class_map is None or not label_ids or class_map.shape != tuple(shape[:2]):
@@ -168,7 +162,6 @@ def foot_semantics(class_map, label_ids, shape, cfg):
     }
 
 
-# 하단 횡단보도 ROI의 의미 비율 계산
 def crosswalk_roi_semantics(class_map, label_ids, shape, cfg):
     """화면 하단의 넓은 ROI에서 횡단보도와 보행가능영역 비율을 계산한다."""
     roi = {
@@ -193,7 +186,6 @@ def crosswalk_roi_semantics(class_map, label_ids, shape, cfg):
     return roi
 
 
-# 분홍색 즉시위험 ROI의 횡단보도 비율 계산
 def crosswalk_exit_roi_semantics(class_map, label_ids, shape, cfg):
     """화면 하단의 분홍색 ROI에서 횡단보도 마스크 비율을 계산한다."""
     roi = {
@@ -217,7 +209,6 @@ def crosswalk_exit_roi_semantics(class_map, label_ids, shape, cfg):
     return roi
 
 
-# 횡단보도 ROI를 가린 객체 비율 계산
 def crosswalk_roi_occlusion(detections, shape, cfg):
     """현재 객체 박스가 하단 횡단보도 ROI를 가리는 최대 비율을 반환한다."""
     height, width = shape[:2]
@@ -245,7 +236,6 @@ def crosswalk_roi_occlusion(detections, shape, cfg):
     return min(1.0, largest)
 
 
-# 핑크 마스크에서 횡단보도 좌우 경계 추정
 def crosswalk_geometry(class_map, label_ids, shape, cfg):
     """줄무늬 사이를 연결한 뒤 가상 발 높이의 좌우 경계를 정규화해 반환한다."""
     if (class_map is None or not label_ids or "crosswalk" not in label_ids
@@ -294,13 +284,11 @@ def crosswalk_geometry(class_map, label_ids, shape, cfg):
 class CrosswalkSafetyEngine:
     """횡단 진입을 먼저 확인한 뒤 좌우 경계 접근과 이탈을 시간 기준으로 판정한다."""
 
-    # 횡단보도 안전 판정기 초기화
     def __init__(self, config=None):
         """검증된 설정을 저장하고 시간·경계 이력을 초기화한다."""
         self.config = crosswalk_safety_config(config)
         self.reset()
 
-    # 영상 또는 실시간 세션 상태 초기화
     def reset(self):
         """이전 횡단 상태와 확인 대기 시간을 모두 지운다."""
         self.phase = "search"
@@ -319,7 +307,6 @@ class CrosswalkSafetyEngine:
         self.roi_crosswalk_last_seen = None
         self.event_id = 0
 
-    # 연속 시간 조건 확인
     def _confirmed(self, kind, timestamp, duration):
         """같은 후보 상태가 지정 시간 이상 유지됐는지 반환한다."""
         if self.pending_kind != kind:
@@ -330,21 +317,18 @@ class CrosswalkSafetyEngine:
         self.pending_last_seen = timestamp
         return timestamp - self.pending_since + 1e-9 >= duration
 
-    # 대기 중인 상태 전환 취소
     def _clear_pending(self):
         """현재 조건과 맞지 않는 이전 상태 전환 후보를 지운다."""
         self.pending_kind = None
         self.pending_since = None
         self.pending_last_seen = None
 
-    # 크게 이동한 새 경계 후보 제거
     def _clear_boundary_candidate(self):
         """확정되거나 불연속적인 횡단보도 경계 후보를 초기화한다."""
         self.boundary_candidate_since = None
         self.boundary_candidate_left = None
         self.boundary_candidate_right = None
 
-    # 상태 전환과 새 이벤트 번호 기록
     def _transition(self, phase):
         """상태가 실제로 바뀔 때만 이벤트 번호를 증가시킨다."""
         changed = phase != self.phase
@@ -353,7 +337,6 @@ class CrosswalkSafetyEngine:
             self.event_id += 1
         return changed
 
-    # 프레임별 횡단보도 안전 상태 갱신
     def update(self, class_map, label_ids, shape, signal, timestamp, camera_stable=True,
                detections=None):
         """같은 프레임의 마스크로 상태와 안내 이벤트를 반환한다."""

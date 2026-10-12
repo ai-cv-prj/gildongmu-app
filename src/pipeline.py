@@ -1,7 +1,4 @@
-"""
-file_path: src/pipeline.py
-
-같은 원본 프레임의 도보·장애물·신호등 추론 결과를 MP4로 저장한다.
+"""같은 원본 프레임의 도보·장애물·신호등 추론 결과를 MP4로 저장한다.
 모델은 한 번만 로딩하며, 단독 실행과 통합 실행을 지원한다.
 """
 
@@ -43,14 +40,12 @@ DEFAULT_CONFIG = PROJECT_DIR / "configs" / "inference.yaml"
 WEBM_OUTPUT_FPS = 10.0
 
 
-# 프로젝트 기준 경로 해석
 def resolve_path(value):
     """상대 경로는 통합 레포 루트, 절대 경로는 지정 위치로 해석한다."""
     path = Path(value).expanduser()
     return (PROJECT_DIR / path).resolve()
 
 
-# YAML 설정 읽기
 def load_config(config_path):
     """모델별 가중치 경로와 공통 추론 설정을 확인한다."""
     config = read_yaml(config_path)
@@ -95,7 +90,6 @@ def load_config(config_path):
     return config
 
 
-# 녹화 프레임을 실시간 전송 조건으로 변환
 def prepare_recorded_frame(frame, settings):
     """비율을 유지해 최대 변을 줄이고 지정 품질의 JPEG를 거친 BGR 프레임을 반환한다."""
     if settings is None:
@@ -115,7 +109,6 @@ def prepare_recorded_frame(frame, settings):
     return decoded
 
 
-# 샘플 MP4·WebM 조회
 def find_sample_videos(sample_dir):
     """지정 폴더 바로 아래의 MP4와 WebM을 파일명 순으로 조회한다."""
     sample_dir = resolve_path(sample_dir)
@@ -130,7 +123,6 @@ def find_sample_videos(sample_dir):
     return videos
 
 
-# WebM 입력 영상 타이밍 검사
 def inspect_video_timing(video_path):
     """모든 프레임의 PTS로 프레임 수, 시작·종료 시각, 실제 FPS를 계산한다."""
     capture = cv2.VideoCapture(str(video_path))
@@ -165,7 +157,6 @@ def inspect_video_timing(video_path):
             len(timestamps) * 1000.0 / duration_ms)
 
 
-# 완성된 결과 파일을 기존 결과와 교체
 def publish_video_result(video_source, output_path, risk_log=None):
     """MP4와 JSONL을 교체하고 공개 오류가 나면 이전 결과를 복구한다."""
     risk_path = risk_log.path if risk_log is not None else risk_log_path(output_path)
@@ -197,7 +188,6 @@ def publish_video_result(video_source, output_path, risk_log=None):
             raise
 
 
-# 영상 한 개 처리
 def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=None, traffic=None,
                   risk_config=None, tracking_config=None, crosswalk_config=None,
                   recorded_frame_config=None, walking_surface_config_value=None,
@@ -510,7 +500,6 @@ def process_video(video_path, output_path, segmenter=None, alpha=0.55, detector=
     return processed_frames
 
 
-# 기존 영상을 보존할 결과 경로 선택
 def next_available_output(output_path, reserved=()):
     """같은 이름의 MP4가 있으면 번호를 올리고 고아 위험 로그는 오류로 알린다."""
     base = Path(output_path)
@@ -532,7 +521,6 @@ def next_available_output(output_path, reserved=()):
         return candidate
 
 
-# 설정 및 명령어 옵션으로 추론 실행
 def run_video_inference(
     config_path=DEFAULT_CONFIG,
     *,

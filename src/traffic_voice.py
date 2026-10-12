@@ -1,8 +1,4 @@
-"""
-file_path: src/traffic_voice.py
-
-테스트앱의 신호등 음성 문구와 안정화 규칙을 영상 시간에 적용한다.
-"""
+"""신호등 음성 문구와 안정화 규칙을 영상 시간에 적용한다."""
 
 from src.settings import load_audio_settings
 
@@ -27,7 +23,6 @@ GATE_BLIP_SECONDS = AUDIO_SETTINGS["guidance"]["traffic_gate_blip_ms"] / 1000
 REPEAT_CLIPS = {"green-changed.mp3": "green.mp3", "red-changed.mp3": "red.mp3"}
 
 
-# 같은 신호등 판단
 def near_box(a, b):
     """화면 가로 위치와 크기가 비슷하면 추적 ID가 달라도 같은 신호등으로 본다."""
     if not isinstance(a, (list, tuple)) or not isinstance(b, (list, tuple)) or a[2] <= a[0]:
@@ -40,7 +35,6 @@ def near_box(a, b):
 class TrafficVoice:
     """선택된 신호의 연속 관측을 확인하고 음성 이벤트를 기록한다."""
 
-    # 영상마다 신호 관측 이력 초기화
     def __init__(self):
         """빈 음성 이벤트와 신호 관측 상태를 준비한다."""
         self.events = []
@@ -71,7 +65,6 @@ class TrafficVoice:
         # 횡단 중 파란 ROI의 횡단보도 근거가 처음 끊긴 시각이다. 다시 허용되면 지운다.
         self.gate_lost_time = None
 
-    # 횡단보도 근거 소실 시 신호 음성과 관측 이력 해제
     def _suspend(self, time_s):
         """재생 중인 신호만 중단하고 재진입 시 새 안정화 과정을 거치게 한다."""
         if self.voice_allowed:
@@ -85,7 +78,6 @@ class TrafficVoice:
         self.remembered = None
         self.waiting_green = False
 
-    # 횡단 중 짧은 횡단보도 근거 소실 시 신호 음성만 중단
     def _hold(self, time_s):
         """재생 중인 신호를 멈추되 확인한 신호 기억은 유지해 재확인 시 대기 안내를 반복하지 않는다."""
         if self.voice_allowed:
@@ -96,7 +88,6 @@ class TrafficVoice:
         self.last_valid = time_s
         self.last_frame = self.last_capture = None
 
-    # 현재 대상의 색상 증거 폐기
     def _reset_evidence(self):
         """연속 관측이 끊기면 전환 판단에 쓰던 색상과 후보를 지운다."""
         self.target = None
@@ -104,12 +95,10 @@ class TrafficVoice:
         self.samples = []
         self.candidate = None
 
-    # 전역 음성 우선순위에 사용할 신호 이벤트 기록
     def _announce(self, time_s, filename):
         """관측 시각에 이벤트를 기록해 전역 관리자가 중단과 폐기를 결정하게 한다."""
         self.events.append((time_s, filename))
 
-    # 같은 대상·색상의 주기 재안내
     def _repeat(self, time_s):
         """마지막 신호 안내 후 설정 시간이 지나면 같은 문구를 낮은 우선순위로 기록한다."""
         if (self.repeat_clip is None or self.last_announced_target != self.target
@@ -119,7 +108,6 @@ class TrafficVoice:
         self.last_announced_time = time_s
         self.events.append((time_s, self.repeat_clip, "repeat"))
 
-    # 한 프레임의 신호 상태 관측
     def observe(self, result, frame_id, time_s, crossing_active=False):
         """실시간 앱과 같은 색상 다수결·400ms 확정, 소실·반복 억제 규칙을 적용한다."""
         if (result.get("voice_gate") or {}).get("allowed") is not True:

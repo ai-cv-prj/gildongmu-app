@@ -1,8 +1,6 @@
 """YOLO11n/ByteTrack bus boxes and the fixed B route-display model.
 
-This follows the B operating evaluation in
-scripts/experiments/bus_roi_finetune_20260930_run01/run_videos.py.
-The CRAFT fallback was opt-in there and remains disabled here.
+The route-display detector searches each bus once; CRAFT fallback is disabled.
 """
 from __future__ import annotations
 
@@ -32,7 +30,7 @@ class RouteDetector:
         if not self.bus_ids:
             raise ValueError('bus detector does not define a bus class')
         self.route = YOLO(str(route_weights))
-        # Match the warm-up and inference dimensions of the evaluated B path.
+        # Warm up at the same input dimensions used during inference.
         self.yolo.predict(np.zeros((640, 640, 3), np.uint8), device=device, verbose=False)
         self.route.predict(np.zeros((960, 960, 3), np.uint8), device=device,
                            imgsz=960, rect=False, conf=.25, iou=.5, verbose=False)

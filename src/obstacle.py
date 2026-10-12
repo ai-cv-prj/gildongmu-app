@@ -1,7 +1,4 @@
-"""
-file_path: src/obstacle.py
-
-파인튜닝한 YOLO를 불러와 원본 좌표계의 장애물 탐지 결과를 반환한다.
+"""파인튜닝한 YOLO를 불러와 원본 좌표계의 장애물 탐지 결과를 반환한다.
 영상 읽기와 박스 표시는 다른 모듈에서 처리한다.
 """
 
@@ -25,9 +22,8 @@ EXPECTED_CLASS_NAMES_29 = tuple(
 )
 
 
-# YOLO 설정 검증
 def validate_yolo_config(config):
-    """가중치 경로와 test-app의 YOLO 추론 옵션을 확인한다."""
+    """가중치 경로와 YOLO 추론 옵션을 확인한다."""
     required = {"weights", "conf", "imgsz", "head"}
     if not isinstance(config, dict) or not required.issubset(config):
         raise ValueError("yolo 설정에는 weights, conf, imgsz, head가 필요합니다.")
@@ -54,7 +50,6 @@ def validate_yolo_config(config):
 class ObstacleDetector:
     """한 번 로딩한 YOLO로 여러 프레임의 장애물을 탐지한다."""
 
-    # 로컬 가중치 및 클래스 확인
     def __init__(self, weights, device="auto", conf=0.25, imgsz=640, head="nms",
                  iou=0.7, max_det=300, rect=True):
         """지원하는 32클래스 또는 동물 제외 29클래스 가중치를 불러온다."""
@@ -89,7 +84,6 @@ class ObstacleDetector:
         ):
             raise ValueError("YOLO 가중치의 클래스 번호·이름이 지원하는 32클래스/29클래스 정의와 다릅니다.")
 
-    # 원본 프레임의 장애물 탐지
     def predict(self, frame):
         """BGR 프레임에서 박스 좌표·클래스·신뢰도 목록을 반환한다."""
         result = self.model.predict(

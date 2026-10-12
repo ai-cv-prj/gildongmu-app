@@ -1,4 +1,4 @@
-"""Bus number inference using the evaluated B route-display evidence path.
+"""Bus number inference using the fixed B route-display model.
 
 The selected model is the fixed B route-display YOLO weight. Bus YOLO11n,
 PARSeq, and the pinned PARSeq source are configured by configs/bus.yaml.
@@ -115,7 +115,7 @@ class BusPipeline:
             bus['eligible_candidate_count'] = 0
             bus['candidate_truncated'] = False
             try:
-                # B searches the whole bus once. The second body pass is empty.
+                # The route-display detector searches the whole bus once.
                 search_box, boxes = self.detector.text_regions(rgb, bus['bus_box'])
                 items = [{'text_box': box, 'search_zone': 'upper',
                           'search_box': search_box, 'region_source': 'route_display'}

@@ -1,6 +1,5 @@
 """보행자 신호등 YOLO → 횡단보도 연결 → MobileNetV3 색상 분류.
 
-선택 로직은 gildongmu-test-app의 SESAC-78 버전을 이식한다.
 입출력 좌표는 원본 BGR 프레임 픽셀 기준이다.
 """
 import math

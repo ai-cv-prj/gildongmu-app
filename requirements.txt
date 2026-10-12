@@ -35,6 +35,5 @@ pydantic==2.13.5
 uvicorn[standard]==0.54.0
 python-multipart==0.0.32
 
-# 회귀 테스트
-pytest==9.1.1
+# 결과 허브 동기화 HTTP 클라이언트
 httpx==0.28.1

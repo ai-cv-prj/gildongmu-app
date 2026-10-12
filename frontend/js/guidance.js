@@ -1,12 +1,10 @@
 /**
- * file_path: frontend/js/guidance.js
- *
- * 테스트앱과 같은 신호 상태 및 보행 위험 장애물 음성 안내 정책.
+ * 신호 상태와 보행 위험에 따른 장애물 음성 안내 정책.
  */
 (() => {
   function create({ coordinator, onChange = () => {}, now = () => performance.now() }) {
     const audio = window.GConfig.get().audio;
-    // 서버를 재시작하기 전 이전 설정을 받은 경우에도 새 신호 규칙이 기본값으로 동작하게 한다.
+    // 서버 설정에서 생략된 신호 판단 기준은 기본값으로 보완한다.
     const limits = { stable_window_frames: 5, stable_window_ms: 1500, traffic_vote_min_confidence: 0.25,
       traffic_red_change_stable_ms: 800, traffic_red_link_ms: 3000,
       traffic_same_signal_max_dx: 0.25, traffic_same_signal_max_size_ratio: 2, traffic_gate_blip_ms: 1500,

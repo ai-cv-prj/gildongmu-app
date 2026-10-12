@@ -1,7 +1,4 @@
-"""
-file_path: src/sidewalk.py
-
-파인튜닝한 Mask2Former를 불러와 프레임별 클래스 지도를 반환한다.
+"""파인튜닝한 Mask2Former를 불러와 프레임별 클래스 지도를 반환한다.
 영상 읽기와 색상 표시는 다른 모듈에서 처리한다.
 """
 
@@ -12,7 +9,6 @@ import torch
 from transformers import AutoImageProcessor, Mask2FormerForUniversalSegmentation
 
 
-# 저장된 클래스 번호 조회
 def get_segmentation_label_ids(model):
     """모델 설정에서 보행불가·보행가능·횡단보도 클래스 번호를 조회한다."""
     label_ids = {
@@ -29,7 +25,6 @@ def get_segmentation_label_ids(model):
 class SidewalkSegmenter:
     """한 번 로딩한 도보 모델로 여러 프레임을 추론한다."""
 
-    # 모델 및 전처리기 로딩
     def __init__(self, weights, device="auto"):
         """로컬 모델 폴더의 가중치와 전처리 설정을 불러온다."""
         weights = Path(weights).expanduser().resolve()
@@ -56,7 +51,6 @@ class SidewalkSegmenter:
         self.label_ids = get_segmentation_label_ids(self.model)
         self.model = self.model.to(self.device).eval()
 
-    # 원본 좌표계의 클래스 지도 추론
     def predict(self, frame):
         """BGR 프레임을 받아 원본 높이·너비의 정수 클래스 지도를 반환한다."""
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)

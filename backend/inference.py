@@ -1,7 +1,4 @@
-"""
-file_path: backend/inference.py
-
-기존 영상 추론 모델과 위험 판정을 휴대폰 카메라 프레임에 재사용한다.
+"""기존 영상 추론 모델과 위험 판정을 휴대폰 카메라 프레임에 재사용한다.
 모델은 한 번 로딩하고 세션마다 추적 상태를 초기화한다.
 """
 
@@ -26,7 +23,6 @@ from src.walking_surface import WalkingSurfaceEngine, walking_surface_config
 class RealtimeInference:
     """한 프레임에 도보·장애물·신호등 추론을 적용한다."""
 
-    # 영상 추론 설정과 같은 고정 가중치 로딩
     def __init__(self, config_path="configs/inference.yaml"):
         """기존 설정 파일의 고정 모델과 위험 판정 옵션을 준비한다."""
         config = load_config(config_path)
@@ -53,7 +49,6 @@ class RealtimeInference:
         self.walking_surface_settings = walking_surface_config(config.get("walking_surface"))
         self.reset()
 
-    # 새 휴대폰 세션의 이전 추적 상태 제거
     def reset(self):
         """위험·음성·신호등 추적 기록을 새 세션 기준으로 비운다."""
         self.risk = RiskEngine(self.risk_settings, self.tracking_settings)
@@ -65,7 +60,6 @@ class RealtimeInference:
         self.walking_surface = WalkingSurfaceEngine(self.walking_surface_settings)
         self.traffic.reset()
 
-    # 같은 원본 프레임의 세 모델 추론
     def predict(self, frame, frame_id, captured_at_ms):
         """원본 BGR 프레임에서 각 모델 결과와 처리 시간을 반환한다."""
         started = perf_counter()

@@ -1,8 +1,4 @@
-"""
-file_path: src/risk_visualization.py
-
-Additional risk overlay; existing class colors and traffic drawing are untouched.
-"""
+"""Additional risk overlay; existing class colors and traffic drawing are untouched."""
 import cv2
 import numpy as np
 from pathlib import Path
@@ -24,7 +20,6 @@ KOREAN_FONT_PATHS = (
 )
 
 
-# 왼쪽·가운데·오른쪽 방향 구역 경계 표시
 def draw_direction_boundaries(frame):
     """설정된 방향 구역 경계를 화면 전체 높이의 반투명 흰색 점선으로 표시한다."""
     result = frame.copy()
@@ -41,7 +36,6 @@ def draw_direction_boundaries(frame):
     return cv2.addWeighted(overlay, .65, result, .35, 0)
 
 
-# 장애물 행동과 음성·움직임 상태 문구 생성
 def action_status_text(prediction):
     """안전성·전환 확인을 마친 행동과 실제 음성 재생 상태를 표시한다."""
     action = prediction.get("voice_action", prediction.get("last_action")) or "none"
@@ -50,7 +44,6 @@ def action_status_text(prediction):
     return f"ACTION: {action}", f"VOICE: {voice}", f"MOTION: {motion}"
 
 
-# 현재 장애물 이동 행동 배지 표시
 def draw_action_status(frame, prediction):
     """영상 왼쪽 위에 현재 장애물 이동 행동과 음성 상태를 검은 배지로 표시한다."""
     lines = action_status_text(prediction)
@@ -73,7 +66,6 @@ def draw_action_status(frame, prediction):
     return frame
 
 
-# 추적과 위험 이벤트 식별자 표시
 def risk_identity(item):
     """표시 가능한 추적 ID와 이벤트 ID를 짧은 문자열로 묶는다."""
     values = []
@@ -84,7 +76,6 @@ def risk_identity(item):
     return " · ".join(values) if values else "no-ID"
 
 
-# 정류장 근접 판정 문구 생성
 def stop_proximity_text(event):
     """실시간 오버레이와 같은 정류장 판정 문구를 반환한다."""
     event = event or {}
@@ -108,7 +99,6 @@ def stop_proximity_text(event):
     return "정류장 판정 보류"
 
 
-# 저장 영상용 한글 글꼴 조회
 def korean_font(size):
     """현재 실행 환경에서 사용할 수 있는 굵은 한글 글꼴을 반환한다."""
     for path in KOREAN_FONT_PATHS:
@@ -117,7 +107,6 @@ def korean_font(size):
     return None
 
 
-# OpenCV 프레임에 한글 문구 표시
 def draw_korean_lines(frame, lines, position, size, color):
     """Pillow 한글 글꼴이 있으면 BGR 프레임 위에 여러 줄 문구를 표시한다."""
     font = korean_font(size)
@@ -134,7 +123,6 @@ def draw_korean_lines(frame, lines, position, size, color):
     return True
 
 
-# 정류장 근접 판정 표시
 def draw_stop_proximity(frame, event, crosswalk=None, walking_surface=None):
     """실시간 화면과 같은 정류장 후보 박스와 우측 배너를 표시한다."""
     event = event or {}
@@ -181,7 +169,6 @@ def draw_stop_proximity(frame, event, crosswalk=None, walking_surface=None):
                     .5, color, 1, cv2.LINE_AA)
     return result
 
-# 영상에 위험 판정 표시
 def draw_risk(frame, prediction, config):
     """현재 ROI와 장애물 위험도를 영상 프레임에 표시한다."""
     config = dict(config)
@@ -233,7 +220,6 @@ def draw_risk(frame, prediction, config):
     return draw_action_status(result, prediction)
 
 
-# 검토용 위험 화면 생성
 def draw_review(frame, prediction, config):
     """검토용 ROI와 위험 카드 및 상태 요약을 그린다."""
     """Large, temporary inspection overlay. Red/amber outlines encode risk, not class."""
@@ -242,7 +228,6 @@ def draw_review(frame, prediction, config):
     scale = max(.45, w/1080)
     thick = max(3, round(7*scale))
     font = cv2.FONT_HERSHEY_SIMPLEX
-    # 검토용 글자 표시
     def text(message, position, size, color, weight=2):
         """검은 외곽선을 포함한 문구를 프레임에 그린다."""
         cv2.putText(result, message, position, font, size, (0,0,0), weight+3, cv2.LINE_AA)
@@ -362,7 +347,6 @@ def draw_review(frame, prediction, config):
     return draw_action_status(result, prediction)
 
 
-# 표면 위험 영역 표시
 def draw_scene_regions(frame, prediction):
     """보행불가 영역 위험 다각형을 영상에 표시한다."""
     """Draw observed semantic regions; never invent a detection box for lost tracks."""
@@ -379,7 +363,6 @@ def draw_scene_regions(frame, prediction):
     return result
 
 
-# 장면 전체 경고 표시
 def draw_scene_status(result, prediction, position, scale):
     """촬영 상태와 보행 영역 경고를 영상에 표시한다."""
     messages=[]

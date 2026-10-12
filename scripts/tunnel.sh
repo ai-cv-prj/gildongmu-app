@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# file_path: scripts/tunnel.sh
 # 실행 중인 PC 서버에 휴대폰용 HTTPS 터널을 연결한다.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -27,7 +26,7 @@ if ! curl -fsS --max-time 3 "$server_url/api/health" >/dev/null; then
 fi
 echo "[tunnel] HTTPS 터널 주소를 생성하는 중입니다."
 
-# Keep transport failures beside app.log so field-test disconnects can be correlated later.
+# 연결 오류를 서버 로그와 함께 확인할 수 있도록 터널 로그를 보관한다.
 tunnel_log_dir="$(.venv/bin/python -c 'from src.settings import load_paths, resolve_path; print(resolve_path(load_paths()["session_dir"]) / "logs")')"
 mkdir -p "$tunnel_log_dir"
 tunnel_log="$(mktemp "$tunnel_log_dir/cloudflared-$(date +%Y%m%d-%H%M%S)-XXXXXX.log")"

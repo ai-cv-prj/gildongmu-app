@@ -1,22 +1,15 @@
-"""
-file_path: src/hazard_labels.py
-
-Conservative display names; raw detector classes remain untouched.
-"""
+"""Conservative display names; raw detector classes remain untouched."""
 
 class LabelMemory:
-    # 객체 이름 판정기 초기화
     def __init__(self, cfg):
         """객체 이름 확정 기준을 저장한다."""
         self.cfg = cfg
         self.reset()
 
-    # 객체 이름 기록 초기화
     def reset(self):
         """프레임 사이에 누적한 객체 이름 기록을 지운다."""
         self.states = {}
 
-    # 객체 이름 안정성 갱신
     def update(self, detections, timestamp):
         """반복 검출을 확인해 표시용 객체 이름을 확정한다."""
         ttl = max(1.0, self.cfg["label_conflict_hold_s"] * 2)

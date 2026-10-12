@@ -1,7 +1,4 @@
-"""
-file_path: src/voice_priority.py
-
-영상 결과의 횡단보도·신호등·보행로·장애물 음성을 한 시간축으로 합친다.
+"""영상 결과의 횡단보도·신호등·보행로·장애물 음성을 한 시간축으로 합친다.
 이탈 구간은 문장을 반복하고 복귀하면 재생 중인 문장은 유지한 채 새 반복만 멈춘다.
 """
 
@@ -17,7 +14,6 @@ EMERGENCY_WALKING_CLIPS = {"walking-stop.mp3"}
 MISSING_TRAFFIC_CLIP = "missing.mp3"
 
 
-# 음원 길이 계산
 @lru_cache(maxsize=None)
 def clip_duration(filename):
     """MP3를 해독해 단일 채널 16 kHz 기준 재생 시간을 초로 반환한다."""
@@ -27,7 +23,6 @@ def clip_duration(filename):
 class CrosswalkVoice:
     """프레임별 반복 안내를 방향별 연속 구간으로 기록한다."""
 
-    # 횡단보도 음성 구간 기록기 초기화
     def __init__(self, source="crosswalk", priority=1):
         """음성 출처와 우선순위를 저장하고 반복 구간을 빈 상태로 준비한다."""
         self.source = source
@@ -36,7 +31,6 @@ class CrosswalkVoice:
         self.intervals = []
         self.one_shots = []
 
-    # 한 프레임의 이탈 상태 관측
     def observe(self, event, time_s, frame_duration_s):
         """확정 이탈이면 구간을 연장하고 복귀·불확실이면 해당 시각에 닫는다."""
         if event and event.get("voice_clip") and not event.get("repeat"):
@@ -53,7 +47,6 @@ class CrosswalkVoice:
             return
         self._close(time_s)
 
-    # 현재 이탈 구간 닫기
     def _close(self, time_s):
         """열린 구간을 복귀나 불확실 판정을 처음 받은 현재 시각에 종료한다."""
         if self.active is None:
@@ -63,7 +56,6 @@ class CrosswalkVoice:
             self.intervals.append((self.active["start"], end, self.active["clip"]))
         self.active = None
 
-    # 영상 종료 시 구간과 반복 이벤트 완성
     def events(self, duration_s):
         """같은 방향의 짧은 복귀를 이어 문장이 끝나는 경계마다 반복한다."""
         if self.active is not None:
@@ -92,7 +84,6 @@ class CrosswalkVoice:
         return sorted(events + self.one_shots, key=lambda item: item[0])
 
 
-# 저장 영상의 모든 안내를 전역 우선순위로 병합
 def prioritize_voice_events(walking_events, traffic_events, crosswalk_events,
                             walking_surface_events=()):
     """상위 음성이 재생 중인 시점의 하위 이벤트를 폐기해 단일 재생 시간축을 만든다."""

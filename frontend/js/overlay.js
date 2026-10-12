@@ -1,6 +1,4 @@
 /**
- * file_path: frontend/js/overlay.js
- *
  * 같은 카메라 화면에 보행 마스크, 예상보행경로, 위험 객체, 신호등을 겹쳐 그린다.
  */
 window.GOverlay = (() => {
@@ -16,7 +14,6 @@ window.GOverlay = (() => {
       ? `OCR ${(score * 100).toFixed(1)}%` : "";
   }
 
-  // 프레임 크기에 맞는 캔버스 준비
   /** 카메라와 같은 비율로 오버레이 좌표를 맞춘다. */
   function size(width, height) {
     if (canvas.width !== width || canvas.height !== height) {
@@ -25,7 +22,6 @@ window.GOverlay = (() => {
     }
   }
 
-  // 정규화된 다각형 표시
   /** 예상보행경로의 좌우 이동을 그대로 화면에 표시한다. */
   function polygon(points, stroke, fill) {
     if (!Array.isArray(points) || points.length < 3) return;
@@ -40,7 +36,6 @@ window.GOverlay = (() => {
     ctx.stroke();
   }
 
-  // 왼쪽·가운데·오른쪽 방향 구역 경계 표시
   /** 음성 판단과 같은 30%·70% 경계를 화면 전체 높이의 점선으로 표시한다. */
   function directionBoundaries() {
     const guidance = window.GConfig?.get?.().audio?.guidance || {};
@@ -60,7 +55,6 @@ window.GOverlay = (() => {
     ctx.restore();
   }
 
-  // 정규화된 탐지 박스와 라벨 표시
   /** 보행 장애물과 신호등을 색상과 짧은 이름으로 구분한다. */
   function boxes(items, kind) {
     for (const item of items || []) {
@@ -266,7 +260,6 @@ window.GOverlay = (() => {
     ctx.restore();
   }
 
-  // 횡단보도 안전 경계 표시
   /** 가상 사용자 위치 높이에서 추정한 좌우 경계와 현재 발 위치를 그린다. */
   function crosswalkSafety(event) {
     const geometry = event?.geometry;
@@ -286,7 +279,6 @@ window.GOverlay = (() => {
     ctx.fill();
   }
 
-  // 현재 횡단보도 상태 표시
   /** 모바일 화면 오른쪽 위에 현재 횡단 상태를 짧은 배지로 표시한다. */
   function crosswalkStatus(event) {
     const status = event?.status;
@@ -304,7 +296,6 @@ window.GOverlay = (() => {
     ctx.fillText(text, x + padding, y + height - 8);
   }
 
-  // 현재 장애물 이동 행동과 실제 음성 재생 상태 표시
   /** 안전성·전환 확인을 마친 행동과 실제 재생 중인 음성을 표시한다. */
   function actionStatus(event) {
     const action = (event && "voice_action" in event ? event.voice_action : event?.last_action) ?? "none";
@@ -325,7 +316,6 @@ window.GOverlay = (() => {
       text, x + padding, y + lineHeight * (index + 1) - 8));
   }
 
-  // 하단 횡단보도 판단 ROI 표시
   /** 서버 판정에 사용한 고정 ROI를 보라색 테두리로 표시한다. */
   function crosswalkRoi(event) {
     const roi = event?.crosswalk_roi;
@@ -336,7 +326,6 @@ window.GOverlay = (() => {
       "#9b5de5", "#9b5de50d");
   }
 
-  // 보행로 판정용 가상 발 ROI 표시
   /** 흰색 가상 발 주변에서 실제 판정에 사용한 작은 영역을 녹색 테두리로 표시한다. */
   function walkingSurfaceRoi(event) {
     const roi = event?.roi;
@@ -349,7 +338,6 @@ window.GOverlay = (() => {
       (right - left) * canvas.width, (bottom - top) * canvas.height);
   }
 
-  // 현재 보행로 상태 표시
   /** 횡단보도 상태 아래에 독립적인 보행로 이탈 상태를 표시한다. */
   function walkingSurfaceStatus(event) {
     const status = event?.status;
@@ -367,7 +355,6 @@ window.GOverlay = (() => {
     ctx.fillText(text, x + padding, y + height - 8);
   }
 
-  // 서버 응답의 PNG 마스크와 위험·신호 결과 합성
   /** 새 결과가 도착했을 때 이전 프레임의 비동기 이미지 로딩을 무효화한다. */
   function render(result, onDrawn = () => {}) {
     const current = ++version;
@@ -420,7 +407,6 @@ window.GOverlay = (() => {
     mask.src = `data:image/png;base64,${result.walking.mask_png}`;
   }
 
-  // 종료할 때 이전 추론 화면 제거
   /** 카메라 영상만 남기고 분석 결과를 지운다. */
   function clear() {
     version++;

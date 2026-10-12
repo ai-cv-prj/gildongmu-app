@@ -1,18 +1,12 @@
-"""
-file_path: src/risk_geometry.py
-
-Image-space path occupancy. Sidewalk labels supply context, never a hard gate.
-"""
+"""Image-space path occupancy. Sidewalk labels supply context, never a hard gate."""
 import cv2
 import numpy as np
 
-# 박스를 다각형으로 변환
 def rectangle(box):
     """객체 박스를 사각형 꼭짓점 배열로 변환한다."""
     x1, y1, x2, y2 = box
     return np.asarray([[x1,y1],[x2,y1],[x2,y2],[x1,y2]], dtype=np.float32)
 
-# ROI와 객체 발자국의 겹침 계산
 def overlap(box, polygon):
     """박스 면적 중 ROI와 겹치는 비율을 계산한다."""
     area = (box[2]-box[0]) * (box[3]-box[1])
@@ -21,7 +15,6 @@ def overlap(box, polygon):
     intersection, _ = cv2.intersectConvexConvex(rectangle(box), np.asarray(polygon, np.float32))
     return float(np.clip(intersection / area, 0, 1))
 
-# 위험 판정용 화면 기하 계산
 def geometry(detection, shape, cfg, roi=None):
     """객체 발자국과 복도·즉시 위험 ROI의 관계를 계산한다."""
     height, width = shape[:2]
@@ -46,7 +39,6 @@ def geometry(detection, shape, cfg, roi=None):
                          [cfg["central_danger_right"], 1.0],
                          [cfg["central_danger_left"], 1.0]]
     corridors = roi.get("corridor_polygons",[corridor]) if roi else [corridor]
-    # 객체와 ROI 경계 사이의 수평 간격 계산
     def gap(polygon):
         """객체 발자국에서 다각형 경계까지의 수평 간격을 구한다."""
         intersections=[]
@@ -91,7 +83,6 @@ def geometry(detection, shape, cfg, roi=None):
         "clipped": x1 <= 1/width or y1 <= 1/height or x2 >= 1-1/width or y2 >= 1-1/height,
     }
 
-# 검출 주변 보행가능영역 설명
 def sidewalk_context(item, class_map, label_ids, shape):
     """객체 발자국에서 보행가능영역의 비율을 확인한다."""
     if class_map is None or label_ids is None or class_map.shape != tuple(shape[:2]):
@@ -109,7 +100,6 @@ def sidewalk_context(item, class_map, label_ids, shape):
     return {"status": "available", "walkable_fraction": fraction}
 
 
-# 장애물 bbox 주변의 보행가능영역 검사
 def surrounding_walkability(item, class_map, label_ids, shape, cfg):
     """
     bbox의 보이는 왼쪽·오른쪽·아래쪽 영역에서 보행가능 비율을 계산한다.

@@ -1,6 +1,4 @@
 /**
- * file_path: frontend/js/api.js
- *
  * 모바일 화면의 세션 시작·프레임 추론·녹화 업로드 요청을 묶는다.
  */
 window.GApi = (() => {
@@ -99,8 +97,7 @@ window.GApi = (() => {
     return request("/api/config", { cache: "no-store" }, { operation: "config" }, true);
   }
 
-  // 휴대폰 모델로 테스트 세션 생성
-  /** 추론 모델 로딩이 끝나면 세션 번호를 반환한다. */
+  /** 기기 정보로 세션을 생성하고 추론 모델 로딩 후 세션 번호를 반환한다. */
   function start(deviceName, note, busHighres = false) {
     return request("/api/sessions", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ device_name: deviceName, note, bus_highres: busHighres }) },
@@ -115,7 +112,6 @@ window.GApi = (() => {
     }, { operation: "session_metadata", session_id: sessionId });
   }
 
-  // JPEG 한 장 전송
   /** 한 번에 한 장의 카메라 프레임을 전송한다. */
   function frame(sessionId, frameId, capturedAtMs, blob, signal, busBlob = null, busCapturedAtMs = null) {
     const body = new FormData();
@@ -130,7 +126,6 @@ window.GApi = (() => {
       { operation: "frame", session_id: sessionId, frame_id: frameId, timeout_ms: 10000 }, true);
   }
 
-  // WebM 녹화물 저장
   /** 녹화한 카메라와 안내 음성 파일을 서버 세션에 올린다. */
   function recording(sessionId, blob) {
     const body = new FormData();
@@ -139,7 +134,6 @@ window.GApi = (() => {
       { operation: "recording", session_id: sessionId, timeout_ms: 120000 });
   }
 
-  // 원본 카메라 영상 저장
   /** 오버레이와 현장 소리가 없는 카메라 영상을 서버에 올린다. */
   function camera(sessionId, blob) {
     const body = new FormData();
@@ -234,8 +228,7 @@ window.GApi = (() => {
     }, { operation: "bus_events", session_id: sessionId });
   }
 
-  // 테스트 종료
-  /** 파일로 저장된 프레임 수를 포함한 요약을 받는다. */
+  /** 세션을 종료하고 저장된 프레임 수를 포함한 요약을 받는다. */
   function stop(sessionId) {
     return request("/api/sessions/stop", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: sessionId }) },

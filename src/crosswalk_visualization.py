@@ -1,7 +1,4 @@
-"""
-file_path: src/crosswalk_visualization.py
-
-횡단보도 좌우 경계와 가상 사용자 위치 및 판정 상태를 결과 영상에 표시한다.
+"""횡단보도 좌우 경계와 가상 사용자 위치 및 판정 상태를 결과 영상에 표시한다.
 영상으로 임계값을 조정할 때 판정 근거를 함께 확인하기 위한 디버그 화면이다.
 """
 
@@ -13,7 +10,6 @@ SAFE_BOUNDARY_COLOR = (224, 107, 241)
 EXIT_BOUNDARY_COLOR = (91, 67, 255)
 
 
-# 횡단보도 안전 판정 오버레이
 def draw_crosswalk_safety(frame, event):
     """정규화된 발 위치와 좌우 경계 및 현재 상태를 원본 크기에 맞춰 그린다."""
     result = frame.copy()

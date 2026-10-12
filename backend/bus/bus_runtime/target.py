@@ -33,8 +33,8 @@ def competing_route(text, target, alternatives=()):
     if exact_route(text,target): return False
     if any(text in route_aliases(r) for r in alternatives): return True
     key=re.sub(r'^[가-힣]+','',target)
-    # API 후보가 없는 실험에서도 한 글자 차이와 더 긴 경쟁 번호를 감시한다.
-    # A/B는 이 실험의 지원 접미사다. 전국 노선 형식에 대한 주장이 아니다.
+    # API 후보 없이도 한 글자 차이와 더 긴 경쟁 번호를 감시한다.
+    # 자동 경쟁 후보의 접미사는 A/B로 제한하며 모든 노선 형식을 포괄하지 않는다.
     # 명시적인 target/alternatives는 위의 alias 비교가 우선한다.
     valid = re.fullmatch(r'(?:M|N)?[0-9]+[AB]?(?:-[0-9]+)?', text)
     if not valid:return False
@@ -46,7 +46,7 @@ def competing_route(text, target, alternatives=()):
 
 
 class TargetMatcher:
-    """실험용 일치 후보. 실제 탑승 확정기/보정된 확률이 아니다."""
+    """영상 근거로 목표 노선 일치를 판정한다. 실제 탑승이나 정답 확률은 보장하지 않는다."""
     def __init__(self, target, alternatives=(), window_s=2.0, min_samples=3, min_span_s=.4, single_score=None):
         route_aliases(target)
         for route in alternatives: route_aliases(route)

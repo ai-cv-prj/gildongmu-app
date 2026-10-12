@@ -1,8 +1,4 @@
-"""
-file_path: src/path_roi.py
-
-Bounded sidewalk guidance for a fixed-facing moving camera; no route intent inference.
-"""
+"""Bounded sidewalk guidance for a fixed-facing moving camera; no route intent inference."""
 from copy import deepcopy
 import math
 import cv2
@@ -11,7 +7,6 @@ from src.roi_recalibration import DirectionCalibration
 from src.ground_extent import GroundExtent
 
 class SidewalkGuidedROI:
-    # 예상보행경로(ROI) 보정기 초기화
     def __init__(self, cfg):
         """기본 ROI와 보행가능영역 보정 상태를 준비한다."""
         self.cfg = cfg
@@ -21,7 +16,6 @@ class SidewalkGuidedROI:
         self.base_center = float(self.base[self.top_indices,0].mean())
         self.reset()
 
-    # ROI 보정 상태 초기화
     def reset(self):
         """새 영상에서 이전 보정 값을 지운다."""
         self.calibration = DirectionCalibration(self.cfg)
@@ -33,7 +27,6 @@ class SidewalkGuidedROI:
         self.held_center = self.center
         self.last_confidence = 0.0
 
-    # 보행가능영역 중심 후보 계산
     def _candidate(self, class_map, label_ids, shape):
         """보행 마스크의 연결 성분으로 ROI 중심선 후보를 구한다."""
         info = {"reason":"mask_unavailable", "confidence":0.0, "band_count":0, "boundary_bands":0}
@@ -92,7 +85,6 @@ class SidewalkGuidedROI:
                     candidate_center=target)
         return target,info
 
-    # 예상보행경로(ROI) 갱신
     def update(self, class_map, label_ids, shape, timestamp, timestamp_valid=True):
         """보행가능영역과 시간 연속성으로 ROI 위치를 안정화한다."""
         if self.cfg["roi_recalibration_enabled"]:

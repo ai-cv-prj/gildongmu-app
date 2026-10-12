@@ -1,7 +1,5 @@
 /**
- * file_path: frontend/js/tts.js
- *
- * 테스트앱의 한국어 MP3 안내를 휴대폰에서 재생한다.
+ * 한국어 MP3 안내와 기기 음성 합성을 휴대폰에서 재생한다.
  */
 (() => {
   const CLIPS = new Map([
