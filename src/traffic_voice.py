@@ -239,7 +239,14 @@ class TrafficVoice:
             self.waiting_green = True
         if next_color == "green":
             self.red_confirmed_time = self.last_red_frame = None
-        if self.last_announced_target == target and self.last_announced_color == next_color and not recovered:
+        # 같은 색은 마지막 안내 후 반복 간격이 지나기 전에는 추적 ID가 바뀌어도 다시 읽지 않는다.
+        # 신호 확인 불가를 안내한 뒤에는 다시 잡은 것을 바로 알린다.
+        recent_same_color = (self.last_announced_time is not None
+                             and time_s - self.last_announced_time < REPEAT_SECONDS - 1e-9)
+        if ((self.last_announced_target == target or recent_same_color)
+                and self.last_announced_color == next_color and not recovered):
+            # 새 ID로 반복 일정을 이어 간다.
+            self.last_announced_target = target
             return
         self.last_announced_target = target
         self.last_announced_color = next_color

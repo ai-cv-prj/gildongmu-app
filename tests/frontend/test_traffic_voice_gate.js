@@ -8,6 +8,8 @@ const fs = require("node:fs");
 const vm = require("node:vm");
 const test = require("node:test");
 const settings = require("./settings");
+// 신호 확인 불가 기준 시간은 설정값을 따른다.
+const MISSING = settings.audio.guidance.missing_ms;
 
 // 신호 안내기와 제어 가능한 프레임 시계 구성
 /** 실제 안내 코드를 실행하며 음성 요청과 취소 출처를 기록한다. */
@@ -73,11 +75,13 @@ test("ROI에 다시 들어오면 이전과 같은 빨간불도 새로 안내한�
 test("신호 확인 불가는 최신 ROI 조건을 충족할 때만 생성한다", () => {
   const h = harness();
   for (const t of [0, 200, 400]) h.send("red", t, true);
-  for (const t of [1000, 1800, 2400]) h.send(null, t, true);
-  h.tick(2400);
+  const lost = 400 + MISSING;
+  for (let t = 1000; t < lost; t += 800) h.send(null, t, true);
+  h.send(null, lost, true);
+  h.tick(lost);
   assert.deepEqual(h.requests.map(item => item.text), ["빨간불", "신호 확인 불가"]);
-  h.send(null, 2600, false);
-  h.tick(6000);
+  h.send(null, lost + 200, false);
+  h.tick(lost + 3600);
   assert.equal(h.requests.length, 2);
 });
 
@@ -102,7 +106,8 @@ test("초록불로 바뀐 뒤 건너는 중 짧게 끊기면 다른 대상의 �
   h.send("green", 1400, false, crossing);
   assert.ok(h.cleared.includes("traffic"));
   for (const t of [1600, 1800, 2000]) h.send("green", t, true, { crossing: true, target: 2 });
-  assert.deepEqual(h.requests.map(item => item.text), ["빨간불", "초록불로 바뀜", "초록불"]);
+  // 대기 문구 없이 같은 초록으로 이어 가며, 반복 간격 안이라 다시 읽지 않는다.
+  assert.deepEqual(h.requests.map(item => item.text), ["빨간불", "초록불로 바뀜"]);
 });
 
 test("횡단이 끝났거나 근거가 오래 끊기면 다시 잡은 초록불을 처음처럼 안내한다", () => {
@@ -144,13 +149,17 @@ test("순간 오인식 한 프레임이 섞여도 최근 다수 색상으로 전
 });
 
 test("신호를 잠깐 놓쳐도 5초 안에는 직전 색상을 기억해 전환으로 안내한다", () => {
-  for (const [nullTimes, start, expected] of [
-    [[1000, 1800, 2400], 2600, "초록불로 바뀜"],
-    [[1000, 1800, 2400, 3200, 4000, 4800, 5600], 6000, "초록불"],
+  const lost = 400 + MISSING;
+  for (const [until, start, expected] of [
+    [lost, lost + 200, "초록불로 바뀜"],
+    [6000, 6000, "초록불"],
   ]) {
     const h = harness();
     for (const t of [0, 200, 400]) h.send("red", t, true);
-    for (const t of nullTimes) { h.send(null, t, true); h.tick(t); }
+    const nullTimes = [];
+    for (let t = 1000; t < until; t += 800) nullTimes.push(t);
+    nullTimes.push(lost);
+    for (const t of nullTimes.sort((a, b) => a - b)) { h.send(null, t, true); h.tick(t); }
     for (const t of [start, start + 200, start + 400]) h.send("green", t, true);
     assert.deepEqual(h.requests.map(item => item.text), ["빨간불", "신호 확인 불가", expected]);
   }
@@ -187,13 +196,14 @@ test("최초 초록의 대기 상태는 같은 ID·다른 ID 재인식으로 해
   for (const target of [1, 2]) {
     const h = harness();
     for (const t of [0, 250, 500]) h.send("green", t, true);
-    for (const t of [750, 1250, 1750, 2250, 2750]) { h.send(null, t, true); h.tick(t); }
-    for (const t of [3000, 3250, 3500]) h.send("green", t, true, { target });
+    const back = 500 + MISSING + 250;
+    for (let t = 750; t < back; t += 250) { h.send(null, t, true); h.tick(t); }
+    for (const t of [back, back + 250, back + 500]) h.send("green", t, true, { target });
     assert.deepEqual(h.requests.map(item => item.text).filter(text => text.startsWith("초록불")),
       ["초록불, 다음 신호까지 대기", "초록불, 다음 신호까지 대기"], `target ${target}`);
     // 빨강→초록 전환을 확인한 뒤에야 일반 초록 안내로 바뀐다.
-    for (const t of [3750, 4000, 4250, 4500, 4750]) h.send("red", t, true, { target });
-    for (const t of [5000, 5250, 5500]) h.send("green", t, true, { target });
+    for (let t = back + 750; t <= back + 1750; t += 250) h.send("red", t, true, { target });
+    for (const t of [back + 2000, back + 2250, back + 2500]) h.send("green", t, true, { target });
     assert.equal(h.requests.at(-1).text, "초록불로 바뀜");
   }
 });
@@ -298,4 +308,16 @@ test("초록불로 바뀐 직후 횡단 판정 전 수신이 잠깐 끊겨도 �
   for (let t = 3500; t <= 8000; t += 250) h.send("green", t, true);
   assert.equal(h.requests.some(item => item.text === "초록불, 다음 신호까지 대기"), false,
     h.requests.map(item => item.text).join(" / "));
+});
+
+test("같은 색은 마지막 안내 후 반복 간격 안에서는 추적 ID가 바뀌어도 다시 읽지 않는다", () => {
+  const REPEAT = settings.audio.guidance.traffic_repeat_ms;
+  const h = harness();
+  for (const t of [0, 250, 500]) h.send("red", t, true);
+  h.send(null, 1000, true);
+  for (const t of [1250, 1500, 1750]) h.send("red", t, true, { target: 2 });
+  assert.deepEqual(h.requests.map(item => item.text), ["빨간불"]);
+  for (let t = 2000; t <= REPEAT + 750; t += 250) h.send("red", t, true, { target: 2 });
+  assert.deepEqual(h.requests.map(item => item.text), ["빨간불", "빨간불"]);
+  assert.equal(h.requests[1].metadata.repeat, true);
 });

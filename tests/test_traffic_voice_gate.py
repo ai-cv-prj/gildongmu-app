@@ -14,7 +14,7 @@ import yaml
 
 from backend.response import make_response
 from src.settings import load_audio_settings
-from src.traffic_voice import TrafficVoice
+from src.traffic_voice import MISSING_SECONDS, TrafficVoice
 from src.traffic_voice_gate import traffic_voice_gate
 from src.voice_priority import prioritize_voice_events
 from test_field_guidance import stop_model
@@ -117,7 +117,8 @@ def test_crossing_keeps_confirmed_signal_through_short_gate_loss():
     assert voice.events[-1] == (1.2, None)
     for index in range(8, 11):
         voice.observe(signal("green", target=2), index + 1, index * .2, crossing_active=True)
-    assert voice.events[-1] == (pytest.approx(2.0), "green.mp3")
+    # 대기 문구 없이 같은 초록으로 이어 가며, 반복 간격 안이라 다시 읽지 않는다.
+    assert [clip for _, clip in voice.events if clip] == ["red.mp3", "green-changed.mp3"]
 
 
 # 빨간불·대기 안내 뒤 횡단 상태에서도 신호 기억 해제 확인
@@ -162,7 +163,8 @@ def test_majority_confirms_change_despite_single_flicker():
 
 
 # 짧은 신호 소실 뒤 직전 색상 기억 확인
-@pytest.mark.parametrize("unknown_until,expected", [(2.6, "green-changed.mp3"), (6.0, "green.mp3")])
+@pytest.mark.parametrize("unknown_until,expected", [(round(.4 + MISSING_SECONDS + .2, 1), "green-changed.mp3"),
+                                                    (6.0, "green.mp3")])
 def test_recent_color_memory_turns_recovery_into_change(unknown_until, expected):
     """신호를 놓쳐도 5초 안에 같은 대상의 다른 색을 확인하면 전환으로 안내한다."""
     voice = TrafficVoice()
@@ -215,10 +217,11 @@ def test_initial_wait_survives_loss_and_reacquisition(target):
             voice.observe(signal(color, target=tgt) if color else signal(target=None), frame, time_s)
             frame, time_s = frame + 1, round(time_s + .25, 2)
     feed("green", .75)
-    feed(None, 3.0)
-    feed("green", 3.75, target)
-    feed("red", 5.0, target)
-    feed("green", 5.75, target)
+    back = round(.5 + MISSING_SECONDS + .5, 2)
+    feed(None, back)
+    feed("green", back + .75, target)
+    feed("red", back + 2.0, target)
+    feed("green", back + 2.75, target)
     clips = [clip for _, clip in voice.events]
     assert clips[0] == "green-initial-wait.mp3" and "missing.mp3" in clips
     after = clips[clips.index("missing.mp3") + 1:]

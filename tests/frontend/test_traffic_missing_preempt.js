@@ -9,6 +9,8 @@ const fs = require("node:fs");
 const vm = require("node:vm");
 const test = require("node:test");
 const settings = require("./settings");
+// 신호 확인 불가 기준 시간은 설정값을 따른다.
+const MISSING = settings.audio.guidance.missing_ms;
 
 // 실제 음성 관리자와 신호 안내기를 연결한 재생 환경 구성
 /** 재생 문구를 기록하고 프레임 시각과 문장 종료를 직접 제어한다. */
@@ -52,12 +54,13 @@ test("신호 확인 불가 재생 중 초록불을 다시 잡으면 바로 끊�
   for (const t of [0, 250, 500]) h.send("green", t);
   assert.equal(h.spoken.at(-1), "초록불, 다음 신호까지 대기");
   h.end();
-  for (const t of [750, 1000, 1500, 2000, 2500]) h.send(null, t);
-  h.tick(2500);
+  const lost = 500 + MISSING;
+  for (let t = 750; t <= lost; t += 500) h.send(null, t);
+  h.tick(lost);
   assert.equal(h.spoken.at(-1), "신호 확인 불가");
   // 소실 안내가 끝나기 전에 같은 대상의 초록불을 다시 확정한다.
   // 전환을 보지 못한 초록이므로 다시 잡아도 대기 안내를 유지한다.
-  for (const t of [2750, 3000, 3250]) h.send("green", t);
+  for (const t of [lost + 250, lost + 500, lost + 750]) h.send("green", t);
   assert.equal(h.spoken.at(-1), "초록불, 다음 신호까지 대기");
 });
 

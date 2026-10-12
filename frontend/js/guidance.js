@@ -296,8 +296,13 @@
       if (next === "red" || text === "초록불로 바뀜") waitingGreen = false;
       else if (text === "초록불, 다음 신호까지 대기") waitingGreen = true;
       if (next === "green") redConfirmedAt = lastRedFrame = null;
-      if (lastAnnouncedTarget === target && lastAnnouncedColor === next && !recoveredAfterMissing) {
-        // 소실 안내가 없었던 짧은 끊김 뒤 같은 대상·색상은 반복하지 않는다.
+      // 같은 색은 마지막 안내 후 반복 간격이 지나기 전에는 추적 ID가 바뀌어도 다시 읽지 않는다.
+      // 신호 확인 불가를 안내한 뒤에는 다시 잡은 것을 바로 알린다.
+      const recentSameColor = lastAnnouncedAt !== null && capturedAt - lastAnnouncedAt < limits.traffic_repeat_ms;
+      if ((lastAnnouncedTarget === target || recentSameColor) && lastAnnouncedColor === next
+          && !recoveredAfterMissing) {
+        // 소실 안내가 없었던 짧은 끊김 뒤 같은 색상은 반복하지 않고, 새 ID로 반복 일정을 이어 간다.
+        lastAnnouncedTarget = target;
         update(mock ? `모의 신호. ${text}` : text);
         return;
       }
