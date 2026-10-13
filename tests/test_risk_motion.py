@@ -131,8 +131,30 @@ def test_ransac_minimum_point_count_is_validated(value):
 # 2초 연속 배경 정지 확인
 def test_background_stationarity_requires_two_seconds_and_holds_short_motion():
     """2초 뒤 정지를 확정하고 0.8초 미만 흔들림에는 정지 상태를 유지한다."""
-    moving = {**STILL, "median_motion_per_s": .04}
+    moving = {**STILL, "median_motion_per_s": .08, "p80_motion_per_s": .12}
     guard = StubBackgroundStationarityGuard([None] + [STILL] * 5 + [moving] * 3)
+    assert guard.update(FRAME, [], 0.0)["status"] == "uncertain"
+    for timestamp in (.5, 1.0, 1.5, 2.0):
+        assert guard.update(FRAME, [], timestamp)["status"] == "confirming"
+    result = guard.update(FRAME, [], 2.5)
+    assert result["status"] == "stationary"
+    assert result["duration_s"] == pytest.approx(2.0)
+    assert guard.update(FRAME, [], 3.0)["status"] == "stationary"
+    assert guard.update(FRAME, [], 3.5)["status"] == "stationary"
+    assert guard.update(FRAME, [], 4.0)["status"] == "moving"
+
+
+# 가벼운 손 흔들림의 정지 확정과 기준 초과 시 해제 확인
+@pytest.mark.parametrize(("metric", "moving_value"), [
+    ("median_motion_per_s", .061),
+    ("p80_motion_per_s", .101),
+    ("scale_change_per_s", .031),
+])
+def test_stationary_accepts_hand_shake_and_releases_sustained_movement(metric, moving_value):
+    """허용된 손 흔들림은 2초 뒤 정지로 보고 어느 기준이든 계속 넘으면 해제한다."""
+    hand_shake = {**STILL, "median_motion_per_s": .055, "p80_motion_per_s": .09}
+    moving = {**hand_shake, metric: moving_value}
+    guard = StubBackgroundStationarityGuard([None] + [hand_shake] * 5 + [moving] * 3)
     assert guard.update(FRAME, [], 0.0)["status"] == "uncertain"
     for timestamp in (.5, 1.0, 1.5, 2.0):
         assert guard.update(FRAME, [], timestamp)["status"] == "confirming"
