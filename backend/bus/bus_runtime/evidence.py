@@ -5,7 +5,9 @@ import re
 from PIL import Image
 from .target import token_quality
 from .route_evidence import crop_rejection, text_rejection, context_boxes, context_rejection
-from .region_recovery import recovery_boxes, confirmation_box, is_extension, RECOVERY_POLICY
+from .region_recovery import (recovery_boxes, confirmation_box, is_extension,
+                              is_same_number, same_number_confirmation_box,
+                              same_number_fallback_boxes, RECOVERY_POLICY)
 
 def overlap(a,b):
     x,y,z,w=a;u,v,s,t=b
@@ -195,32 +197,94 @@ def select_candidates(rgb, items, bus_index, buses, max_candidates):
     return checked[:max_candidates],len(checked),valid_count,valid_count>max_candidates
 
 
+def _same_number_geometry_rejection(rgb, source, box, buses):
+    reason = crop_rejection(rgb, box, source['bus_box'], source['search_box'])
+    if not eligible_box(box, source['bus_index'], buses, rgb.shape):
+        reason = reason or 'small_clipped_or_ambiguous_bus'
+    probe = {**source, 'text_box': box, 'eligible': True}
+    gate_other_bus_overlap([probe], buses)
+    if not probe['eligible']:
+        reason = reason or probe.get('visibility_rejection_reason', 'ambiguous_bus')
+    return reason
+
+
 def recover_regions(rgb,current,buses,recognizer):
-    """Require matching OCR of two larger crops before replacing a partial source."""
+    """Require two expanded pixel reads; promote at most one result per source."""
     jobs=[]
+    selected_sources=[]
     for j,bus in enumerate(buses):
-        sources=[p for p in current if p['bus_index']==j and recovery_boxes(p,rgb.shape)]
+        sources=[p for p in current if p['bus_index']==j
+                 and (recovery_boxes(p,rgb.shape) or same_number_fallback_boxes(p,rgb.shape))]
         sources.sort(key=lambda p:min(p['token_scores']),reverse=True)
         for p in sources[:RECOVERY_POLICY['max_sources_per_bus']]:
+            selected_sources.append(p)
             for side,box in recovery_boxes(p,rgb.shape):
                 jobs.append((p,side,box))
     confirmations=[]
+    first_reads={}
     for start in range(0,len(jobs),16):
         chunk=jobs[start:start+16]
         crops=[Image.fromarray(rgb[b:d,a:c]) for _,_,(a,b,c,d) in chunk]
         for (source,side,box),pred in zip(chunk,recognizer.predict_batch(crops)):
             check={'side':side,'box':box,**asdict(pred),'accepted':False}
             source.setdefault('recovery_checks',[]).append(check)
+            first_reads.setdefault(id(source), []).append((side,box,pred,check))
             if not is_extension(source['text'],pred.text,pred.token_scores,side):continue
             confirm=confirmation_box(box,side,source['text_box'],source['search_box'])
-            if confirm is not None:confirmations.append((source,side,box,pred,check,confirm))
+            if confirm is not None:confirmations.append((source,side,box,pred,check,confirm,'extension'))
+    fallback_jobs=[]
+    for source in selected_sources:
+        reads = first_reads.get(id(source), [])
+        if not is_same_number(source, source['text'], source['token_scores']):
+            continue
+        if _same_number_geometry_rejection(rgb, source, source['text_box'], buses):
+            continue
+        # A confident longer/different reading must not be hidden by agreeing
+        # crops on the shorter string. Existing extension recovery stays active.
+        if any(pred.text != source['text'] and token_quality(pred.token_scores) >= .9
+               for _,_,pred,_ in reads):
+            continue
+        same_reads=[read for read in reads if is_same_number(source,read[2].text,read[2].token_scores)]
+        options=[]
+        for side,box,pred,check in same_reads:
+            confirm = same_number_confirmation_box(box, side, source['text_box'], source['search_box'])
+            if (confirm is not None
+                    and (confirm[2]-confirm[0])/(confirm[3]-confirm[1])/len(source['text'])
+                        >= RECOVERY_POLICY['min_extended_aspect_per_character']
+                    and not _same_number_geometry_rejection(rgb, source, box, buses)
+                    and not _same_number_geometry_rejection(rgb, source, confirm, buses)):
+                options.append((source,side,box,pred,check,confirm,'density_same_text'))
+        if options:
+            # Reuse the ordinary left/right reads and spend at most one extra
+            # confirmation on this source, within the shared four-source budget.
+            confirmations.append(max(options, key=lambda job: token_quality(job[3].token_scores)))
+        elif not same_reads:
+            # Large asymmetric context can dilute a tiny, oblique number.
+            # Try exactly one fixed small crop, then one confirmation only if
+            # it agrees. Never retry after a qualifying ordinary read fails
+            # its confirmation, or search margins until a wanted text appears.
+            boxes=same_number_fallback_boxes(source,rgb.shape)
+            if boxes and all(not _same_number_geometry_rejection(rgb,source,box,buses) for box in boxes):
+                fallback_jobs.append((source,*boxes))
+    for start in range(0,len(fallback_jobs),16):
+        chunk=fallback_jobs[start:start+16]
+        crops=[Image.fromarray(rgb[b:d,a:c]) for _,(a,b,c,d),_ in chunk]
+        for (source,box,confirm),pred in zip(chunk,recognizer.predict_batch(crops)):
+            check={'side':'symmetric','box':box,**asdict(pred),'accepted':False,
+                   'recovery_kind':'density_same_text','strategy':'symmetric_margins'}
+            source.setdefault('recovery_checks',[]).append(check)
+            if is_same_number(source,pred.text,pred.token_scores):
+                confirmations.append((source,'symmetric',box,pred,check,confirm,'density_same_text'))
     accepted=[]
     for start in range(0,len(confirmations),16):
         chunk=confirmations[start:start+16]
-        crops=[Image.fromarray(rgb[b:d,a:c]) for *_,(a,b,c,d) in chunk]
-        for (source,side,box,pred,check,confirm),second in zip(chunk,recognizer.predict_batch(crops)):
+        crops=[Image.fromarray(rgb[b:d,a:c]) for *_,(a,b,c,d),kind in chunk]
+        for (source,side,box,pred,check,confirm,kind),second in zip(chunk,recognizer.predict_batch(crops)):
             check['confirmation']={'box':confirm,**asdict(second)}
-            if second.text!=pred.text or not is_extension(source['text'],second.text,second.token_scores,side):continue
+            if kind == 'density_same_text':
+                check['recovery_kind'] = kind
+                if not is_same_number(source, second.text, second.token_scores):continue
+            elif second.text!=pred.text or not is_extension(source['text'],second.text,second.token_scores,side):continue
             reason=crop_rejection(rgb,box,source['bus_box'],source['search_box'])
             if not eligible_box(box,source['bus_index'],buses,rgb.shape):reason=reason or 'small_clipped_or_ambiguous_bus'
             a,b,c,d=box
@@ -231,14 +295,40 @@ def recover_regions(rgb,current,buses,recognizer):
             item={**source,**asdict(pred),'text_box':box,'eligible':not reason,
                   'rejection_reason':reason,'context_checks':[],'recovery_checks':[],
                   'recovered_from':{'box':source['text_box'],'text':source['text'],'side':side}}
+            if kind == 'density_same_text':
+                item['recovered_from'].update(kind=kind, verified_boxes=[box,confirm])
+                if side == 'symmetric':
+                    item['recovered_from']['strategy'] = 'symmetric_margins'
+                # Report an actual token vector from the weakest of all three
+                # agreeing reads; extra OCR must not inflate the source score.
+                item['token_scores'] = list(min(
+                    (source['token_scores'], pred.token_scores, second.token_scores),
+                    key=token_quality))
             # Keep registration/phone rejection active on the expanded region too.
-            for context in context_boxes(item,rgb.shape):
-                a,b,c,d=context;cp=recognizer.predict_batch([Image.fromarray(rgb[b:d,a:c])])[0]
+            contexts=context_boxes(item,rgb.shape)
+            if kind == 'density_same_text':
+                # Density rejection skipped original phone context earlier.
+                # Widening the box can also exceed its small-text size cutoff.
+                # Check the original geometry as well, using it only for vetoes.
+                contexts=list(dict.fromkeys([*context_boxes({**source,'eligible':True},rgb.shape), *contexts]))
+            context_crops=[Image.fromarray(rgb[b:d,a:c]) for a,b,c,d in contexts]
+            for context,cp in zip(contexts,recognizer.predict_batch(context_crops) if contexts else []):
                 rejection=context_rejection(item['text'],cp.text,cp.token_scores)
                 item['context_checks'].append({'box':context,**asdict(cp),'rejection_reason':rejection})
                 if rejection:item['eligible']=False;item['rejection_reason']=rejection
             if item['eligible']:
-                check['accepted']=True
-                source['eligible']=False;source['rejection_reason']='superseded_by_full_region'
-                accepted.append(item)
-    current.extend(accepted)
+                accepted.append((source,item,check))
+    for source in selected_sources:
+        proposals=[(item,check) for original,item,check in accepted if original is source]
+        # Two reads of one ROI are verification, not two route observations.
+        # Conflicting full extensions do not provide a unique replacement.
+        if not proposals:
+            continue
+        if len({item['text'] for item,_ in proposals}) != 1:
+            source['eligible']=False
+            source['rejection_reason']='ambiguous_full_region'
+            continue
+        item,check=max(proposals,key=lambda pair:token_quality(pair[0]['token_scores']))
+        check['accepted']=True
+        source['eligible']=False;source['rejection_reason']='superseded_by_full_region'
+        current.append(item)

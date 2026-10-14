@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import logging
+import math
 import re
 import shutil
 import subprocess
@@ -413,6 +414,68 @@ class ClipStore:
     def _point(point, width, height):
         return (int(float(point[0]) * width), int(float(point[1]) * height))
 
+    @staticmethod
+    def _draw_bus(frame, row):
+        """Draw recorded bus evidence when a browser overlay PNG is absent."""
+        bus = row.get("bus") or {}
+        if bus.get("status") in (None, "idle", "disabled", "loading", "unavailable", "error"):
+            return
+        captured, bus_captured = row.get("captured_at_ms"), bus.get("captured_at_ms")
+        if (not isinstance(captured, (int, float)) or not isinstance(bus_captured, (int, float))
+                or not math.isfinite(captured) or not math.isfinite(bus_captured)
+                or not -100 <= captured - bus_captured <= 1000):
+            return
+        # The separately captured bus JPEG can follow the main JPEG by a few ms.
+        # Older cached geometry must not be mistaken for a new vehicle position.
+        event = bus.get("event") or {}
+        target = event.get("target_route")
+        visible = {b.get("track_id"): b for b in event.get("buses", [])}
+        evidence = {}
+        for item in [*event.get("recognized_routes", []), *event.get("matches", [])]:
+            track = item.get("track_id")
+            is_target = item.get("is_target") is not False and item.get("route_number") == target
+            if (track not in visible or not item.get("route_number")
+                    or item.get("state") != "matched_candidate"
+                    and not (is_target and item.get("state") == "recognized_single")):
+                continue
+            decision = visible[track].get("decision")
+            if is_target and decision and decision.get("state") != item.get("state"):
+                continue
+            previous = evidence.get(track)
+            if previous is None or is_target:
+                evidence[track] = {**item, "is_target": is_target}
+        height, width = frame.shape[:2]
+        for detection in bus.get("detections", []):
+            is_number = detection.get("class_name") == "route_number" or detection.get("class_id") == 1
+            if not is_number and detection.get("class_name") != "bus" and detection.get("class_id") != 0:
+                continue
+            box = detection.get("box")
+            bounds = detection.get("xyxy") or ([box.get(k) for k in ("x1", "y1", "x2", "y2")]
+                                                if isinstance(box, dict) else None)
+            if not isinstance(bounds, (list, tuple)) or len(bounds) != 4:
+                continue
+            try:
+                values = [float(v) for v in bounds]
+            except (TypeError, ValueError):
+                continue
+            if not all(math.isfinite(v) for v in values):
+                continue
+            x1, y1, x2, y2 = [max(0., min(1., v)) for v in values]
+            if x2 <= x1 or y2 <= y1:
+                continue
+            match = evidence.get(detection.get("track_id"))
+            color = (255, 255, 255) if is_number else ((187, 215, 33) if match and match["is_target"]
+                      else (114, 97, 255) if match else (255, 189, 124))
+            left, top, right, bottom = int(x1*width), int(y1*height), int(x2*width), int(y2*height)
+            cv2.rectangle(frame, (left, top), (right, bottom), color, 2)
+            if is_number:
+                continue
+            label = "BUS"
+            if match:
+                state = "OTHER" if not match["is_target"] else "CONFIRMED" if match["state"] == "matched_candidate" else "CHECK"
+                label = f"{match['route_number']} {state}".encode("ascii", "ignore").decode()[:40]
+            cv2.putText(frame, label, (left, max(15, top-5)), cv2.FONT_HERSHEY_SIMPLEX, .5, color, 1)
+
     def _draw(self, frame, row, mask_path, overlay_path=None):
         height, width = frame.shape[:2]
         if overlay_path is not None and overlay_path.is_file():
@@ -456,6 +519,7 @@ class ClipStore:
                 label = str(detection.get("display_label") or detection.get("class_name") or section)
                 label = label.encode("ascii", "ignore").decode()[:30] or section
                 cv2.putText(frame, label, (x1, max(15, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, .5, color, 1)
+        self._draw_bus(frame, row)
         event = (row.get("walking") or {}).get("event") or {}
         level = str(event.get("level") or "").upper()[:18]
         signal = str(((row.get("traffic") or {}).get("event") or {}).get("signal_state") or "").upper()[:12]

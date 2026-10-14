@@ -23,6 +23,7 @@ from .bus_runtime.target import TargetMatcher, exact_route, token_quality
 from .bus_runtime.observed import ObservedRouteMatcher
 from .bus_runtime.continuity import BusTrackContinuity
 from .bus_runtime.led_diagnostics import led_row_diagnostics
+from .bus_runtime.zoom_search import ZOOM_POLICY, zoom_bus_index, zoom_rejection
 
 log = logging.getLogger(__name__)
 
@@ -110,21 +111,48 @@ class BusPipeline:
     def _observations(self, rgb: np.ndarray, buses: list[dict]) -> tuple[list[dict], list[str]]:
         pending: list[dict] = []
         errors: list[str] = []
+        region_items: dict[int, list[dict]] = {}
         for bus_index, bus in enumerate(buses):
             bus['candidate_count'] = 0
             bus['eligible_candidate_count'] = 0
             bus['candidate_truncated'] = False
+            bus['region_search'] = {'primary_candidates': 0, 'zoom_attempted': False,
+                                    'zoom_candidates': 0}
+            region_items[bus_index] = []
             try:
-                # The route-display detector searches the whole bus once.
+                # Primary search remains one full-bus pass with the fixed model.
                 search_box, boxes = self.detector.text_regions(rgb, bus['bus_box'])
-                items = [{'text_box': box, 'search_zone': 'upper',
+                bus['region_search']['primary_candidates'] = len(boxes)
+                region_items[bus_index] = [{'text_box': box, 'search_zone': 'upper',
                           'search_box': search_box, 'region_source': 'route_display'}
                          for box in boxes]
+            except Exception as exc:
+                log.exception('route-display detection failed for bus %s', bus_index)
+                bus['candidate_truncated'] = True
+                errors.append(f'region_detection_failed:{bus_index}:{type(exc).__name__}')
+        zoom = getattr(self.detector, 'zoom_regions', None)
+        retry_index = zoom_bus_index(buses, rgb.shape) if callable(zoom) else None
+        if retry_index is not None:
+            bus = buses[retry_index]
+            bus['region_search']['zoom_attempted'] = True
+            try:
+                search_box, boxes = zoom(rgb, bus['bus_box'])
+                bus['region_search']['zoom_candidates'] = len(boxes)
+                region_items[retry_index] = [{'text_box': box, 'search_zone': 'middle_zoom',
+                    'search_box': search_box, 'region_source': 'route_display_zoom'} for box in boxes]
+            except Exception as exc:
+                log.exception('route-display zoom failed for bus %s', retry_index)
+                bus['candidate_truncated'] = True
+                errors.append(f'region_zoom_failed:{retry_index}:{type(exc).__name__}')
+        for bus_index, bus in enumerate(buses):
+            try:
+                limit = (ZOOM_POLICY['max_candidates_per_bus'] if bus['region_search']['zoom_attempted']
+                         else MAX_CANDIDATES_PER_BUS)
                 selected, count, valid_count, truncated = select_candidates(
-                    rgb, items, bus_index, buses, MAX_CANDIDATES_PER_BUS)
+                    rgb, region_items[bus_index], bus_index, buses, limit)
                 bus['candidate_count'] = count
                 bus['eligible_candidate_count'] = valid_count
-                bus['candidate_truncated'] = truncated
+                bus['candidate_truncated'] |= truncated
                 for candidate_index, item in enumerate(selected):
                     pending.append({'track_id': bus['track_id'], 'bus_index': bus_index,
                                     'candidate_index': candidate_index,
@@ -140,7 +168,8 @@ class BusPipeline:
                 crops = [Image.fromarray(rgb[p['text_box'][1]:p['text_box'][3],
                                             p['text_box'][0]:p['text_box'][2]]) for p in chunk]
                 for item, pred in zip(chunk, self.recognizer.predict_batch(crops)):
-                    rejection = item['rejection_reason'] or text_rejection(pred.text, item['text_box'])
+                    rejection = (item['rejection_reason'] or text_rejection(pred.text, item['text_box'])
+                                 or zoom_rejection({**item, **asdict(pred)}))
                     current.append({**item, **asdict(pred), 'eligible': not rejection,
                                     'rejection_reason': rejection,
                                     'duplicate_bus_recovered': False,
@@ -170,6 +199,12 @@ class BusPipeline:
             for item in current:
                 item['eligible'] = False
                 item['rejection_reason'] = 'ocr_failed'
+        for item in current:
+            if item['eligible']:
+                reason = zoom_rejection(item)
+                if reason:
+                    item['eligible'] = False
+                    item['rejection_reason'] = reason
         gate_other_bus_overlap(current, buses)
         return current, errors
 
@@ -232,6 +267,7 @@ class BusPipeline:
                           'candidate_count': bus['candidate_count'],
                           'eligible_candidate_count': bus['eligible_candidate_count'],
                           'candidate_truncated': bus['candidate_truncated'],
+                          'region_search': bus['region_search'],
                           'observations': [], 'decision': decision}
             for item in observations:
                 quality = token_quality(item['token_scores'])

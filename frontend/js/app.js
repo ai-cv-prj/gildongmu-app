@@ -301,18 +301,6 @@
     bufferedBytes += bytes;
     return frame;
   }
-  function saveClipOverlay(clip, frame) {
-    if (!frame || clip.discarded || clip.overlay_finalized || !clip.frames.includes(frame)) return;
-    try {
-      const png = GOverlay.snapshot();
-      const bytes = png.length;
-      if (bytes > 2 * 1024 * 1024 * 4 / 3 || clip.frame_bytes + bytes > MAX_CLIP_FRAME_BYTES ||
-          bufferedBytes + GRecorder.bytes() + bytes > MAX_PENDING_BYTES) return;
-      frame.overlay_png = png;
-      clip.frame_bytes += bytes;
-      bufferedBytes += bytes;
-    } catch (error) { console.warn("화면 오버레이 저장 실패:", error); }
-  }
   const clipIndex = item => Number.parseInt(String(item.clip_id).replace(/[^0-9]/g, ""), 10);
   async function pollClipStatus() {
     if (!pendingCheckSessionId || !expectedClipIds.length) return;
@@ -359,18 +347,18 @@
       }
       while (pendingUploads.length) {
         const clip = pendingUploads[0];
-        // 추론 결과가 화면에 표시된 프레임만 저장한다.
+        // Preserve inference inputs even though live guidance does not render PNGs.
+        // The original recording and results remain available for later replay.
         clip.overlay_finalized = true;
-        clip.frames = clip.frames.filter(frame => frame.overlay_png);
         const frameBytes = clip.frames.reduce((sum, frame) =>
-          sum + frame.image.size + frame.mask_png.length + frame.overlay_png.length, 0);
+          sum + frame.image.size + frame.mask_png.length + (frame.overlay_png || "").length, 0);
         bufferedBytes -= clip.frame_bytes - frameBytes;
         clip.frame_bytes = frameBytes;
         await preserveClip(uploadSessionId, clip);
         if (!clip.frames.length) {
           // A discarded clip has no server manifest and must not remain in the completion wait list.
           expectedClipIds = expectedClipIds.filter(id => id !== clip.index);
-          diagnostic("clip_skipped", { clip_id: clip.index, reason: "no_overlay_frames" });
+          diagnostic("clip_skipped", { clip_id: clip.index, reason: "no_inference_frames" });
           status(`${clip.index}번째 구간에 완료된 추론 프레임이 없어 영상 쌍을 저장하지 않았습니다.`);
           bufferedBytes -= clip.blob.size + clip.frame_bytes;
           pendingUploads.shift();
@@ -494,6 +482,7 @@
     if (next.status === "submitted") {
       const route = normalizeRoute(next.bus_number);
       if (route !== activeRoute) {
+        GOverlay.clear();
         lastBusCaptureAtMs = null;
         activeRoute = route; busScreen = "search"; void GCamera.setBusMode(true); view.setRoute(route);
         if (!temporaryScreen()) view.show("search");
@@ -506,6 +495,7 @@
       }
     } else {
       if (activeRoute) {
+        GOverlay.clear();
         coordinator.clear("bus-start");
         journey.stop(); activeRoute = null; lastBusCaptureAtMs = null;
         void GCamera.setBusMode(false);
@@ -534,6 +524,7 @@
   }
   function busChanged(snapshot) {
     if (!running || !activeRoute || snapshot.route !== activeRoute) return;
+    const visualOcr = snapshot.visualOcr;
     const selected = snapshot.gps?.selected, arrival = selected?.arrival;
     const valid = ["ready", "tracking", "active"].includes(snapshot.gps?.status);
     const arrivalUnavailable = ["unavailable", "error", "denied"].includes(snapshot.gps?.status);
@@ -542,8 +533,8 @@
     view.setBus({ route: activeRoute, station: selected?.station?.station_name || (arrivalUnavailable ? "정류장 정보 없음" : "정류장 확인 중"),
       arrivalText: arrival?.first_arrival || (arrivalUnavailable ? "도착정보 이용 불가" : "도착정보 확인 중"), status: state,
       gpsMessage: snapshot.gps?.message || "현재 위치를 확인하고 있습니다.",
-      ocrMessage: snapshot.ocr?.message || "카메라에서 버스 번호를 찾고 있습니다.",
-      ocrStatus: snapshot.ocr?.status || "searching", ocrCapturedAt: snapshot.ocr?.capturedAt ?? null,
+      ocrMessage: visualOcr?.message || "카메라에서 버스 번호를 찾고 있습니다.",
+      ocrStatus: visualOcr?.status || "searching", ocrCapturedAt: visualOcr?.capturedAt ?? null,
       message: snapshot.gps?.message || "" });
     view.setStations((snapshot.gps?.candidates || []).map(match => ({ id: match.key,
       name: match.station?.station_name, distance_m: match.station?.distance_m,
@@ -557,7 +548,18 @@
         (result.session_id != null && result.session_id !== sessionId)) return;
     journey.accept(result.bus, result.bus.captured_at_ms ?? result.captured_at_ms);
   }
-  function showResult(result, capturedAt, clip = null, clipFrame = null, routeForFrame = null) {
+  function renderBusBoxes(result) {
+    const target = result?.bus?.event?.target_route;
+    if (!running || paused || cameraLost || connectionLost || document.hidden || !activeRoute
+        || !["search", "approach", "arrived"].includes(view.getScreen()) || !result?.bus
+        || (result.session_id != null && result.session_id !== sessionId)
+        || (target && normalizeRoute(target) !== activeRoute)) {
+      GOverlay.clear();
+      return;
+    }
+    GOverlay.renderBusBoxes({ ...result, bus_mode: true, target_route: activeRoute });
+  }
+  function showResult(result, capturedAt, routeForFrame = null) {
     // Apply revision-checked boarding first; an old in-flight frame must not
     // restore obstacle warnings after the user manually confirms arrival.
     boarding.accept(result, capturedAt);
@@ -578,17 +580,9 @@
       detections: result.traffic.detections, event: result.traffic.event,
       crossing_active: result.crosswalk?.event?.crossing_active === true }, capturedAt);
     acceptBusResult(result, routeForFrame);
-    const overlayResult = { ...result, bus_mode: Boolean(activeRoute), target_route: activeRoute,
-      bus_guidance: activeRoute ? journey.snapshot().ocr : null, walking: { ...result.walking,
-      event: { ...result.walking?.event,
-        voice_playback_action: coordinator.walkingPlaybackAction() } } };
-    GOverlay.render(overlayResult, state => {
-      if (state === "drawn" || state === "stale") saveClipOverlay(clip, clipFrame);
-      queueTiming({ kind: "overlay", frame_id: result.frame_id,
-        captured_at_ms: result.captured_at_ms, status: state,
-        overlay_delay_ms: state === "drawn" ? Math.round(performance.now() - capturedAt) : null });
-    });
+    // Keep the guidance text and draw only the lightweight live bus boxes.
     view.render(result);
+    renderBusBoxes(result);
   }
   function waitForReconnect(signal) {
     return new Promise((resolve, reject) => {
@@ -701,13 +695,13 @@
         const result = await sendFrame(id, frameId + 1, capturedAtMs, blob, request.signal,
           busBlob, busCapturedAtMs, version);
         frameStage = "present";
-        const clipFrame = bufferClipFrame(selectedClip, result.frame_id, capturedAtMs, blob,
+        bufferClipFrame(selectedClip, result.frame_id, capturedAtMs, blob,
           visibleMask(result));
         if (!running || version !== generation) return;
         frameId = result.frame_id; // Even an in-flight paused request advances the server sequence.
         const returnedAt = performance.now();
         if (!paused && !cameraLost && !document.hidden && shownVersion === presentation) {
-          if (returnedAt - capturedAt < 1500) showResult(result, capturedAt, selectedClip, clipFrame, routeForFrame);
+          if (returnedAt - capturedAt < 1500) showResult(result, capturedAt, routeForFrame);
           // Bus recognition validates its own capture timestamp and 3s window.
           // A slow frame must not apply stale boarding, hazards or overlays.
           else acceptBusResult(result, routeForFrame);
@@ -787,6 +781,9 @@
         if (!paused && !document.hidden) {
           if (!connectionLost) { walking.tick(); traffic.tick(); boarding.tick(); }
           coordinator.tick();
+          // Expire the concise text even while the next network response is pending.
+          view.render(lastResult);
+          renderBusBoxes(lastResult);
         }
       }, settings.audio.tick_ms);
       logTimer = setInterval(() => {

@@ -2,12 +2,6 @@
 window.GRecorder = (() => {
   const MAX_CLIP_MS = 90000;
   const video = document.getElementById("video");
-  const overlay = document.getElementById("overlay");
-  const canvas = document.getElementById("camera-view");
-  const ctx = canvas.getContext("2d");
-  let animationId = 0;
-  let lastFrameAt = null;
-  let previewing = false;
   let recorder = null;
   let chunks = [];
   let recordedBytes = 0;
@@ -24,43 +18,15 @@ window.GRecorder = (() => {
     return formats.find(type => MediaRecorder.isTypeSupported(type)) || "";
   }
 
-  function drawFrame(now = performance.now()) {
-    if (!previewing) return;
-    animationId = requestAnimationFrame(drawFrame);
-    const interval = 1000 / window.GConfig.get().recording.fps;
-    if (lastFrameAt !== null) {
-      const intervals = Math.floor((now - lastFrameAt + .001) / interval);
-      if (intervals < 1) return;
-      lastFrameAt += intervals * interval;
-    } else lastFrameAt = now;
-    const width = canvas.width, height = canvas.height;
-    ctx.fillStyle = "#121722";
-    ctx.fillRect(0, 0, width, height);
-    const scale = Math.min(width / video.videoWidth, height / video.videoHeight);
-    const imageWidth = video.videoWidth * scale, imageHeight = video.videoHeight * scale;
-    ctx.drawImage(video, (width - imageWidth) / 2, (height - imageHeight) / 2, imageWidth, imageHeight);
-    // The overlay canvas stays 0x0 until the first inference result is drawn.
-    if (overlay.width && overlay.height) ctx.drawImage(overlay, 0, 0, overlay.width, overlay.height, 0, 0, width, height);
-  }
-
+  // Let the browser display the camera track directly. Detailed inference
+  // graphics belong to the later video render, not the live capture loop.
   function startPreview() {
     if (!video.videoWidth || !video.videoHeight) throw new Error("카메라 화면을 준비할 수 없습니다.");
-    const scale = Math.min(1, window.GConfig.get().recording.max_side /
-      Math.max(video.videoWidth, video.videoHeight));
-    canvas.width = Math.max(2, Math.round(video.videoWidth * scale / 2) * 2);
-    canvas.height = Math.max(2, Math.round(video.videoHeight * scale / 2) * 2);
-    cancelAnimationFrame(animationId);
-    previewing = true;
-    lastFrameAt = null;
-    drawFrame();
+    video.style.opacity = "1";
   }
 
   function stopPreview() {
-    previewing = false;
-    cancelAnimationFrame(animationId);
-    animationId = 0;
-    lastFrameAt = null;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    video.style.opacity = "0";
   }
 
   /** Start one raw clip. The browser encodes only while this recorder is active. */

@@ -16,12 +16,14 @@
     let lastLookupAt = -Infinity, lastLookupPosition = null, lastOcrAt = -Infinity;
     let lastSuppressedOtherCaptureAt = -Infinity;
     let observationStartedAt = 0;
-    let manualStationKey = null, gps = {}, ocr = {}, arrivalEntry = null;
+    let manualStationKey = null, gps = {}, ocr = {}, visualOcr = {}, arrivalEntry = null;
     let ocrPending = null, speakingArrival = null, speakingOcr = null, supersededArrival = null;
     const ocrAnnounced = new Set();
     const otherRouteAnnouncedAt = new Map();
     const emit = (type, fields = {}) => onEvent({ type, at_ms: now(), route, ...fields });
-    const snapshot = () => ({ active, paused, route, gps: { ...gps }, ocr: { ...ocr } });
+    // Speech may retain a recent cue; the screen reflects the current frame only.
+    const snapshot = () => ({ active, paused, route, gps: { ...gps }, ocr: { ...ocr },
+      visualOcr: { ...visualOcr } });
     const publish = () => onChange(snapshot());
     const freshCapture = capturedAt => Number.isFinite(capturedAt) && capturedAt <= now()
       && now() - capturedAt <= limits.busDetectionWindowMs;
@@ -92,6 +94,7 @@
         selected: null, candidates: [], lastUpdatedAt: null };
       ocr = { status: "searching", message: `${route}번 버스 번호를 카메라로 확인합니다.`,
         routeNumber: null, confirmed: false, capturedAt: null };
+      visualOcr = { ...ocr };
     }
 
     function candidateView(match) {
@@ -178,7 +181,8 @@
       item.speechText = speechText;
       const accepted = coordinator.request({ source: "bus-ocr",
         priority: item.isTarget ? coordinator.PRIORITY.busOcr : coordinator.PRIORITY.busArrival + 1,
-        dynamic: true, text: speechText, kind: item.key, expireAfterStart: true,
+        // Freshness limits starting a cue; the player separately bounds playback.
+        dynamic: true, text: speechText, kind: item.key,
         validUntil: monotonicNow() + Math.max(0, item.capturedAt + limits.busDetectionWindowMs - now()),
         metadata: { bus_route: item.route_number, target_route: route, is_target: item.isTarget,
           captured_at_ms: item.capturedAt, track_id: item.track_id, channel: "ocr" },
@@ -430,13 +434,19 @@
         gpsUnavailable("refreshing", "버스 도착정보를 갱신하고 있습니다.");
       }
       if (freshLocation() && now() - lastLookupAt >= limits.refreshIntervalMs) void lookup();
+      const visualExpired = ["candidate", "confirmed", "other"].includes(visualOcr.status)
+        && !freshCapture(visualOcr.capturedAt);
+      if (visualExpired) visualOcr = { status: "stale", confirmed: false, routeNumber: null,
+        capturedAt: visualOcr.capturedAt, message: "현재 버스 번호를 다시 확인합니다." };
       if (["candidate", "confirmed", "other"].includes(ocr.status) && !freshCapture(ocr.capturedAt)) {
         ocr = { ...ocr, status: "stale", confirmed: false,
           message: "번호 인식 결과가 오래되었습니다. 현재 버스 번호를 다시 확인합니다." };
         ocrPending = null;
-        clearSpeech("bus-ocr");
+        // A delayed MP3 can start just before this deadline. Do not cut its
+        // short sentence; unstarted cues still expire and cannot be replayed.
+        if (!speakingOcr?.started) clearSpeech("bus-ocr");
         publish();
-      }
+      } else if (visualExpired) publish();
       sayOcr();
       sayArrival();
     }
@@ -484,6 +494,7 @@
 
     function recognitionState(status, message, capturedAt = null) {
       ocr = { status, message, confirmed: false, routeNumber: null, capturedAt };
+      visualOcr = { ...ocr };
       ocrPending = null;
       clearSpeech("bus-ocr");
       publish();
@@ -514,23 +525,31 @@
       if (!freshCapture(capturedAt)) {
         ocr = { status: "stale", message: "카메라 결과가 늦게 도착했습니다. 현재 번호를 다시 확인합니다.",
           routeNumber: null, confirmed: false, capturedAt };
+        visualOcr = { ...ocr };
         ocrPending = null;
-        clearSpeech("bus-ocr");
+        if (failed || !speakingOcr?.started) clearSpeech("bus-ocr");
         publish();
         return;
       }
       // A current detection frame can end the previous vehicle's speech immediately.
       const visibleTracks = Array.isArray(event.buses)
         ? new Set(event.buses.map(item => item.track_id)) : null;
-      if (visibleTracks && ocr.trackId != null && !visibleTracks.has(ocr.trackId)) {
+      const speechTrackId = speakingOcr?.track_id ?? ocr.trackId;
+      if (visibleTracks && speechTrackId != null && !visibleTracks.has(speechTrackId)) {
         clearSpeech("bus-ocr");
         ocrPending = null;
         ocr = { status: "searching", confirmed: false, routeNumber: null, capturedAt,
           message: "버스 찾는 중" };
       }
+      const currentEvidence = item => {
+        if (!visibleTracks) return true;
+        if (!visibleTracks.has(item.track_id)) return false;
+        const decision = event.buses.find(bus => bus.track_id === item.track_id)?.decision;
+        return normalize(item.route_number) !== route || !decision || decision.state === item.state;
+      };
       const matches = (failed ? [] : Array.isArray(event.matches) ? event.matches : [])
         .filter(item => normalize(item.route_number) === route
-          && ["recognized_single", "matched_candidate"].includes(item.state))
+          && ["recognized_single", "matched_candidate"].includes(item.state) && currentEvidence(item))
         .sort((a, b) => Number(b.state === "matched_candidate") - Number(a.state === "matched_candidate")
           || (Number(b.token_score) || 0) - (Number(a.token_score) || 0));
       // Raw boxes/text remain visual evidence. Only the backend's repeated,
@@ -538,16 +557,47 @@
       const others = (failed ? [] : Array.isArray(event.recognized_routes) ? event.recognized_routes : [])
         .filter(item => item.is_target === false && item.state === "matched_candidate"
           && item.track_id != null && ROUTE.test(normalize(item.route_number))
-          && normalize(item.route_number) !== route)
+          && normalize(item.route_number) !== route && currentEvidence(item))
         .sort((a, b) => (Number(b.token_score) || 0) - (Number(a.token_score) || 0));
+      // A vehicle's decision concerns the target route. A target conflict can
+      // coexist with a valid, independently confirmed different route.
+      const currentShown = [...matches, ...others][0];
+      if (currentShown) {
+        const routeNumber = normalize(currentShown.route_number);
+        const isTarget = routeNumber === route;
+        const confirmed = currentShown.state === "matched_candidate";
+        visualOcr = { status: !isTarget ? "other" : confirmed ? "confirmed" : "candidate",
+          routeNumber, isTarget, confirmed, capturedAt, trackId: currentShown.track_id ?? null,
+          message: !isTarget ? `${routeNumber}번 버스, 다른 노선.`
+            : confirmed ? `${routeNumber}번 버스 확인.` : `${routeNumber}번 재확인 중.` };
+      } else {
+        visualOcr = { status: hasErrors ? "error" : "searching", confirmed: false,
+          routeNumber: null, capturedAt, message: hasErrors ? recognitionMessage(result)
+            : visibleTracks?.size ? "버스 번호 확인 중." : "버스 찾는 중." };
+      }
       // Another route must not cut a target cue while that vehicle is still visible.
-      if (!failed && !matches.length && speakingOcr?.isTarget && freshCapture(ocr.capturedAt)
-          && (!visibleTracks || visibleTracks.has(ocr.trackId))) return;
+      if (!failed && !matches.length && speakingOcr?.isTarget
+          && (speakingOcr.started || freshCapture(ocr.capturedAt))
+          && (!visibleTracks || visibleTracks.has(speakingOcr.track_id))
+          && !others.some(item => item.track_id === speakingOcr.track_id)) {
+        publish();
+        return;
+      }
       const shown = matches[0] || others.find(item => !otherRecentlyAnnounced(normalize(item.route_number))
         && !ocrAnnounced.has(`${item.track_id}:${normalize(item.route_number)}:confirmed`)) || others[0];
       if (!shown) {
         // Keep recent evidence only while its vehicle remains in the current detections.
-        if (!failed && ["candidate", "confirmed", "other"].includes(ocr.status) && freshCapture(ocr.capturedAt)) return;
+        if (!failed && ["candidate", "confirmed", "other"].includes(ocr.status) && freshCapture(ocr.capturedAt)) {
+          publish();
+          // A higher-priority cue may have ended since the last full read.
+          // Retry on this live frame instead of waiting for the one-second tick.
+          sayOcr();
+          return;
+        }
+        if (!failed && speakingOcr?.started) {
+          publish();
+          return;
+        }
         ocr = { status: hasErrors ? "error" : "searching", confirmed: false, routeNumber: null, capturedAt,
           message: hasErrors ? recognitionMessage(result)
             : `${route}번 버스 번호를 찾고 있습니다.` };
@@ -576,8 +626,10 @@
         speakingOcr.capturedAt = capturedAt;
         coordinator.request({ source: "bus-ocr",
           priority: isTarget ? coordinator.PRIORITY.busOcr : coordinator.PRIORITY.busArrival + 1,
-          dynamic: true, text: speakingOcr.speechText, kind: key, expireAfterStart: true,
-          validUntil: monotonicNow() + Math.max(0, capturedAt + limits.busDetectionWindowMs - now()) });
+          dynamic: true, text: speakingOcr.speechText, kind: key,
+          validUntil: monotonicNow() + Math.max(0, capturedAt + limits.busDetectionWindowMs - now()),
+          metadata: { bus_route: observedRoute, target_route: route, is_target: isTarget,
+            captured_at_ms: capturedAt, track_id: shown.track_id, channel: "ocr" } });
       }
       ocrPending = { ...shown, state: confirmed ? "matched_candidate" : shown.state,
         route_number: observedRoute, isTarget, key, message, capturedAt };
@@ -599,6 +651,7 @@
       clearResources();
       gps = { ...gps, status: "paused", message: "버스 도착정보 안내를 일시중지했습니다.", selected: null, candidates: [] };
       ocr = { ...ocr, status: "paused", confirmed: false, message: "버스 번호 인식을 일시중지했습니다." };
+      visualOcr = { ...ocr, routeNumber: null };
       publish();
     }
 
@@ -619,6 +672,7 @@
       otherRouteAnnouncedAt.clear();
       gps = { status: "idle", message: "", selected: null, candidates: [] };
       ocr = { status: "idle", message: "", confirmed: false, routeNumber: null, capturedAt: null };
+      visualOcr = { ...ocr };
       publish();
     }
 

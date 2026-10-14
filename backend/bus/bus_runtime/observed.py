@@ -2,6 +2,10 @@
 from .target import TargetMatcher, exact_route, route_aliases, token_quality
 
 
+def _digits(text):
+    return ''.join(character for character in text if character in '0123456789')
+
+
 def _fragment(text, route):
     """Even one remaining digit or an interior LED dropout is not another route."""
     for full in route_aliases(route):
@@ -48,9 +52,17 @@ class ObservedRouteMatcher:
             if union <= 0 or intersection / union < .1:
                 context = None
         if context is None:
-            context = {'routes': {}, 'last': timestamp, 'box': bus_box}
+            context = {'routes': {}, 'confirmed': set(), 'fragment_routes': {},
+                       'last': timestamp, 'box': bus_box}
         context.update(last=timestamp, box=bus_box)
         self.tracks[track_id] = context
+        # A single OCR reading is only recent evidence, not this bus's identity.
+        # Repeatedly confirmed full numbers remain protected against LED dropout
+        # until this physical track is lost; unconfirmed route strings expire
+        # while the bus is visible. Numeric-fragment protection is kept below.
+        for route, last_seen in list(context['routes'].items()):
+            if route not in context['confirmed'] and timestamp - last_seen > 2.0 + 1e-6:
+                del context['routes'][route]
         routes = set()
         for observation in observations:
             text = observation['text']
@@ -61,14 +73,22 @@ class ObservedRouteMatcher:
             except ValueError:
                 continue
             context['routes'][text] = timestamp
+            # Expiring an unconfirmed route must not make its missing digits
+            # a new route: 2011 -> 011 is still suspect even if 2011 was wrong.
+            # Keep that conservative digit-loss guard separate from the route
+            # string, so a one-off suffix such as 171R cannot indefinitely
+            # suppress a complete three-digit 171 on this same bus.
+            context['fragment_routes'][text] = timestamp
             # A partial target such as 701/11 must not become another spoken route.
             if target and (exact_route(text, target) or _fragment(text, target)):
                 continue
             routes.add(text)
-        # Keep complete-number context while this physical track remains visible.
-        # A temporary loss of digits must not turn a previously seen 1711 into 171.
         while len(context['routes']) > 64:
-            del context['routes'][min(context['routes'], key=context['routes'].get)]
+            oldest = min(context['routes'], key=context['routes'].get)
+            del context['routes'][oldest]
+            context['confirmed'].discard(oldest)
+        while len(context['fragment_routes']) > 64:
+            del context['fragment_routes'][min(context['fragment_routes'], key=context['fragment_routes'].get)]
         known = {route for (track, route) in self.candidates if track == track_id}
         confirmed = []
         for route in sorted(routes | known):
@@ -76,7 +96,9 @@ class ObservedRouteMatcher:
             matcher, last_seen = self.candidates.get(key, (TargetMatcher(route), timestamp))
             # Any other confident full number on this vehicle blocks an announcement,
             # including a longer number that contains the short reading.
-            ambiguous = any(_fragment(route, previous) for previous in context['routes']) or any(
+            ambiguous = (any(_fragment(route, previous) for previous in context['routes'])
+                         or any(len(_digits(previous)) > len(_digits(route)) and _fragment(route, previous)
+                                for previous in context['fragment_routes'])) or any(
                 item.get('eligible') and token_quality(item.get('token_scores')) >= .9
                 and not exact_route(item['text'], route)
                 for item in observations
@@ -86,6 +108,7 @@ class ObservedRouteMatcher:
                                       consecutive_frame=consecutive_frame)
             self.candidates[key] = (matcher, timestamp if route in routes else last_seen)
             if route in routes and decision['state'] == 'matched_candidate':
+                context['confirmed'].add(route)
                 confirmed.append({
                     'track_id': track_id, 'route_number': route,
                     'state': decision['state'], 'is_target': False,

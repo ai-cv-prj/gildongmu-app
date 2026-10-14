@@ -111,6 +111,11 @@
       if (!CAMERA_SCREENS.has(screen) || paused) return;
       const cameraCue = busCue();
       currentCue = hazardCue(lastResult) || cameraCue || DEFAULT_CUES[screen];
+      const liveResult = $("live-result");
+      if (liveResult) {
+        updateText(liveResult, currentCue.title);
+        liveResult.dataset.tone = currentCue.tone;
+      }
       if (BUS_SCREENS.has(screen)) updateText($("camera-title-text"), cameraCue?.tone === "recognized"
         ? " 버스 확인" : screen === "arrived" ? " 버스 도착정보" : " 버스 인식 중");
     }
@@ -182,6 +187,7 @@
       updateText($("pause-label"), paused ? "재개" : "일시중지");
       updateControls();
       if (!paused) render(lastResult);
+      else if ($("live-result")) updateText($("live-result"), "안내를 잠시 멈췄어요.");
     }
     function show(next, { focus = true } = {}) {
       if (!SCREENS.has(next)) throw new Error(`지원하지 않는 화면: ${next}`);

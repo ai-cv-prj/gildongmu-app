@@ -1,6 +1,6 @@
 """YOLO11n/ByteTrack bus boxes and the fixed B route-display model.
 
-The route-display detector searches each bus once; CRAFT fallback is disabled.
+The route-display detector supports a bounded middle-band retry; CRAFT is disabled.
 """
 from __future__ import annotations
 
@@ -75,6 +75,26 @@ class RouteDetector:
                 boxes.append((a+x, b+y, c+x, d+y))
         return bus_box, boxes
 
+    def zoom_regions(self, rgb: np.ndarray, bus_box: tuple[int, int, int, int]):
+        """Search the middle 35–65% of a bus once with the unchanged B model."""
+        height, width = rgb.shape[:2]
+        x, y, z, bottom = bus_box
+        bus_height = bottom - y
+        search_box = clip_box((x, y + bus_height * .35, z, y + bus_height * .65),
+                              width, height)
+        x, y, z, bottom = search_box
+        if min(z - x, bottom - y) < 16:
+            return search_box, []
+        roi = rgb[y:bottom, x:z]
+        result = self.route.predict(roi[:, :, ::-1].copy(), device=self.device,
+                                    imgsz=960, rect=False, conf=.25, iou=.5, verbose=False)[0]
+        boxes = []
+        for bounds in result.boxes.xyxy.cpu().tolist():
+            a, b, c, d = clip_box(bounds, z-x, bottom-y)
+            if c > a and d > b:
+                boxes.append((a+x, b+y, c+x, d+y))
+        return search_box, boxes
+
     def regions_in_box(self, rgb: np.ndarray, search_box, canvas_size=None):
-        # B searches the complete bus once. There is no second CRAFT pass.
+        # General-text/CRAFT fallback stays disabled; bounded B retry uses zoom_regions.
         return []

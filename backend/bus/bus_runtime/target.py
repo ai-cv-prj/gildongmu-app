@@ -47,7 +47,8 @@ def competing_route(text, target, alternatives=()):
 
 class TargetMatcher:
     """영상 근거로 목표 노선 일치를 판정한다. 실제 탑승이나 정답 확률은 보장하지 않는다."""
-    def __init__(self, target, alternatives=(), window_s=2.0, min_samples=3, min_span_s=.4, single_score=None):
+    def __init__(self, target, alternatives=(), window_s=2.0, min_samples=2, min_span_s=.4, single_score=None,
+                 fast_score=.98, fast_min_span_s=.3):
         route_aliases(target)
         for route in alternatives: route_aliases(route)
         if any(route != target and route_aliases(target) & route_aliases(route) for route in alternatives):
@@ -57,6 +58,11 @@ class TargetMatcher:
         if single_score is not None and (not math.isfinite(single_score) or not .9 <= single_score <= 1):
             raise ValueError('단일 관측 점수는 0.9~1 범위여야 합니다.')
         self.single_score=single_score
+        if fast_score is not None and (not math.isfinite(fast_score) or not .9 <= fast_score <= 1):
+            raise ValueError('빠른 반복 관측 점수는 0.9~1 범위여야 합니다.')
+        if not math.isfinite(fast_min_span_s) or not 0 < fast_min_span_s <= window_s:
+            raise ValueError('빠른 반복 관측 간격은 0보다 크고 관측 창 이하여야 합니다.')
+        self.fast_score,self.fast_min_span_s=fast_score,fast_min_span_s
         self.tracks={}
 
     def retain_tracks(self, track_ids):
@@ -66,7 +72,7 @@ class TargetMatcher:
     def update(self, track_id, timestamp, observations, bus_box=None, complete=True, *, consecutive_frame=False):
         if track_id is None:
             return {'state':'untracked','reason':'no_track_id','support_samples':0,'conflicts':[]}
-        state=self.tracks.setdefault(track_id,{'hits':deque(),'last':None,'rivals':{},'box':None})
+        state=self.tracks.setdefault(track_id,{'hits':deque(),'strong_hits':deque(),'last':None,'rivals':{},'box':None})
         if state['last'] is not None and timestamp < state['last']:
             raise ValueError('시각은 단조 증가해야 합니다.')
         jump=False
@@ -83,15 +89,18 @@ class TargetMatcher:
             else timestamp-state['last'] > .6+1e-6)
         if jump or gap_expired:
             state['hits'].clear()
+            state['strong_hits'].clear()
             state['rivals'].clear()
         state['last'],state['box']=timestamp,bus_box
         while state['hits'] and timestamp-state['hits'][0][0] > self.window_s+1e-6:
             state['hits'].popleft()
+        while state['strong_hits'] and timestamp-state['strong_hits'][0] > self.window_s+1e-6:
+            state['strong_hits'].popleft()
         for text, samples in list(state['rivals'].items()):
             while samples and timestamp-samples[0][0] > self.window_s+1e-6:
                 samples.popleft()
             if not samples:del state['rivals'][text]
-        good=False;partial=False;ambiguous=False;good_scores=None;single_good=False
+        good=False;partial=False;ambiguous=False;good_scores=None;single_good=False;fast_good=False
         key=re.sub(r'^[가-힣]+','',self.target)
         for obs in observations:
             text=obs['text'];q=token_quality(obs.get('token_scores',[]))
@@ -110,6 +119,7 @@ class TargetMatcher:
             if exact_route(text,self.target):
                 good |= q>=.9
                 single_good |= self.single_score is not None and q>=self.single_score
+                fast_good |= self.fast_score is not None and q>=self.fast_score
                 ambiguous |= q<.9
                 if q>=.9 and (good_scores is None or q>min(good_scores)):
                     # 한글 접두어가 있는 출력은 숫자 표시 부분에 맞춰 점수를 정렬한다.
@@ -118,25 +128,34 @@ class TargetMatcher:
             partial |= partial_route(text,self.target)
         if not complete:
             state['hits'].clear()
+            state['strong_hits'].clear()
         elif good and (not state['hits'] or timestamp>state['hits'][-1][0]+1e-6):
             state['hits'].append((timestamp,good_scores))
+            if fast_good:
+                state['strong_hits'].append(timestamp)
         enough=good and len(state['hits'])>=self.min_samples and timestamp-state['hits'][0][0]>=self.min_span_s-1e-6
+        # Two independently timed full reads suffice, with a shorter span only
+        # when every character and EOS meet the high-score threshold. Competing
+        # numbers, incomplete scans and vehicle continuity still veto below.
+        fast_enough=(fast_good and len(state['strong_hits'])>=2
+                     and timestamp-state['strong_hits'][0]>=self.fast_min_span_s-1e-6)
         blocked=[]
         for rival,samples in state['rivals'].items():
             # 높은 점수의 경쟁 번호 또는 서로 다른 프레임의 반복 경쟁은 보류.
             strong=max(q for _,q in samples)>=.9 or len(samples)>=2
             differing=[i for i,(a,b) in enumerate(zip(key,rival)) if a!=b]
-            # 낮은 점수의 단발 오독은 전체 목표 번호 3회와 구별 문자 0.97 이상으로만 해소.
+            # 낮은 점수의 경쟁 오독 해소는 기존 반복 횟수와 구별 문자 0.97 조건을 유지.
             decisive=sum(bool(differing) and all(i<len(scores)-1 and scores[i]>=.97 for i in differing)
-                         for _,scores in state['hits'])>=self.min_samples
+                         for _,scores in state['hits'])>=max(3,self.min_samples)
             simultaneous=samples[-1][0]==timestamp
             if strong or simultaneous or not (enough and decisive):blocked.append(rival)
         if blocked:
             label,reason='conflict','different_full_number_on_same_track'
         elif not complete or jump:
             label,reason='hold','incomplete_scan_or_track_jump'
-        elif enough:
-            label,reason='matched_candidate','repeated_full_number_current_frame'
+        elif enough or fast_enough:
+            label,reason='matched_candidate',('repeated_full_number_current_frame' if enough
+                                              else 'two_high_score_full_numbers_current_frame')
         elif single_good:
             # 현재 프레임의 온전한 번호만 인정한다. 미래 프레임으로 소급 확정하지 않는다.
             # 추적·탐색 완전성·경쟁 번호 검사는 위에서 동일하게 적용한다.

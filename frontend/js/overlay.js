@@ -7,6 +7,7 @@ window.GOverlay = (() => {
   let version = 0;
   const BUS_COLORS = Object.freeze({ mint: "#21d7bb", checkingBlue: "#7cbdff",
     otherRed: "#ff6172", muted: "#b9c5d5" });
+  const BUS_BOX_MAX_AGE_MS = 1000;
 
   // OCR 점수만 표시한다. 버스 검출 confidence는 번호 판독 점수와 다르다.
   function ocrConfidence(score) {
@@ -94,31 +95,31 @@ window.GOverlay = (() => {
   }
 
   // 버스 모드에서는 화면과 저장 영상에 같은 인식 상태와 큰 노선 번호를 표시한다.
-  function busScene(result, age) {
-    const bus = result.bus || {}, event = bus.event || {};
-    const target = String(result.target_route || event.target_route || "");
+  function busScene(result, age, boxesOnly = false) {
+    const source = result.bus || {};
+    const target = String(result.target_route || source.event?.target_route || "");
+    // A response captured before a route change cannot label the new search.
+    const bus = source.event?.target_route && String(source.event.target_route) !== target ? {} : source;
+    const event = bus.event || {};
     const failed = ["error", "unavailable", "disabled"].includes(bus.status);
     const preparing = ["loading", "idle"].includes(bus.status);
     const fresh = Number.isFinite(age) && age >= 0 && age <= 3000;
+    const isTarget = item => item.is_target !== false && String(item.route_number) === target;
+    const visible = Array.isArray(event.buses)
+      ? new Map(event.buses.map(item => [item.track_id, item])) : null;
     const evidence = !failed && !preparing && fresh
       ? [...(event.recognized_routes || []), ...(event.matches || [])]
-        .filter(item => item.route_number && ["recognized_single", "matched_candidate"].includes(item.state))
+        .filter(item => item.route_number && (item.state === "matched_candidate"
+          || isTarget(item) && item.state === "recognized_single"))
+        .filter(item => !visible || visible.has(item.track_id)
+          && (!isTarget(item) || !visible.get(item.track_id).decision
+            || visible.get(item.track_id).decision.state === item.state))
       : [];
-    const isTarget = item => item.is_target !== false && String(item.route_number) === target;
     evidence.sort((left, right) => Number(isTarget(right)) - Number(isTarget(left))
       || Number(right.state === "matched_candidate") - Number(left.state === "matched_candidate")
       || (Number(right.token_score) || 0) - (Number(left.token_score) || 0));
-    // Share the spoken recognition lifecycle: a single unreadable frame must not flicker the card.
-    const guidance = result.bus_guidance;
-    const guidanceAge = Number.isFinite(guidance?.capturedAt)
-      && typeof performance !== "undefined" && Number.isFinite(performance.timeOrigin)
-      ? performance.timeOrigin + performance.now() - guidance.capturedAt : Infinity;
-    const shown = !failed && !preparing && guidance?.routeNumber
-      && ["candidate", "confirmed", "other"].includes(guidance.status)
-      && guidanceAge >= 0 && guidanceAge <= 3000
-      ? { route_number: guidance.routeNumber, is_target: guidance.isTarget,
-          state: guidance.confirmed ? "matched_candidate" : "recognized_single" }
-      : evidence[0];
+    // Card and boxes use the same current evidence, independent of speech retention.
+    const shown = evidence[0];
     const scale = canvas.width / 360;
     // Search is gray, reading is blue, target evidence is mint, and other routes are red.
     const { mint, checkingBlue, otherRed, muted } = BUS_COLORS;
@@ -150,7 +151,9 @@ window.GOverlay = (() => {
     };
     ctx.save();
     // A bus can move substantially during OCR: geometry expires sooner than the text evidence.
-    if (!failed && !preparing && age >= 0 && age <= 400) {
+    if (!failed && !preparing && age >= 0 && age <= BUS_BOX_MAX_AGE_MS) {
+      // Mark an older observation without predicting the vehicle's new position.
+      ctx.setLineDash?.(age > 400 ? [8 * scale, 5 * scale] : []);
       const detections = bus.detections || [];
       for (const item of detections) {
         const box = item.box;
@@ -168,6 +171,7 @@ window.GOverlay = (() => {
         rounded(x, y, width, height, (isNumber ? 2 : 6) * scale, null, ctx.strokeStyle);
         // OCR crops remain visible, but only validated evidence labels the whole bus with a number.
         if (isNumber) {
+          if (boxesOnly) continue;
           const confidence = ocrConfidence(item.extra?.token_score ?? item.confidence);
           if (confidence) {
             ctx.font = `bold ${12 * scale}px system-ui`;
@@ -185,19 +189,23 @@ window.GOverlay = (() => {
           continue;
         }
         const confidence = ocrConfidence(match?.token_score);
-        const label = match ? `${match.route_number}${confidence ? ` · ${confidence}` : ""}`
-          : "버스 번호 확인 중";
-        ctx.font = `bold ${match ? 32 * scale : 15 * scale}px system-ui`;
+        const label = boxesOnly ? match ? `${match.route_number}번` : "버스"
+          : match ? `${match.route_number}${confidence ? ` · ${confidence}` : ""}`
+            : "버스 번호 확인 중";
+        const fontSize = boxesOnly ? 15 : match ? 32 : 15;
+        ctx.font = `bold ${fontSize * scale}px system-ui`;
         const labelWidth = Math.min(canvas.width - 16 * scale, ctx.measureText(label).width + 16 * scale);
-        const labelHeight = (match ? 44 : 27) * scale;
+        const labelHeight = (boxesOnly ? 25 : match ? 44 : 27) * scale;
         const labelX = Math.max(8 * scale, Math.min(x, canvas.width - labelWidth - 8 * scale));
         const labelY = Math.min(canvas.height - labelHeight - 8 * scale,
-          Math.max(130 * scale, y - labelHeight - 5 * scale));
+          Math.max((boxesOnly ? 8 : 130) * scale, y - labelHeight - 5 * scale));
         rounded(labelX, labelY, labelWidth, labelHeight, 6 * scale, color, null);
         fittedText(label, labelX + 8 * scale, labelY + labelHeight - 8 * scale,
-          (match ? 32 : 15) * scale, labelWidth - 16 * scale, "#071e23");
+          fontSize * scale, labelWidth - 16 * scale, "#071e23");
       }
     }
+    ctx.setLineDash?.([]);
+    if (boxesOnly) { ctx.restore(); return; }
     const x = 12 * scale, y = 12 * scale, width = canvas.width - 24 * scale;
     const height = 108 * scale, padding = 12 * scale;
     const accent = shown ? colorFor(shown) : checking ? checkingBlue : muted;
@@ -207,9 +215,10 @@ window.GOverlay = (() => {
     const confirmedTarget = shown && isTarget(shown) && shown.state === "matched_candidate";
     const title = shown && !isTarget(shown) ? `${shown.route_number} 다른 버스 확인`
       : confirmedTarget ? `${shown.route_number}번 버스 확인`
+      : shown ? `${shown.route_number}번 재확인 중`
       : failed || event.errors?.length && !shown ? "번호 인식 오류"
       : preparing ? "번호 인식 준비 중"
-      : shown || checking ? "버스 번호 확인중"
+      : checking ? "버스 번호 확인중"
       : "버스 찾는 중";
     fittedText(title, x + padding, y + 65 * scale, 26 * scale,
       width - padding * 2, accent);
@@ -358,6 +367,7 @@ window.GOverlay = (() => {
   /** 새 결과가 도착했을 때 이전 프레임의 비동기 이미지 로딩을 무효화한다. */
   function render(result, onDrawn = () => {}) {
     const current = ++version;
+    canvas.hidden = false;
     size(result.image_width, result.image_height);
     const draw = mask => {
       if (current !== version) return onDrawn("superseded");
@@ -407,9 +417,25 @@ window.GOverlay = (() => {
     mask.src = `data:image/png;base64,${result.walking.mask_png}`;
   }
 
+  /** Lightweight live bus boxes; the existing view owns the guidance text. */
+  function renderBusBoxes(result) {
+    const busMode = result?.bus_mode === true
+      || (result?.bus_mode !== false && Boolean(result?.bus?.event?.target_route));
+    if (!busMode || result.paused) { clear(); return; }
+    version++;
+    canvas.hidden = false;
+    size(result.image_width, result.image_height);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const age = Number.isFinite(result.bus?.captured_at_ms)
+      && typeof performance !== "undefined" && Number.isFinite(performance.timeOrigin)
+      ? performance.timeOrigin + performance.now() - result.bus.captured_at_ms : Infinity;
+    busScene(result, age, true);
+  }
+
   /** 카메라 영상만 남기고 분석 결과를 지운다. */
   function clear() {
     version++;
+    canvas.hidden = true;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
   }
 
@@ -418,5 +444,5 @@ window.GOverlay = (() => {
     return canvas.toDataURL("image/png").split(",", 2)[1];
   }
 
-  return { size, render, clear, snapshot };
+  return { size, render, renderBusBoxes, clear, snapshot };
 })();
