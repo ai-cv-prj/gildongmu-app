@@ -531,7 +531,8 @@
     const state = valid && arrival?.first_arrival_state === "arrived" ? "arrived"
       : valid && ["approaching", "arriving"].includes(arrival?.first_arrival_state) ? "approach" : "search";
     view.setBus({ route: activeRoute, station: selected?.station?.station_name || (arrivalUnavailable ? "정류장 정보 없음" : "정류장 확인 중"),
-      arrivalText: arrival?.first_arrival || (arrivalUnavailable ? "도착정보 이용 불가" : "도착정보 확인 중"), status: state,
+      arrivalText: arrival?.first_arrival ? `${snapshot.gps?.nextVehicle ? "다음 버스 " : ""}${arrival.first_arrival}`
+        : (arrivalUnavailable ? "도착정보 이용 불가" : "도착정보 확인 중"), status: state,
       gpsMessage: snapshot.gps?.message || "현재 위치를 확인하고 있습니다.",
       ocrMessage: visualOcr?.message || "카메라에서 버스 번호를 찾고 있습니다.",
       ocrStatus: visualOcr?.status || "searching", ocrCapturedAt: visualOcr?.capturedAt ?? null,
@@ -983,10 +984,20 @@
     settings = await GConfig.load(); player = GTts.create({ onError: message => {
       diagnostic("audio_failed", { error_message: message }); status(message);
     } }); player.setRate(preferences.rate);
-    coordinator = GAudioCoordinator.create({ player, onDiagnostic: event => queueTiming({ kind: "audio",
-      frame_id: event.frame_id, captured_at_ms: event.captured_at_ms, status: event.status,
-      source: event.source, action: event.action ?? null, occurred_at_ms: Math.round(performance.timeOrigin + event.at_ms),
-      audio_delay_ms: event.status === "started" ? Math.max(0, Math.round(performance.timeOrigin + event.at_ms - event.captured_at_ms)) : null }) });
+    coordinator = GAudioCoordinator.create({ player, onDiagnostic: event => {
+      // Bus cues have no camera frame id, so the timing log would drop them.
+      // Record them as bus events to keep rejected/cancelled/stale/failed reasons.
+      if (String(event.source || "").startsWith("bus-")) {
+        const { at_ms: atMs, ...fields } = event;
+        queueEvent({ ...fields, type: "bus_audio", audio_status: event.status,
+          at_ms: Math.round(performance.timeOrigin + atMs) });
+        return;
+      }
+      queueTiming({ kind: "audio",
+        frame_id: event.frame_id, captured_at_ms: event.captured_at_ms, status: event.status,
+        source: event.source, action: event.action ?? null, occurred_at_ms: Math.round(performance.timeOrigin + event.at_ms),
+        audio_delay_ms: event.status === "started" ? Math.max(0, Math.round(performance.timeOrigin + event.at_ms - event.captured_at_ms)) : null });
+    } });
     walking = GGuidance.create({ coordinator }); traffic = GGuidance.create({ coordinator });
     boarding = GBoarding.create({ api: GApi, coordinator, onChange: boardingChanged, onError: message => {
       status(message);

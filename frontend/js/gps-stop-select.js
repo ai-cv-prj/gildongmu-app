@@ -20,6 +20,11 @@
     busDetectionWindowMs: 3000,
     // 프레임마다 들어오는 인식 결과는 같은 번호를 이 간격으로만 이력에 남긴다.
     busDetectionLogIntervalMs: 1000,
+    // 앞 차량이 정류장에 다 오면 API는 "도착" 없이 바로 다음 차량을 첫 번째로 준다.
+    // 그 다음 차량의 도착정보는 이 시간 동안 자동 안내하지 않는다(지금 온 버스와 혼동 방지).
+    handoffHoldMs: 120000,
+    // 앞 차량의 마지막 예상 시간이 이 값 이하였다면 정류장에 도착한 것으로 본다.
+    handoffEtaSeconds: 180,
   });
 
   function distanceM(first, second) {
@@ -231,8 +236,10 @@
    * 정류장·노선·정차 순번별로 차량과 도착 단계를 추적한다. 반환한 항목마다
    * 호출자가 안내를 만들고, 재생을 마치면 vehicle.announcedPhase를 phase까지 올린다.
    * 조회 결과에서 잠시 사라져도 완료 이력은 stops가 유지되는 동안 남는다.
+   * 정류장에 거의 다 온 차량(또는 카메라로 방금 확인한 목표) 뒤에 새로 나타난 차량은
+   * handoffAt을 기록해 "다음 버스"로 구분한다.
    */
-  function updateAnnouncementStops(stops, matches, busNumber) {
+  function updateAnnouncementStops(stops, matches, busNumber, { now = Date.now(), targetConfirmedAt = null } = {}) {
     for (const stop of stops.values()) stop.visible = false;
     const entries = [];
     for (const match of matches) {
@@ -261,11 +268,20 @@
       // 차량 ID가 누락됐다 복구되는 것은 다음 버스로 바뀐 것으로 보지 않는다.
       if (!vehicle && stop.current && !stop.current.id && !stop.current.plate) vehicle = stop.current;
       if (!vehicle) {
-        vehicle = { id: "", plate: "", announcedPhase: 0, sequence: stop.vehicles.length };
+        const previous = stop.current;
+        vehicle = { id: "", plate: "", announcedPhase: 0, sequence: stop.vehicles.length, maxPhase: 0 };
+        const previousAtStop = previous && (previous.maxPhase >= 2
+          || Number.isFinite(previous.lastEtaSeconds) && previous.lastEtaSeconds <= CONFIG.handoffEtaSeconds);
+        const recentlyConfirmed = Number.isFinite(targetConfirmedAt)
+          && now - targetConfirmedAt <= CONFIG.handoffHoldMs;
+        if (previous && (previousAtStop || recentlyConfirmed)) vehicle.handoffAt = now;
         stop.vehicles.push(vehicle);
       }
       if (id) vehicle.id = id;
       if (plate) vehicle.plate = plate;
+      vehicle.maxPhase = Math.max(vehicle.maxPhase || 0, stop.phase);
+      const eta = arrival?.first_eta_seconds;
+      if (Number.isFinite(eta) && eta > 0) vehicle.lastEtaSeconds = eta;
       stop.current = vehicle;
       entries.push({ key, stop, vehicle, phase: stop.phase, match });
     }

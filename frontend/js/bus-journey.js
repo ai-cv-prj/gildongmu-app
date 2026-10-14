@@ -3,6 +3,9 @@
   "use strict";
   const normalize = value => String(value ?? "").replace(/\s+/g, "").toUpperCase();
   const ROUTE = /^[0-9A-Z가-힣-]{1,20}$/;
+  // A detector miss of one or two frames is not a vehicle leaving; a started
+  // confirmation keeps playing for this long after its bus was last seen.
+  const TRACK_LOSS_GRACE_MS = 1000;
 
   function create({ api, coordinator, onChange = () => {}, onStatus = () => {},
     onEvent = () => {}, now = () => Date.now(), monotonicNow = () => performance.now(),
@@ -15,6 +18,7 @@
     let arrivalUnavailable = false;
     let lastLookupAt = -Infinity, lastLookupPosition = null, lastOcrAt = -Infinity;
     let lastSuppressedOtherCaptureAt = -Infinity;
+    let lastTargetConfirmedAt = -Infinity, speechTrackSeenAt = -Infinity;
     let observationStartedAt = 0;
     let manualStationKey = null, gps = {}, ocr = {}, visualOcr = {}, arrivalEntry = null;
     let ocrPending = null, speakingArrival = null, speakingOcr = null, supersededArrival = null;
@@ -48,7 +52,9 @@
     function gpsUnavailable(status, message, details = {}) {
       gps = { ...gps, status, message, selected: null, candidates: [], ...details };
       arrivalEntry = null;
-      clearSpeech("bus-arrival");
+      // A noisy or late GPS fix stops new arrival cues but must not cut a sentence
+      // already being heard; otherwise it restarts from the beginning on recovery.
+      if (!speakingArrival?.started) clearSpeech("bus-arrival");
       onStatus(message);
       publish();
     }
@@ -86,6 +92,8 @@
       lastLookupAt = -Infinity;
       lastOcrAt = -Infinity;
       lastSuppressedOtherCaptureAt = -Infinity;
+      lastTargetConfirmedAt = -Infinity;
+      speechTrackSeenAt = -Infinity;
       if (!preserveSelection) manualStationKey = null;
       arrivalEntry = null;
       supersededArrival = null;
@@ -116,10 +124,17 @@
       return Boolean(arrivalEntry && arrivalIsFresh(arrivalEntry));
     }
 
+    // The API replaces a bus that reached the stop with the following vehicle
+    // without an "arrived" state. Its ETA describes the NEXT bus, not the one here.
+    const isNextVehicle = entry => Number.isFinite(entry?.vehicle?.handoffAt) && entry.phase === 1;
+    const nextVehicleHeld = entry => isNextVehicle(entry)
+      && now() - entry.vehicle.handoffAt < limits.handoffHoldMs;
+
     function sayArrival(replay = false) {
       const entry = arrivalEntry;
       if (!entry || !arrivalIsFresh(entry) || speakingArrival
           || (!replay && confirmedTargetIsFresh())
+          || (!replay && nextVehicleHeld(entry))
           // When GPS recovers, replace an in-progress other-route fallback even
           // if this selected vehicle's arrival phase was heard before.
           || (!replay && entry.vehicle.announcedPhase >= entry.phase
@@ -130,17 +145,21 @@
       const eta = Number.isFinite(seconds) && seconds > 0
         ? seconds >= 60 ? `${Math.round(seconds / 60)}분 후` : `${Math.ceil(seconds)}초 후`
         : minute ? `${minute[1]}분 후` : arrival.first_arrival || "도착정보 확인 중";
-      const text = `도착정보. ${route}번, ${entry.phase === 3 ? "도착" : entry.phase === 2 ? "곧 도착" : eta}.`;
+      const next = isNextVehicle(entry) ? "다음 " : "";
+      const text = `도착정보. ${next}${route}번, ${entry.phase === 3 ? "도착" : entry.phase === 2 ? "곧 도착" : eta}.`;
       const token = generation;
       const expires = Math.min(location.position.timestamp + limits.maxAgeMs,
         tracker.lastNearbyResultAt + limits.refreshIntervalMs);
+      entry.started = false;
       speakingArrival = entry;
       const accepted = coordinator.request({ source: "bus-arrival", priority: coordinator.PRIORITY.busArrival,
         dynamic: true, text, kind: entry.key,
         validUntil: monotonicNow() + Math.max(0, expires - now()),
-        metadata: { bus_route: route, station_key: entry.key, channel: "gps" },
+        metadata: { bus_route: route, station_key: entry.key, channel: "gps", text,
+          next_vehicle: Boolean(next) },
         onStart: () => {
           if (!validGeneration(token)) return;
+          entry.started = true;
           emit("bus_arrival_speech_started", { text });
         },
         onComplete: () => {
@@ -179,13 +198,15 @@
       speakingOcr = item;
       item.started = false;
       item.speechText = speechText;
+      // Keys of the same sentence continued under a new detector track id.
+      item.aliasKeys = new Set();
       const accepted = coordinator.request({ source: "bus-ocr",
         priority: item.isTarget ? coordinator.PRIORITY.busOcr : coordinator.PRIORITY.busArrival + 1,
         // Freshness limits starting a cue; the player separately bounds playback.
         dynamic: true, text: speechText, kind: item.key,
         validUntil: monotonicNow() + Math.max(0, item.capturedAt + limits.busDetectionWindowMs - now()),
         metadata: { bus_route: item.route_number, target_route: route, is_target: item.isTarget,
-          captured_at_ms: item.capturedAt, track_id: item.track_id, channel: "ocr" },
+          captured_at_ms: item.capturedAt, track_id: item.track_id, channel: "ocr", text: speechText },
         onStart: () => {
           if (!validGeneration(token) || speakingOcr !== item) return;
           item.started = true;
@@ -203,8 +224,8 @@
         },
         onComplete: () => {
           if (!validGeneration(token) || speakingOcr !== item) return;
-          ocrAnnounced.add(item.key);
-          if (ocrAnnounced.size > 200) ocrAnnounced.delete(ocrAnnounced.values().next().value);
+          for (const key of [item.key, ...item.aliasKeys]) ocrAnnounced.add(key);
+          while (ocrAnnounced.size > 200) ocrAnnounced.delete(ocrAnnounced.values().next().value);
           if (!item.isTarget) otherRouteAnnouncedAt.set(item.route_number, now());
           if (otherRouteAnnouncedAt.size > 200) otherRouteAnnouncedAt.delete(otherRouteAnnouncedAt.keys().next().value);
           // The completed camera confirmation replaces the interrupted ETA.
@@ -282,12 +303,15 @@
       }
       const available = select.canAnnounceArrival(selected);
       const previousStatus = gps.status;
-      gps = { status: available ? "ready" : "waiting", message: selected.announcement || selected.arrival?.first_arrival
-          || "선택한 정류장의 도착정보를 기다리고 있습니다.",
+      arrivalEntry = select.updateAnnouncementStops(tracker.announcementStops, [selected], route,
+        { now: now(), targetConfirmedAt: lastTargetConfirmedAt })[0] || null;
+      const nextVehicle = isNextVehicle(arrivalEntry);
+      const message = selected.announcement || selected.arrival?.first_arrival
+          || "선택한 정류장의 도착정보를 기다리고 있습니다.";
+      gps = { status: available ? "ready" : "waiting", message: nextVehicle ? `다음 버스: ${message}` : message,
         selected: candidateView(selected), candidates: options.map(candidateView),
         ambiguous: !manualStationKey && Boolean(tracker.selectionAmbiguous),
-        lastUpdatedAt: tracker.lastNearbyResultAt, accuracyM: location.accuracy };
-      arrivalEntry = select.updateAnnouncementStops(tracker.announcementStops, [selected], route)[0] || null;
+        lastUpdatedAt: tracker.lastNearbyResultAt, accuracyM: location.accuracy, nextVehicle };
       if (speakingArrival && (speakingArrival.key !== arrivalEntry?.key
           || speakingArrival.vehicle !== arrivalEntry?.vehicle || speakingArrival.phase !== arrivalEntry?.phase)) {
         clearSpeech("bus-arrival");
@@ -531,11 +555,16 @@
         publish();
         return;
       }
-      // A current detection frame can end the previous vehicle's speech immediately.
+      // A current detection frame can end the previous vehicle's speech, but a
+      // brief detector miss must not cut a sentence already being heard.
       const visibleTracks = Array.isArray(event.buses)
         ? new Set(event.buses.map(item => item.track_id)) : null;
       const speechTrackId = speakingOcr?.track_id ?? ocr.trackId;
-      if (visibleTracks && speechTrackId != null && !visibleTracks.has(speechTrackId)) {
+      if (visibleTracks?.has(speechTrackId)) speechTrackSeenAt = capturedAt;
+      const graceHold = Boolean(!failed && visibleTracks && speechTrackId != null
+        && !visibleTracks.has(speechTrackId) && speakingOcr?.started
+        && speakingOcr.track_id === speechTrackId && capturedAt - speechTrackSeenAt < TRACK_LOSS_GRACE_MS);
+      if (visibleTracks && speechTrackId != null && !visibleTracks.has(speechTrackId) && !graceHold) {
         clearSpeech("bus-ocr");
         ocrPending = null;
         ocr = { status: "searching", confirmed: false, routeNumber: null, capturedAt,
@@ -578,7 +607,7 @@
       // Another route must not cut a target cue while that vehicle is still visible.
       if (!failed && !matches.length && speakingOcr?.isTarget
           && (speakingOcr.started || freshCapture(ocr.capturedAt))
-          && (!visibleTracks || visibleTracks.has(speakingOcr.track_id))
+          && (!visibleTracks || visibleTracks.has(speakingOcr.track_id) || graceHold)
           && !others.some(item => item.track_id === speakingOcr.track_id)) {
         publish();
         return;
@@ -616,20 +645,35 @@
       ocr = { status: !isTarget ? "other" : confirmed ? "confirmed" : "candidate",
         message, routeNumber: observedRoute, isTarget, confirmed, capturedAt,
         trackId: shown.track_id ?? null };
+      speechTrackSeenAt = capturedAt;
+      // Camera evidence that the target is at the stop; a vehicle the API lists
+      // next within the hold window is the following bus.
+      if (isTarget && confirmed) lastTargetConfirmedAt = capturedAt;
       select.observeBusDetection(tracker, { routeNumber: observedRoute, capturedAtMs: capturedAt,
         confidence: shown.token_score, trackId: shown.track_id });
       const key = `${shown.track_id ?? "unknown"}:${observedRoute}:${confirmed ? "confirmed" : "candidate"}`;
+      // A started target sentence continues when the detector renumbers the same
+      // route; restarting it would only repeat the identical words.
+      const sameSentence = Boolean(speakingOcr?.started && speakingOcr.isTarget && isTarget
+        && speakingOcr.route_number === observedRoute);
       // Never continue speaking the old number after the visible selection changes.
-      if (speakingOcr && (speakingOcr.route_number !== observedRoute
+      if (speakingOcr && !sameSentence && (speakingOcr.route_number !== observedRoute
           || speakingOcr.track_id !== shown.track_id || speakingOcr.key !== key)) clearSpeech("bus-ocr");
       if (speakingOcr) {
         speakingOcr.capturedAt = capturedAt;
+        if (sameSentence && key !== speakingOcr.key) {
+          // The renumbered vehicle has heard this confirmation too.
+          for (const state of ["candidate", "confirmed"]) {
+            speakingOcr.aliasKeys?.add(`${shown.track_id ?? "unknown"}:${observedRoute}:${state}`);
+          }
+          speakingOcr.track_id = shown.track_id ?? speakingOcr.track_id;
+        }
         coordinator.request({ source: "bus-ocr",
           priority: isTarget ? coordinator.PRIORITY.busOcr : coordinator.PRIORITY.busArrival + 1,
-          dynamic: true, text: speakingOcr.speechText, kind: key,
+          dynamic: true, text: speakingOcr.speechText, kind: speakingOcr.key,
           validUntil: monotonicNow() + Math.max(0, capturedAt + limits.busDetectionWindowMs - now()),
           metadata: { bus_route: observedRoute, target_route: route, is_target: isTarget,
-            captured_at_ms: capturedAt, track_id: shown.track_id, channel: "ocr" } });
+            captured_at_ms: capturedAt, track_id: shown.track_id, channel: "ocr", text: speakingOcr.speechText } });
       }
       ocrPending = { ...shown, state: confirmed ? "matched_candidate" : shown.state,
         route_number: observedRoute, isTarget, key, message, capturedAt };
