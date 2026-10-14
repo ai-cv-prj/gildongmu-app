@@ -246,8 +246,8 @@ risk:
   stationary_middle_top: 0.45
   stationary_lower_top: 0.70
   stationary_bottom: 0.95
-  stationary_median_motion_per_s: 0.025
-  stationary_p80_motion_per_s: 0.050
+  stationary_median_motion_per_s: 0.060
+  stationary_p80_motion_per_s: 0.100
   stationary_scale_change_per_s: 0.030
   stationary_min_points: 12
 

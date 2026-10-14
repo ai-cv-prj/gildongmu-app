@@ -66,12 +66,14 @@ def same_static_obstacle(a, b):
 
 def transition_confirm_s(previous_action, next_action):
     """
-    긴급 정지는 즉시 안내하고 나머지 행동 전환에 지정된 안정화 시간을 반환한다.
+    긴급 정지와 좌우 방향 교체는 즉시 안내하고 나머지 전환은 안정화 시간을 적용한다.
     """
     if previous_action is None or next_action == "stop":
         return 0.0
     if previous_action == "stop":
         return FROM_STOP_CONFIRM_S
+    if (previous_action, next_action) in (("left", "right"), ("right", "left")):
+        return 0.0
     return LATERAL_CONFIRM_S
 
 
@@ -618,7 +620,7 @@ class WalkingVoice:
             if self.clear_since is not None and self.last_action is not None:
                 none_duration = output_time_s - self.clear_since
                 repeat_ready = none_duration + 1e-6 >= repeat_none_s(self.last_action)
-                # 짧은 none 뒤에도 반대 방향은 기존 안내로부터 안정화 시간을 확인한다.
+                # 짧은 none 뒤에는 이전 행동을 기준으로 전환 정책을 적용한다.
                 if repeat_ready:
                     self.last_action = None
                     self.last_steps = None
