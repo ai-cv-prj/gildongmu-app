@@ -316,6 +316,7 @@ cloudflared --version
 
 출력되는 `https://…trycloudflare.com` 주소를 휴대폰 브라우저에서 엽니다.
 서버와 터널 터미널은 사용하는 동안 켜 둡니다. 터널을 다시 실행하면 접속 주소가 달라질 수 있습니다.
+코드를 수정해 앱 서버만 재시작할 때는 같은 주소·포트를 유지하고 터널 터미널을 그대로 두면 기존 접속 주소를 계속 사용할 수 있습니다.
 
 1. **길동무 시작하기**에서 음성 속도와 글자 크기를 설정합니다.
 2. **안내 시작**을 누르고 카메라 권한을 허용합니다.
@@ -325,6 +326,36 @@ cloudflared --version
 
 휴대폰 직접 터치에서는 버튼을 한 번 누르면 설명을 읽고, 같은 버튼을 빠르게 두 번 누르면 실행합니다.
 음성 입력과 카메라 세부 설정의 지원 여부는 브라우저·기기에 따라 다릅니다.
+
+#### 고정 주소 사용 (선택)
+
+Cloudflare 계정과 Cloudflare에 등록한 도메인이 있으면 터널을 재시작해도 같은 주소를 사용할 수 있습니다.
+[Cloudflare 설정 안내](https://developers.cloudflare.com/tunnel/get-started/)에 따라 대시보드의
+**Networking > Tunnels**에서 터널을 만들고, **Routes > Add route > Published application**으로
+원하는 호스트 이름(예: `app.example.com`)을 앱 서버에 연결합니다.
+**Service URL**은 기본 설정에서 `http://127.0.0.1:8001`이며, 앱 포트를 바꿨다면 같은 포트로 설정합니다.
+
+터널 설치 명령에 포함된 토큰만 로컬 파일 `.local-only/cloudflare/app-token`에 저장합니다.
+기존 터널의 토큰은 **Add a replica**에서 확인할 수 있습니다.
+자세한 위치는 [터널 토큰 안내](https://developers.cloudflare.com/tunnel/reference/tunnel-tokens/)를 참고합니다.
+토큰은 `.env`에 직접 넣지 않고, Git에서 제외된 위 경로에 소유자만 접근하도록 보관합니다.
+
+```bash
+umask 077
+mkdir -p .local-only/cloudflare
+nano .local-only/cloudflare/app-token
+chmod 600 .local-only/cloudflare/app-token
+```
+
+`.env`에 아래 두 값을 모두 설정한 뒤 `./scripts/tunnel.sh`를 실행합니다.
+
+```dotenv
+CLOUDFLARE_TUNNEL_TOKEN_FILE=.local-only/cloudflare/app-token
+CLOUDFLARE_TUNNEL_URL=https://app.example.com
+```
+
+두 값을 모두 비우면 기존 임시 주소 방식을 사용합니다. 스크립트는 Cloudflare의 호스트 이름·경로를 생성하지 않으므로 대시보드에서 먼저 연결해야 합니다.
+고정 주소를 사용해도 PC가 꺼져 있으면 접속할 수 없습니다. PC를 다시 켜고 서버와 터널을 실행하면 같은 주소로 접속합니다.
 
 ## ⚙️ 설정 및 저장 위치
 
