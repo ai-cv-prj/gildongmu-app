@@ -104,7 +104,8 @@ class WalkingVoiceTests(unittest.TestCase):
         actions = (None, "left", "right", "crowded", "blocked", "stop")
         for previous in actions:
             for current in ("left", "right", "crowded", "blocked", "stop"):
-                if previous is None or current == "stop":
+                if (previous is None or current == "stop"
+                        or (previous, current) in (("left", "right"), ("right", "left"))):
                     expected = 0.0
                 elif previous == "stop":
                     expected = 0.5
@@ -220,7 +221,7 @@ class WalkingVoiceTests(unittest.TestCase):
     # 짧은 none이 행동 전환 확인 시간을 우회하지 않음
     def test_different_action_after_short_none_still_requires_confirmation(self):
         """
-        짧은 none 뒤 다른 방향도 안정화를 확인하며 긴급 정지만 즉시 안내한다.
+        짧은 none 뒤에도 좌우 교체와 긴급 정지는 즉시 안내하고 나머지는 안정화를 확인한다.
         """
         messages = {
             "left": ("왼쪽 한 걸음", "walking-move-left-one.mp3"),
@@ -536,13 +537,13 @@ class WalkingVoiceTests(unittest.TestCase):
         same = prediction(danger_item(2, [20, 0, 43, 20]))
         self.assertIsNone(voice.observe(same, 100, .3))
         self.assertEqual(same["last_action"], "right")
-        # 같은 객체들이 반대쪽으로 이동하면 새 방향을 600ms 확인한다.
+        # 같은 객체들이 반대쪽으로 이동하면 새 방향을 즉시 안내한다.
         opposite = [danger_item(i, [57, 0, 80, 20]) for i in (1, 2)]
-        self.assertIsNone(voice.observe(prediction(*opposite), 100, .4))
+        self.assertEqual(voice.observe(prediction(*opposite), 100, .4),
+                         ("왼쪽 한 걸음", "walking-move-left-one.mp3"))
         self.assertIsNone(voice.observe(prediction(*opposite), 100, .5))
         self.assertIsNone(voice.observe(prediction(*opposite), 100, .6))
-        self.assertEqual(voice.observe(prediction(*opposite), 100, 1.0),
-                         ("왼쪽 한 걸음", "walking-move-left-one.mp3"))
+        self.assertIsNone(voice.observe(prediction(*opposite), 100, 1.0))
         for timestamp in (1.5, 2.5, 3.5, 4.5):
             cleared = prediction(level="monitor")
             self.assertIsNone(voice.observe(cleared, 100, timestamp))
