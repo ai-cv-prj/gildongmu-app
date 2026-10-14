@@ -581,9 +581,16 @@
       detections: result.traffic.detections, event: result.traffic.event,
       crossing_active: result.crosswalk?.event?.crossing_active === true }, capturedAt);
     acceptBusResult(result, routeForFrame);
-    // Keep the guidance text and draw only the lightweight live bus boxes.
     view.render(result);
-    renderBusBoxes(result);
+    // Bus search keeps the lightweight live bus boxes. Walking and traffic
+    // guidance draw their full inference scene (mask, path, obstacle and signal boxes).
+    if (activeRoute) renderBusBoxes(result);
+    // A late response from a cleared route must not draw its old bus boxes.
+    else GOverlay.render({ ...result, bus: null, bus_mode: false, walking: { ...result.walking,
+      event: { ...result.walking?.event, voice_playback_action: coordinator.walkingPlaybackAction() } } },
+    state => queueTiming({ kind: "overlay", frame_id: result.frame_id,
+      captured_at_ms: result.captured_at_ms, status: state,
+      overlay_delay_ms: state === "drawn" ? Math.round(performance.now() - capturedAt) : null }));
   }
   function waitForReconnect(signal) {
     return new Promise((resolve, reject) => {
@@ -784,7 +791,10 @@
           coordinator.tick();
           // Expire the concise text even while the next network response is pending.
           view.render(lastResult);
-          renderBusBoxes(lastResult);
+          // Keep walking and traffic visible between responses until their freshness window ends.
+          if (activeRoute) renderBusBoxes(lastResult);
+          else if (lastResult && performance.timeOrigin + performance.now() - lastResult.captured_at_ms
+              >= (settings.audio.guidance?.max_age_ms ?? 1500)) GOverlay.clear();
         }
       }, settings.audio.tick_ms);
       logTimer = setInterval(() => {

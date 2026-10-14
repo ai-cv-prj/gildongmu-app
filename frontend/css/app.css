@@ -141,6 +141,8 @@ h1:focus:not(:focus-visible) {outline:none;}
 #camera-view,#overlay[hidden] {display:none;}
 .live-result {margin:0;padding:0 24px;font-size:clamp(22px,calc(24px * var(--text-scale)),30px);font-weight:700;line-height:1.35;}
 .live-result[data-tone=recognized] {color:#087466;}
+/* Bus screens show the same status in the camera guidance card (preview v5). */
+.app:is([data-screen=search],[data-screen=approach],[data-screen=arrived]) .live-result {display:none;}
 .camera-placeholder {position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px 14px;text-align:center;background:#FFEEB0;box-shadow:inset 0 0 0 2px #F3D774,inset 0 4px 12px rgba(120,90,0,.10);border-radius:inherit;font-size:clamp(28px,calc(32px * var(--text-scale)),40px);font-weight:650;}
 .camera-placeholder .icon {width:100px;height:100px;padding:22px;border-radius:50%;background:#FFFFFF;box-shadow:0 6px 14px rgba(120,90,0,.14);stroke-width:1.8;}
 .camera-badge {position:absolute;bottom:10px;left:10px;border-radius:12px;padding:5px 10px;background:#101010dd;color:#fff;font-size:18px;}

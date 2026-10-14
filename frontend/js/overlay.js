@@ -95,7 +95,12 @@ window.GOverlay = (() => {
   }
 
   // 버스 모드에서는 화면과 저장 영상에 같은 인식 상태와 큰 노선 번호를 표시한다.
-  function busScene(result, age, boxesOnly = false) {
+  // mode "full": large card and labels, true/"boxes": outlines only,
+  // "slim": live bus screen (existing card, compact labels, bottom step line; preview v5).
+  function busScene(result, age, mode = "full") {
+    const boxesOnly = mode === true || mode === "boxes";
+    const slim = mode === "slim";
+    const k = canvas.width / 720; // v5 layout values were drawn on a 720 px wide canvas
     const source = result.bus || {};
     const target = String(result.target_route || source.event?.target_route || "");
     // A response captured before a route change cannot label the new search.
@@ -167,11 +172,21 @@ window.GOverlay = (() => {
         const match = evidence.find(entry => entry.track_id != null && entry.track_id === item.track_id);
         const color = match ? colorFor(match) : checkingBlue;
         ctx.strokeStyle = isNumber ? "#ffffff" : color;
-        ctx.lineWidth = (isNumber ? 1.5 : 3) * scale;
-        rounded(x, y, width, height, (isNumber ? 2 : 6) * scale, null, ctx.strokeStyle);
+        ctx.lineWidth = slim ? (isNumber ? 2 : 3) * k : (isNumber ? 1.5 : 3) * scale;
+        rounded(x, y, width, height, slim ? (isNumber ? 1 : 5) * k : (isNumber ? 2 : 6) * scale,
+          null, ctx.strokeStyle);
         // OCR crops remain visible, but only validated evidence labels the whole bus with a number.
         if (isNumber) {
           if (boxesOnly) continue;
+          if (slim) {
+            ctx.font = `600 ${18 * k}px system-ui`;
+            const tagWidth = ctx.measureText("번호 영역").width + 12 * k;
+            const tagX = Math.min(x + width + 5 * k, canvas.width - tagWidth - 4 * k);
+            rounded(tagX, y, tagWidth, 27 * k, 3 * k, "rgba(7, 18, 29, 0.85)", null);
+            ctx.fillStyle = "#ffffff";
+            ctx.fillText("번호 영역", tagX + 6 * k, y + 20 * k);
+            continue;
+          }
           const confidence = ocrConfidence(item.extra?.token_score ?? item.confidence);
           if (confidence) {
             ctx.font = `bold ${12 * scale}px system-ui`;
@@ -189,6 +204,18 @@ window.GOverlay = (() => {
           continue;
         }
         const confidence = ocrConfidence(match?.token_score);
+        if (slim) {
+          // Only validated evidence labels a bus; an unread bus keeps its blue outline.
+          if (!match) continue;
+          const label = `${match.route_number}${confidence ? ` · ${confidence}` : ""}`;
+          ctx.font = `700 ${23 * k}px system-ui`;
+          const labelWidth = Math.min(canvas.width - 8 * k, ctx.measureText(label).width + 22 * k);
+          const labelX = Math.max(4 * k, Math.min(x, canvas.width - labelWidth - 4 * k));
+          const labelY = Math.max(4 * k, y - 34 * k);
+          rounded(labelX, labelY, labelWidth, 31 * k, 4 * k, color, null);
+          fittedText(label, labelX + 10 * k, labelY + 23 * k, 23 * k, labelWidth - 20 * k, "#082923");
+          continue;
+        }
         const label = boxesOnly ? match ? `${match.route_number}번` : "버스"
           : match ? `${match.route_number}${confidence ? ` · ${confidence}` : ""}`
             : "버스 번호 확인 중";
@@ -222,6 +249,28 @@ window.GOverlay = (() => {
       : "버스 찾는 중";
     fittedText(title, x + padding, y + 65 * scale, 26 * scale,
       width - padding * 2, accent);
+    if (slim && checking) {
+      // Bottom step line: what the current frame has completed and what remains.
+      const buses = event.buses || [];
+      const shownBus = buses.find(item => shown && item.track_id === shown.track_id) || buses[0];
+      const reading = shown?.route_number
+        ?? (shownBus?.observations || []).find(item => item.eligible)?.text;
+      const regions = shownBus?.candidate_count ?? (bus.detections || [])
+        .filter(item => item.class_name === "route_number" || item.class_id === 1).length;
+      const steps = [`버스 ${buses.length || 1}대`, `번호 영역 ${regions}개`,
+        ...(reading ? [`OCR ${reading}`] : [])].join("  →  ");
+      const status = confirmedTarget ? "→ 목표 버스 확인" : shown && !isTarget(shown) ? "→ 다른 버스"
+        : reading ? "→ 추가 확인 중" : "→ 번호 확인 중";
+      const statusColor = confirmedTarget ? mint : shown && !isTarget(shown) ? otherRed : checkingBlue;
+      const barX = 12 * k, barY = canvas.height - 56 * k, barWidth = canvas.width - 24 * k;
+      rounded(barX, barY, barWidth, 42 * k, 6 * k, "rgba(7, 18, 29, 0.86)", null);
+      ctx.font = `600 ${21 * k}px system-ui`;
+      const statusWidth = ctx.measureText(status).width;
+      const stepsWidth = barWidth - statusWidth - 38 * k;
+      fittedText(steps, barX + 13 * k, barY + 29 * k, 21 * k, stepsWidth, "#ffffff");
+      fittedText(status, barX + barWidth - statusWidth - 13 * k, barY + 29 * k, 21 * k,
+        statusWidth, statusColor);
+    }
     ctx.restore();
   }
 
@@ -381,10 +430,11 @@ window.GOverlay = (() => {
         busScene(result, busAge);
         return onDrawn("drawn");
       }
-      // Bus text and geometry use the independent OCR capture deadlines above.
+      // Use the same freshness window as live guidance, including network and mask decoding.
+      const maxAgeMs = window.GConfig?.get?.().audio?.guidance?.max_age_ms ?? 1500;
       if (Number.isFinite(result.captured_at_ms) && typeof performance !== "undefined"
           && Number.isFinite(performance.timeOrigin)
-          && performance.timeOrigin + performance.now() - result.captured_at_ms > 400) {
+          && performance.timeOrigin + performance.now() - result.captured_at_ms >= maxAgeMs) {
         return onDrawn("stale");
       }
       if (mask) ctx.drawImage(mask, 0, 0, canvas.width, canvas.height);
@@ -417,7 +467,7 @@ window.GOverlay = (() => {
     mask.src = `data:image/png;base64,${result.walking.mask_png}`;
   }
 
-  /** Lightweight live bus boxes; the existing view owns the guidance text. */
+  /** Live bus screen: existing guidance card, compact bus/number labels and step line. */
   function renderBusBoxes(result) {
     const busMode = result?.bus_mode === true
       || (result?.bus_mode !== false && Boolean(result?.bus?.event?.target_route));
@@ -429,7 +479,7 @@ window.GOverlay = (() => {
     const age = Number.isFinite(result.bus?.captured_at_ms)
       && typeof performance !== "undefined" && Number.isFinite(performance.timeOrigin)
       ? performance.timeOrigin + performance.now() - result.bus.captured_at_ms : Infinity;
-    busScene(result, age, true);
+    busScene(result, age, "slim");
   }
 
   /** 카메라 영상만 남기고 분석 결과를 지운다. */
